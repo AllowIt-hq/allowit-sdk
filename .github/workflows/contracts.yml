@@ -47,12 +47,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee contracts/dist/stellar-build.log
           curl --fail --location --retry 3 https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz -o "$RUNNER_TEMP/binaryen.tar.gz"
           printf '%s  %s\n' 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489 "$RUNNER_TEMP/binaryen.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/binaryen.tar.gz" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --version | tee contracts/dist/stellar-toolchain.log
-          "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features -Oz --converge --strip-debug --strip-dwarf contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o contracts/dist/allowit_stellar.wasm
+          # LLVM's size profiles differ; measure both and validate the exact
+          # smallest result in the real VM. Neither changes chain resource limits.
+          smallest=999999999
+          for rust_opt in z s; do
+            CARGO_PROFILE_RELEASE_OPT_LEVEL="$rust_opt" cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee -a contracts/dist/stellar-build.log
+            for binaryen_opt in 2 4; do
+              candidate="$RUNNER_TEMP/allowit-stellar-$rust_opt-$binaryen_opt.wasm"
+              "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features "-O$binaryen_opt" --shrink-level=2 --converge --strip-debug --strip-dwarf --strip-producers contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o "$candidate"
+              size=$(wc -c < "$candidate")
+              echo "LLVM opt=$rust_opt Binaryen O$binaryen_opt shrink=2 bytes=$size" | tee -a contracts/dist/stellar-toolchain.log
+              if [ "$size" -lt "$smallest" ]; then
+                smallest="$size"
+                cp "$candidate" contracts/dist/allowit_stellar.wasm
+                echo "selected LLVM=$rust_opt Binaryen=$binaryen_opt" | tee -a contracts/dist/stellar-toolchain.log
+              fi
+            done
+          done
           sha256sum contracts/dist/allowit_stellar.wasm | tee contracts/dist/stellar-sha256.txt
       - name: Execute native Soroban and compiled Wasm tests
         shell: bash

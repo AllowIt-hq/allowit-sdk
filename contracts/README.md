@@ -71,7 +71,7 @@ cargo build --release --locked --target wasm32v1-none \
   --manifest-path contracts/stellar/Cargo.toml
 ```
 
-Optimize the Wasm with the checksum-pinned Binaryen 133 command in `contracts.yml` (`wasm-opt --mvp-features -Oz --converge --strip-debug --strip-dwarf`). Run the exact optimized bytes through the compiled-Wasm test before deployment. Upload costs count toward the network budget too; raw build output is not an accepted deployable artifact.
+Optimize the Wasm with checksum-pinned Binaryen 133 using the commands in `contracts.yml`. CI compares LLVM size profiles `z`/`s` and Binaryen optimization levels 2/4 at shrink level 2, logs the selected profile, and verifies the smallest artifact. Run the exact optimized bytes through the compiled-Wasm test before deployment. Upload costs count toward the network budget too; raw build output is not an accepted deployable artifact.
 
 Deploy the verified `allowit_stellar.wasm` using the chosen Stellar account/network. No constructor installs a default authority.
 
