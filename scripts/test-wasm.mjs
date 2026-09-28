@@ -34,7 +34,7 @@ context.answers[awaiting.decision.input_key] = true;
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'oracle', context }).decision.outcome, 'pass');
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'panic!("no")') }).ok, false);
-assert.equal(invoke({ operation: 'registry' }).functions.length, 15);
+assert.equal(invoke({ operation: 'registry' }).functions.length, 16);
 for (let i = 0; i < 100; i++) {
   assert.equal(invoke({ operation: 'compile', source }).policy.ir_hash, compiled.policy.ir_hash);
 }

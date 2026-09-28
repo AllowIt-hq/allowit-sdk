@@ -11,6 +11,7 @@ mod protocol;
 mod readability;
 mod registry;
 mod runtime;
+#[cfg(feature = "oracle-ledger")]
 pub mod spending;
 mod types;
 // The source type-checking facade uses floats; contract execution is integer-only.

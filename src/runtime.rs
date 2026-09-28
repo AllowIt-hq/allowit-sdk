@@ -160,6 +160,14 @@ impl Evaluator<'_> {
                 match name.as_str() {
                     "Ok" => Value::Unit,
                     "fail" => return Err(failure("POLICY_REJECTED", string(&values, 0)?)),
+                    #[cfg(not(feature = "oracle-ledger"))]
+                    "cap_purchase_tiers" => {
+                        return Err(failure(
+                            "LEDGER_REQUIRED",
+                            "Purchase tiers require the oracle ledger feature.",
+                        ));
+                    }
+                    #[cfg(feature = "oracle-ledger")]
                     "cap_purchase_tiers" => {
                         if self.profile == Profile::Contract {
                             return Err(failure(

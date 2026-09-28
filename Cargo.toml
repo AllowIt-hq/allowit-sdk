@@ -16,7 +16,8 @@ path = "src/bin/allowit.rs"
 required-features = ["compiler"]
 
 [features]
-default = ["std", "compiler"]
+default = ["std", "compiler", "oracle-ledger"]
+oracle-ledger = []
 std = ["serde/std", "serde_json/std", "sha2/std"]
 compiler = ["std", "dep:syn", "dep:proc-macro2"]
 
