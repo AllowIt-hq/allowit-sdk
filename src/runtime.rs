@@ -160,6 +160,26 @@ impl Evaluator<'_> {
                 match name.as_str() {
                     "Ok" => Value::Unit,
                     "fail" => return Err(failure("POLICY_REJECTED", string(&values, 0)?)),
+                    "cap_purchase_tiers" => {
+                        if self.profile == Profile::Contract {
+                            return Err(failure(
+                                "LEDGER_REQUIRED",
+                                "This purchase-tier rule requires an authoritative host ledger.",
+                            ));
+                        }
+                        let token = string(&values, 3)?;
+                        if token != "USDC" || token != self.context.token {
+                            return Err(failure("TOKEN_MISMATCH", "Token does not match."));
+                        }
+                        let maximum = amount_units(&string(&values, 1)?)
+                            .map_err(|e| failure("INVALID_AMOUNT", e.message))?;
+                        let Value::Integer(count) = values[2] else {
+                            return Err(invalid());
+                        };
+                        crate::spending::check_tiers(self.context, maximum, count)
+                            .map_err(alloc::boxed::Box::new)?;
+                        Value::Unit
+                    }
                     "set_cap" | "cap_per_transaction" => {
                         let token = string(&values, 2)?;
                         if token != "USDC" || token != self.context.token {
@@ -506,7 +526,7 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
             value: Expr::Try { value },
             ..
         } = statement
-            && matches!(&**value,Expr::Call{name,..} if name=="set_cap")
+            && matches!(&**value,Expr::Call{name,..} if name=="set_cap" || name=="cap_purchase_tiers")
             && let Err(decision) = evaluator.expr(value, &env)
         {
             return *decision;

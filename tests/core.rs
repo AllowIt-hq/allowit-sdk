@@ -275,7 +275,7 @@ fn json_wire_protocol_is_exact() {
             .as_array()
             .unwrap()
             .len(),
-        15
+        16
     );
 }
 #[test]

@@ -95,3 +95,32 @@ Decimal helper arguments must be string literals. Excess decimal places, signs, 
 Use `check_preference(ctx, "Exact preference question", true, "85", true, "40").await?;` for a configurable Jev gate. The flags enable automatic approval at or above 85% and denial at or below 40%. Other scores require the owner's answer. Both flags may be disabled; that asks the owner without calling Jev. Thresholds are exact decimal percentage strings from 0 to 100 with at most two decimals; denial must be below approval when both outcomes are enabled. A preference pass cannot override other constraints. The host's explicit assessment result is an object with exactly one numeric field, `preference_fit`, from 0 to 1; it is not calibrated confidence or multiple estimated dimensions. Context is provided as JSON into the CLI or SDK and forwarded by the trusted host with the exact question and original owner intent.
 
 `local:dev` runs only in the oracle profile. Local records consume the local budget without a wallet or blockchain settlement. A consumer-generated SKILL.md can contain a private scoped access URL and bearer header. Treat that file as a credential, send it only to the intended agent, keep authorization on its specified origin, and obey its expiry/revocation. The capability does not authorize independent wallet spending.
+
+
+### Versioned compact policies and purchase tiers
+
+New source can use `use allowit::v1::prelude::*;` and `pub async fn exec(ctx: &Context) -> PolicyResult`. The legacy import, `evaluate` function name and six-argument preference form remain accepted. The compact versioned form is:
+
+```rust
+use allowit::v1::prelude::*;
+
+pub async fn exec(ctx: &Context) -> PolicyResult {
+    set_cap(ctx, "10", "USDC")?;
+    cap_purchase_tiers(ctx, "1", 2, "USDC")?;
+    allow_actions(ctx, &["research"])?;
+    check_preference(ctx,
+        "Is this primary evidence for the research task?",
+        0.40, // deny at or below
+        0.85, // approve at or above
+    ).await?;
+    Ok(())
+}
+```
+
+Thresholds are exact source decimals in 0..1 with at most four decimal places. `None` disables that outcome; `auto("deny")` and `auto("approve")` resolve to the versioned defaults 0.40 and 0.85. They do not invoke a model to choose a threshold. Compiled workflow arguments expose the resolved percentages and enabled flags. Approval still requires every other rule to pass.
+
+`cap_purchase_tiers` defines separate price bands: two purchases in (0.50, 1.00], four in (0.25, 0.50], eight in (0.125, 0.25], continuing down to the token's smallest representable unit. Boundaries belong to the cheaper band. There is no additional minimum price. It is an unconditional, single top-level configuration; the maximum is 1,000,000 USDC and the first count is 1..1,000,000.
+
+The trusted oracle host supplies `purchase_counts`, exactly 40 unsigned counts derived from its durable ledger, including pending reservations. Callers must not supply authoritative counts through runtime context. Reservation and final evaluation must recheck counts atomically. Missing counts fail with `LEDGER_REQUIRED`. The current contract adapters reject tier policies at activation because they do not store this ledger; the contract evaluator also fails closed. A compiled tier badge describes oracle enforcement, not an on-chain certificate.
+
+Consumers need a build containing this helper; older evaluators fail closed on the new registry call. Wire registry version remains unchanged, so use the SDK commit and artifact digest for compatibility. Context continues to enter the CLI or SDK as JSON; user-supplied runtime evidence is separate from authoritative ledger fields.

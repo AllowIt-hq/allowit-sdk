@@ -42,6 +42,21 @@ fn chain_profile_admits_maximum_semantic_policy_and_rejects_deeper_ir() {
 }
 
 #[test]
+fn purchase_ledger_policies_cannot_activate_on_contracts_without_ledger_state() {
+    let state = fixture(
+        "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; cap_purchase_tiers(ctx, \"1\", 2, \"USDC\")?; Ok(()) }",
+    );
+    assert_eq!(
+        allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact),
+        Err(Error::InvalidArtifact)
+    );
+    assert_eq!(
+        prepare_execution(&state, &request(&state, 750_000), 1000),
+        Err(Error::InvalidArtifact)
+    );
+}
+
+#[test]
 fn contract_and_oracle_share_exact_pass_and_failure_core() {
     let state = fixture(SIMPLE);
     let compiled = allowit_sdk::compile(SIMPLE).unwrap();

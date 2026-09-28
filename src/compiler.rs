@@ -49,6 +49,42 @@ fn annotation(ty: &Type) -> Option<String> {
     }
 }
 
+fn preference_threshold(expr: &SynExpr, direction: &str) -> Result<(bool, String), CompileError> {
+    let default = if direction == "deny" { "40" } else { "85" };
+    if matches!(expr, SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path, "None"))
+    {
+        return Ok((false, default.into()));
+    }
+    if let SynExpr::Call(c) = expr
+        && c.attrs.is_empty()
+        && c.args.len() == 1
+        && matches!(&*c.func, SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path, "auto"))
+        && matches!(&c.args[0], SynExpr::Lit(l) if l.attrs.is_empty() && matches!(&l.lit, syn::Lit::Str(s) if s.suffix().is_empty() && s.value() == direction))
+    {
+        return Ok((true, format!("{default}.00")));
+    }
+    if let SynExpr::Lit(l) = expr {
+        let literal = match &l.lit {
+            syn::Lit::Float(v) if v.suffix().is_empty() => Some(v.to_string()),
+            syn::Lit::Int(v) if v.suffix().is_empty() => Some(v.to_string()),
+            _ => None,
+        };
+        if l.attrs.is_empty()
+            && let Some(literal) = literal
+        {
+            let bps = crate::readability::decimal_units(&literal, 4)
+                .map_err(|e| error(expr.span(), e.message))?;
+            if bps <= 10_000 {
+                return Ok((true, format!("{}.{:02}", bps / 100, bps % 100)));
+            }
+        }
+    }
+    Err(error(
+        expr.span(),
+        "Use a literal score in 0..1 with at most four decimal places, None, or auto with the matching decision name.",
+    ))
+}
+
 struct Parser {
     nodes: usize,
     helper_calls: Vec<(String, SourceSpan)>,
@@ -80,18 +116,30 @@ impl Parser {
             || !a.attrs.is_empty()
             || !c.attrs.is_empty()
             || !p.attrs.is_empty()
-            || c.args.len() != 6
+            || ![4, 6].contains(&c.args.len())
         {
             return Err(error(
                 stmt.span(),
                 "Use check_preference(ctx, question, auto_approve, approve_percent, auto_deny, deny_percent).await?; with literal settings.",
             ));
         }
-        let args = c
-            .args
-            .iter()
-            .map(|a| self.expr(a, depth + 1))
-            .collect::<Result<Vec<_>, _>>()?;
+        let args = if c.args.len() == 4 {
+            let (deny, below) = preference_threshold(&c.args[2], "deny")?;
+            let (approve, above) = preference_threshold(&c.args[3], "approve")?;
+            vec![
+                self.expr(&c.args[0], depth + 1)?,
+                self.expr(&c.args[1], depth + 1)?,
+                Expr::Boolean { value: approve },
+                Expr::String { value: above },
+                Expr::Boolean { value: deny },
+                Expr::String { value: below },
+            ]
+        } else {
+            c.args
+                .iter()
+                .map(|a| self.expr(a, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?
+        };
         let [
             Expr::Variable { name: ctx },
             Expr::String { value: question },
@@ -583,7 +631,17 @@ fn valid_import(use_item: &syn::ItemUse) -> bool {
     {
         return false;
     }
-    matches!(&use_item.tree,syn::UseTree::Path(a) if a.ident=="allowit" && matches!(&*a.tree,syn::UseTree::Path(p) if p.ident=="prelude" && matches!(&*p.tree,syn::UseTree::Glob(_))))
+    let syn::UseTree::Path(a) = &use_item.tree else {
+        return false;
+    };
+    if a.ident != "allowit" {
+        return false;
+    }
+    let tree = match &*a.tree {
+        syn::UseTree::Path(v) if v.ident == "v1" => &*v.tree,
+        other => other,
+    };
+    matches!(tree, syn::UseTree::Path(p) if p.ident == "prelude" && matches!(&*p.tree, syn::UseTree::Glob(_)))
 }
 fn offset(source: &str, byte: usize) -> usize {
     source[..byte.min(source.len())].encode_utf16().count()
@@ -722,7 +780,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     })?;
     let sig = &f.sig;
     if !f.attrs.is_empty()
-        || sig.ident != "evaluate"
+        || (sig.ident != "evaluate" && sig.ident != "exec")
         || sig.asyncness.is_none()
         || sig.constness.is_some()
         || sig.unsafety.is_some()
@@ -907,14 +965,22 @@ fn validate_signature(tokens: &proc_macro2::TokenStream) -> Result<(), CompileEr
     let mut iter = tokens.clone().into_iter();
     let first = iter.next();
     if matches(first.clone(), "use") {
-        expect(
-            &mut iter,
-            &["allowit", ":", ":", "prelude", ":", ":", "*", ";", "pub"],
-        )?;
+        expect(&mut iter, &["allowit", ":", ":"])?;
+        let segment = iter.next();
+        if matches(segment.clone(), "v1") {
+            expect(&mut iter, &[":", ":", "prelude"])?;
+        } else if !matches(segment, "prelude") {
+            return Err(invalid());
+        }
+        expect(&mut iter, &[":", ":", "*", ";", "pub"])?;
     } else if !matches(first, "pub") {
         return Err(invalid());
     }
-    expect(&mut iter, &["async", "fn", "evaluate"])?;
+    expect(&mut iter, &["async", "fn"])?;
+    let name = iter.next();
+    if !matches(name.clone(), "exec") && !matches(name, "evaluate") {
+        return Err(invalid());
+    }
     let Some(TokenTree::Group(params)) = iter.next() else {
         return Err(invalid());
     };

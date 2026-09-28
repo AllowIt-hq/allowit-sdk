@@ -70,6 +70,19 @@ pub fn cap_per_transaction(ctx: &Context, amount: &str, token: &str) -> PolicyRe
     }
     Ok(())
 }
+pub fn cap_purchase_tiers(
+    ctx: &Context,
+    maximum: &str,
+    first_count: u64,
+    token: &str,
+) -> PolicyResult {
+    if token != "USDC" || ctx.token != token {
+        return Err(error("TOKEN_MISMATCH", "Token does not match."));
+    }
+    let maximum = crate::validation::amount_units(maximum)
+        .map_err(|e| error("INVALID_AMOUNT", &e.message))?;
+    crate::spending::check_tiers(ctx, maximum, first_count).map_err(|e| error(&e.code, &e.reason))
+}
 pub fn allow_actions(ctx: &Context, actions: &[&str]) -> PolicyResult {
     if actions.contains(&ctx.action.as_str()) {
         Ok(())

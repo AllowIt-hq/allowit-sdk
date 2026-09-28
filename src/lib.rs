@@ -11,7 +11,11 @@ mod protocol;
 mod readability;
 mod registry;
 mod runtime;
+pub mod spending;
 mod types;
+// The source type-checking facade uses floats; contract execution is integer-only.
+#[cfg(feature = "std")]
+pub mod v1;
 mod validation;
 
 #[cfg(feature = "compiler")]

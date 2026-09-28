@@ -69,6 +69,7 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
 struct Validator {
     nodes: usize,
     config_count: usize,
+    tier_count: usize,
 }
 impl Validator {
     fn tick(&mut self, depth: usize) -> Result<(), CompileError> {
@@ -131,7 +132,7 @@ impl Validator {
                     value, semicolon, ..
                 } => {
                     let direct_config = top
-                        && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call{name,..} if name=="set_cap"));
+                        && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call{name,..} if name=="set_cap" || name=="cap_purchase_tiers"));
                     let ty = self.expr(value, env, depth + 1, direct_config)?;
                     if *semicolon {
                         if ty != Type::Unit {
@@ -265,6 +266,9 @@ impl Validator {
                     "set_cap" | "cap_per_transaction" => {
                         alloc::vec![Type::Context, Type::String, Type::String]
                     }
+                    "cap_purchase_tiers" => {
+                        alloc::vec![Type::Context, Type::String, Type::Integer, Type::String]
+                    }
                     "allow_actions" => alloc::vec![Type::Context, Type::Strings],
                     "require_merchant" | "require_recipient" | "confidence" | "semantic"
                     | "context_u64" | "require_user_input" => {
@@ -296,6 +300,35 @@ impl Validator {
                         _ => {
                             return Err(bad(
                                 "set_cap requires a positive amount literal and the token \"USDC\".",
+                            ));
+                        }
+                    }
+                }
+                if name == "cap_purchase_tiers" {
+                    self.tier_count += 1;
+                    if self.tier_count > 1 {
+                        return Err(bad("Declare purchase tiers only once."));
+                    }
+                    if !config {
+                        return Err(bad(
+                            "Purchase tiers must be an unconditional top-level call.",
+                        ));
+                    }
+                    match (args.get(1), args.get(2), args.get(3)) {
+                        (
+                            Some(Expr::String { value: amount }),
+                            Some(Expr::Integer { value: count }),
+                            Some(Expr::String { value: token }),
+                        ) if token == "USDC" && *count > 0 && *count <= 1_000_000 => {
+                            if amount_units(amount)? > 1_000_000_000_000 {
+                                return Err(bad(
+                                    "The purchase ceiling must be at most 1000000 USDC.",
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(bad(
+                                "Use a positive maximum USDC amount, a count from 1 to 1000000 and USDC.",
                             ));
                         }
                     }
@@ -356,6 +389,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
     let mut validator = Validator {
         nodes: 0,
         config_count: 0,
+        tier_count: 0,
     };
     if !validator.block(&program.statements, &mut env, 0, true)? {
         return Err(bad(

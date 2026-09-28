@@ -189,6 +189,9 @@ pub struct Context {
     pub amount_units: u64,
     pub allocation_units: u64,
     pub spent_units: u64,
+    /// Trusted host counts for the single declared geometric purchase-tier rule.
+    #[serde(default)]
+    pub purchase_counts: Option<Vec<u64>>,
     pub action: String,
     pub merchant: String,
     #[serde(default)]
@@ -214,6 +217,7 @@ impl Default for Context {
             amount_units: 0,
             allocation_units: 0,
             spent_units: 0,
+            purchase_counts: None,
             action: String::new(),
             merchant: String::new(),
             recipient: String::new(),

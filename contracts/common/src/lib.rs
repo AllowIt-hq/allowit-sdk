@@ -76,6 +76,9 @@ fn validate_chain_program(program: &Program) -> Result<(), Error> {
                 pending.push((Node::E(left), next));
                 pending.push((Node::E(right), next));
             }
+            Node::E(Expr::Call { name, .. }) if name == "cap_purchase_tiers" => {
+                return Err(Error::InvalidArtifact);
+            }
             Node::E(Expr::Array { values } | Expr::Call { args: values, .. }) => {
                 pending.extend(values.iter().map(|e| (Node::E(e), next)))
             }
@@ -312,6 +315,7 @@ pub fn validate_artifact(m: &Mandate, bytes: &[u8]) -> Result<Artifact, Error> {
 pub fn validate_binary_artifact(m: &Mandate, bytes: &[u8]) -> Result<Artifact, Error> {
     validate_artifact_bytes(m, bytes)?;
     let artifact = binary::decode(bytes)?;
+    validate_chain_program(&artifact.ir)?;
     // Changing the wire format must not widen the tested chain policy profile.
     if serde_json::to_vec(&artifact)
         .map_err(|_| Error::InvalidArtifact)?
@@ -329,6 +333,7 @@ pub fn validate_binary_chain_artifact(m: &Mandate, bytes: &[u8]) -> Result<(), E
 }
 
 fn validate_decoded_artifact(m: &Mandate, artifact: Artifact) -> Result<Artifact, Error> {
+    validate_chain_program(&artifact.ir)?;
     if artifact.original_intent.len() > 2048 {
         return Err(Error::InvalidArtifact);
     }
@@ -471,6 +476,7 @@ fn prepare_execution_with(
         amount_units: request.amount_units / divisor,
         allocation_units: m.allocation_units / divisor,
         spent_units: state.spent_units / divisor,
+        purchase_counts: None,
         action: request.action.clone(),
         merchant: request.merchant.clone(),
         recipient: m.recipient_address.clone(),
