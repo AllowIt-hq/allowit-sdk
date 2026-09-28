@@ -47,7 +47,11 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee contracts/dist/stellar-build.log
-          cp contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm contracts/dist/
+          curl --fail --location --retry 3 https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz -o "$RUNNER_TEMP/binaryen.tar.gz"
+          printf '%s  %s\n' 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489 "$RUNNER_TEMP/binaryen.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/binaryen.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --version | tee contracts/dist/stellar-toolchain.log
+          "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features -Oz --converge --strip-debug --strip-dwarf contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o contracts/dist/allowit_stellar.wasm
           sha256sum contracts/dist/allowit_stellar.wasm | tee contracts/dist/stellar-sha256.txt
       - name: Execute native Soroban and compiled Wasm tests
         shell: bash

@@ -424,7 +424,18 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
         // Wallet/SAC setup and Wasm upload/deploy are distinct transactions.
         f.env.budget().reset_default();
         std::println!("Soroban Wasm {label} register: wasm={}B", wasm.len());
-        f.contract = f.env.register(wasm.as_slice(), ());
+        let registration = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            f.env.register(wasm.as_slice(), ())
+        }));
+        if let Err(error) = registration {
+            std::println!(
+                "Soroban Wasm {label} upload failed: CPU={} memory={}",
+                f.env.budget().cpu_instruction_cost(),
+                f.env.budget().memory_bytes_cost()
+            );
+            std::panic::resume_unwind(error);
+        }
+        f.contract = registration.unwrap();
         std::println!(
             "Soroban Wasm {label} registered: CPU={} memory={}",
             f.env.budget().cpu_instruction_cost(),
