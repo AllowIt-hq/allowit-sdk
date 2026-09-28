@@ -40,6 +40,7 @@ jobs:
             cargo fmt --manifest-path "contracts/$rail/Cargo.toml" --check
           done
           cargo test --locked --manifest-path contracts/common/Cargo.toml 2>&1 | tee contracts/dist/common-tests.log
+          cargo test --locked --manifest-path contracts/common/Cargo.toml --features integer-json 2>&1 | tee contracts/dist/stellar-codec-tests.log
           cargo test --locked --manifest-path contracts/solana/Cargo.toml 2>&1 | tee contracts/dist/solana-native-tests.log
           ALLOWIT_SOLANA_NETWORK=testnet cargo test --locked --manifest-path contracts/solana/Cargo.toml --test testnet -- --nocapture 2>&1 | tee contracts/dist/solana-testnet-asset-test.log
       - name: Build Soroban Wasm

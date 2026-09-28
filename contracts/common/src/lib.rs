@@ -410,6 +410,8 @@ fn prepare_execution_with(
     {
         return Err(Error::InvalidEvidence);
     }
+    #[cfg(feature = "integer-json")]
+    validate_integer_context(&runtime_context)?;
     let runtime_fields = runtime_context.as_object().ok_or(Error::InvalidEvidence)?;
     if !runtime_fields.is_empty() && request.evidence.is_none() {
         return Err(Error::EvidenceRequired);
@@ -488,6 +490,42 @@ fn prepare_execution_with(
         return Err(Error::PolicyDenied);
     }
     Ok(decision)
+}
+
+/// Soroban forbids floating-point instructions. Its JSON number representation
+/// is string-backed; reject non-integer/out-of-range numbers explicitly so its
+/// accepted contexts retain the same numerical meaning as the standard SDK.
+#[cfg(feature = "integer-json")]
+fn validate_integer_context(context: &serde_json::Value) -> Result<(), Error> {
+    use serde_json::Value;
+    let mut pending = alloc::vec![(context, 0)];
+    let mut entries = 0;
+    while let Some((value, depth)) = pending.pop() {
+        if depth > 8 {
+            return Err(Error::InvalidEvidence);
+        }
+        match value {
+            Value::Number(number) if number.as_u64().is_none() && number.as_i64().is_none() => {
+                return Err(Error::InvalidEvidence);
+            }
+            Value::Array(values) => {
+                entries += values.len();
+                if entries > 128 {
+                    return Err(Error::InvalidEvidence);
+                }
+                pending.extend(values.iter().map(|v| (v, depth + 1)));
+            }
+            Value::Object(values) => {
+                entries += values.len();
+                if entries > 128 {
+                    return Err(Error::InvalidEvidence);
+                }
+                pending.extend(values.values().map(|v| (v, depth + 1)));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn record_execution(state: &mut State, request: &Request) -> Result<(), Error> {

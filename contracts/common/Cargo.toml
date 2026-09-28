@@ -9,6 +9,8 @@ license = "UNLICENSED"
 [features]
 default = []
 compiler = ["allowit-sdk/compiler"]
+# Soroban disallows all Wasm floating-point instructions.
+integer-json = ["serde_json/arbitrary_precision"]
 
 [[bin]]
 name = "allowit-contract-artifact"

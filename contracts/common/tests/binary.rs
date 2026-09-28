@@ -157,3 +157,35 @@ fn binary_requires_exact_artifact_and_canonical_ir_hash_and_validates_signed_ir(
         Error::InvalidArtifact
     );
 }
+
+#[cfg(feature = "integer-json")]
+#[test]
+fn stellar_json_numbers_use_exact_integers_without_floating_point() {
+    let mut state = support::fixture(support::SEMANTIC);
+    convert(&mut state);
+    state.mandate.evidence_authority = Some(allowit_contract_core::EvidenceAuthority {
+        key: [6; 32],
+        key_id: "attester".into(),
+        version: "1".into(),
+    });
+    for json in [
+        r#"{"risk":2.0}"#,
+        r#"{"risk":2e0}"#,
+        r#"{"risk":18446744073709551616}"#,
+        r#"{"nested":[0.5],"risk":2}"#,
+        r#"{"nested":-9223372036854775809,"risk":2}"#,
+    ] {
+        let mut request = support::request(&state, 1_000_000);
+        request.runtime_context = json.into();
+        support::semantic_evidence(&state, &mut request, 9500);
+        assert_eq!(
+            prepare_binary_execution(&state, &request, 1000),
+            Err(Error::InvalidEvidence)
+        );
+    }
+    let mut request = support::request(&state, 1_000_000);
+    request.runtime_context =
+        r#"{"high":18446744073709551615,"low":-9223372036854775808,"risk":2}"#.into();
+    support::semantic_evidence(&state, &mut request, 9500);
+    assert!(prepare_binary_execution(&state, &request, 1000).is_ok());
+}

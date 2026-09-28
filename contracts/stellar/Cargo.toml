@@ -10,7 +10,7 @@ license = "UNLICENSED"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-allowit-contract-core = { path = "../common" }
+allowit-contract-core = { path = "../common", features = ["integer-json"] }
 allowit-sdk = { path = "../..", default-features = false }
 borsh = { version = "=1.6.0", default-features = false, features = ["derive"] }
 soroban-sdk = { version = "=26.1.0", features = ["alloc"] }
