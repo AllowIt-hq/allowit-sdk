@@ -85,6 +85,8 @@ The network ID is checked against the actual Stellar Public or Test Network pass
 
 ## Verification and deployment boundary
 
+The [2026-09-28 target validation receipt](review/runtime-validation-2026-09-28.md) records passing compiled SBF and Soroban VM runs, exact artifact hashes, resource measurements and the Opus 5.5 source-review identities.
+
 ```sh
 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \
   cargo test --locked --manifest-path contracts/common/Cargo.toml
