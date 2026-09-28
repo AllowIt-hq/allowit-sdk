@@ -444,7 +444,7 @@ impl Parser {
         }
         Ok(match expr {
             SynExpr::Lit(lit) => match &lit.lit {
-                syn::Lit::Str(s) => Expr::String { value: s.value() },
+                syn::Lit::Str(s) if s.suffix().is_empty() => Expr::String { value: s.value() },
                 syn::Lit::Int(i) if i.suffix().is_empty() || i.suffix() == "u64" => Expr::Integer {
                     value: i
                         .base10_parse::<u64>()

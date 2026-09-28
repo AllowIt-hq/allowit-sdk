@@ -128,3 +128,13 @@ fn manual_only_does_not_require_model_evidence_and_reserved_reads_fail() {
         assert!(compile(&source(true, true).replace("Avoid hype 🌱", &"x".repeat(n))).is_err());
     }
 }
+
+#[test]
+fn suffixed_strings_are_not_valid_rust_policy_literals() {
+    for s in [
+        source(true, true).replace("\"Avoid hype 🌱\"", "\"Avoid hype 🌱\"x"),
+        source(true, true).replace("\"85\"", "\"85\"percent"),
+    ] {
+        assert!(compile(&s).is_err());
+    }
+}
