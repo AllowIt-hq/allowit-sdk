@@ -108,6 +108,8 @@ Tests cover exact limits, cap bypass attempts, arithmetic overflow, syntax rejec
 
 ## Readable amounts and comparisons
 
+These helpers require source compiler revision `65a9bfe12f5abcbc7786a37b15f7f7a34f708dbd` or later. Older compilers reject helper source; the existing IR registry remains compatible because helpers lower to its existing operations. Hosts must pin the compiler artifact.
+
 Use decimal strings in policy source; runtime context remains JSON with integer base units. The compiler checks these helpers and lowers them to the existing integer/comparison IR used by every rail. No floats or rounding are involved. Keep the `?` on each helper.
 
 | Helper | Meaning |
