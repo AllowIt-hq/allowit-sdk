@@ -56,9 +56,11 @@ jobs:
           smallest=999999999
           for rust_opt in z s; do
             CARGO_PROFILE_RELEASE_OPT_LEVEL="$rust_opt" cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee -a contracts/dist/stellar-build.log
-            for binaryen_opt in 2 4; do
+            for binaryen_opt in z 2 4; do
               candidate="$RUNNER_TEMP/allowit-stellar-$rust_opt-$binaryen_opt.wasm"
-              "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features "-O$binaryen_opt" --shrink-level=2 --converge --strip-debug --strip-dwarf --strip-producers contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o "$candidate"
+              opt_flags=("-O$binaryen_opt")
+              if [ "$binaryen_opt" != z ]; then opt_flags+=(--shrink-level=2); fi
+              "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features "${opt_flags[@]}" --converge --strip-debug --strip-dwarf --strip-producers contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o "$candidate"
               size=$(wc -c < "$candidate")
               echo "LLVM opt=$rust_opt Binaryen O$binaryen_opt shrink=2 bytes=$size" | tee -a contracts/dist/stellar-toolchain.log
               if [ "$size" -lt "$smallest" ]; then

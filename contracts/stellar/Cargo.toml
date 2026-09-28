@@ -14,6 +14,8 @@ allowit-contract-core = { path = "../common", features = ["integer-json"] }
 allowit-sdk = { path = "../..", default-features = false }
 borsh = { version = "=1.6.0", default-features = false, features = ["derive"] }
 soroban-sdk = { version = "=26.1.0", features = ["alloc"] }
+# Same SHA-256 output with a compact implementation for the upload budget.
+sha2 = { version = "=0.10.9", default-features = false, features = ["force-soft-compact"] }
 
 [dev-dependencies]
 allowit-sdk = { path = "../..", features = ["compiler"] }

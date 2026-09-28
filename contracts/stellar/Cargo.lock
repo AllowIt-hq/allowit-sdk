@@ -50,6 +50,7 @@ dependencies = [
  "allowit-sdk",
  "borsh",
  "serde_json",
+ "sha2",
  "soroban-sdk",
 ]
 
