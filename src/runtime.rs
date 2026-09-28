@@ -375,6 +375,7 @@ fn validate_context(ctx: &Context) -> Result<(), alloc::boxed::Box<Decision>> {
         "solana:testnet",
         "stellar:mainnet",
         "stellar:testnet",
+        "local:dev",
     ]
     .contains(&ctx.network.as_str())
     {
@@ -484,6 +485,12 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
     }
     if let Err(error) = validate_context(ctx) {
         return *error;
+    }
+    if profile == Profile::Contract && ctx.network == "local:dev" {
+        return Decision::fail(
+            "INVALID_NETWORK",
+            "Local dev policies run only in the oracle profile.",
+        );
     }
     let mut evaluator = Evaluator {
         context: ctx,

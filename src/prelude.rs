@@ -105,6 +105,12 @@ pub fn confidence(ctx: &Context, name: &str) -> Result<ConfidenceInterval, Polic
     Ok(*value)
 }
 pub fn semantic(ctx: &Context, question: &str) -> Result<ConfidenceInterval, PolicyError> {
+    if question.trim().is_empty() || question.len() > 1024 {
+        return Err(error(
+            "INVALID_POLICY",
+            "Use a preference question of 1–1,024 bytes.",
+        ));
+    }
     if ctx.original_intent.trim().is_empty() {
         return Err(error(
             "ORIGINAL_INTENT_REQUIRED",
@@ -133,6 +139,38 @@ pub fn context_u64(ctx: &Context, key: &str) -> Result<u64, PolicyError> {
             "The request value must be a non-negative whole number.",
         )
     })
+}
+/// Inclusive preference thresholds. Scores between enabled thresholds require owner input.
+pub async fn check_preference(
+    ctx: &Context,
+    question: &str,
+    auto_approve: bool,
+    approve_percent: &str,
+    auto_deny: bool,
+    deny_percent: &str,
+) -> PolicyResult {
+    let approve = percent(approve_percent)?;
+    let deny = percent(deny_percent)?;
+    if auto_approve && auto_deny && deny >= approve {
+        return Err(error("INVALID_POLICY", "Denial must be below approval."));
+    }
+    if question.trim().is_empty() || question.len() > 1024 {
+        return Err(error(
+            "INVALID_POLICY",
+            "Use a preference question of 1–1,024 bytes.",
+        ));
+    }
+    if !auto_approve && !auto_deny {
+        return require_user_input(ctx, question).await;
+    }
+    let fit = semantic(ctx, question)?;
+    if auto_deny && fit.upper_bps <= deny {
+        return fail("The request does not meet this preference.");
+    }
+    if !auto_approve || fit.lower_bps < approve {
+        require_user_input(ctx, question).await?;
+    }
+    Ok(())
 }
 pub async fn require_user_input(_ctx: &Context, _prompt: &str) -> PolicyResult {
     Err(error(

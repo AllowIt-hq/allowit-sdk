@@ -132,3 +132,11 @@ if fit.lower_bps < percent("85")? {
 ```
 
 Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.
+
+### Local development and preference thresholds
+
+`local:dev` is a wallet-free oracle network. Contract evaluation rejects it. Local action records are never blockchain settlement.
+
+`check_preference(ctx, "Does the evidence support this preference?", true, "85", true, "40").await?;` is a predefined source helper. Its arguments are the exact question, automatic approval flag and minimum percentage, then automatic denial flag and maximum percentage. Enabled comparisons include equality. Denial must be strictly below approval when both are enabled. Disable either outcome independently; with both disabled, every reached check asks the owner without calling Jev. Missing or invalid evidence fails closed. The question, original intent and runtime JSON feed the host's Jev assessment. The one estimated field is `preference_fit: number` in `[0,1]`, a point score rather than calibrated confidence. The host rounds down to four decimal places and supplies equal integer basis-point bounds. Hard spending rules still apply.
+
+The helper lowers to the existing semantic, branch, failure and user-input IR operations; no new contract opcode is added. Oracle input suspends for an authenticated answer; a reached input call fails in contracts. Top-level helpers get a distinct Jev workflow block with editable literal settings; nested calls remain inside their conditional custom code. Existing top-level `let fit = semantic(...)` calls also get their own workflow item, while the branches using the result remain custom code.

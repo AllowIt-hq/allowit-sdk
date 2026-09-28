@@ -52,8 +52,149 @@ fn annotation(ty: &Type) -> Option<String> {
 struct Parser {
     nodes: usize,
     helper_calls: Vec<(String, SourceSpan)>,
+    preference_steps: Vec<(SourceSpan, Vec<String>)>,
 }
 impl Parser {
+    fn preference_step(
+        &mut self,
+        stmt: &Stmt,
+        depth: usize,
+    ) -> Result<Option<Vec<Statement>>, CompileError> {
+        let Stmt::Expr(SynExpr::Try(t), Some(_)) = stmt else {
+            return Ok(None);
+        };
+        let SynExpr::Await(a) = &*t.expr else {
+            return Ok(None);
+        };
+        let SynExpr::Call(c) = &*a.base else {
+            return Ok(None);
+        };
+        let SynExpr::Path(p) = &*c.func else {
+            return Ok(None);
+        };
+        if p.qself.is_some() || !simple_path(&p.path, "check_preference") {
+            return Ok(None);
+        }
+        self.tick(stmt.span(), depth)?;
+        if !t.attrs.is_empty()
+            || !a.attrs.is_empty()
+            || !c.attrs.is_empty()
+            || !p.attrs.is_empty()
+            || c.args.len() != 6
+        {
+            return Err(error(
+                stmt.span(),
+                "Use check_preference(ctx, question, auto_approve, approve_percent, auto_deny, deny_percent).await?; with literal settings.",
+            ));
+        }
+        let args = c
+            .args
+            .iter()
+            .map(|a| self.expr(a, depth + 1))
+            .collect::<Result<Vec<_>, _>>()?;
+        let [
+            Expr::Variable { name: ctx },
+            Expr::String { value: question },
+            Expr::Boolean { value: approve },
+            Expr::String { value: above },
+            Expr::Boolean { value: deny },
+            Expr::String { value: below },
+        ] = args.as_slice()
+        else {
+            return Err(error(
+                c.span(),
+                "Preference settings must be literal booleans and decimal percentage strings.",
+            ));
+        };
+        if ctx != "ctx" || question.trim().is_empty() || question.len() > 1024 {
+            return Err(error(
+                c.span(),
+                "Use ctx and a preference question of 1–1,024 bytes.",
+            ));
+        }
+        let upper =
+            crate::readability::percentage_bps(above).map_err(|e| error(c.span(), e.message))?;
+        let lower =
+            crate::readability::percentage_bps(below).map_err(|e| error(c.span(), e.message))?;
+        if *approve && *deny && lower >= upper {
+            return Err(error(
+                c.span(),
+                "The automatic denial threshold must be below the automatic approval threshold.",
+            ));
+        }
+        let span = range(stmt.span());
+        let call_span = range(p.span());
+        let variable = format!("__allowit_preference_{}", span.start);
+        let call = |name: &str, args| Expr::Call {
+            name: name.into(),
+            args,
+            span: call_span,
+        };
+        let context = || Expr::Variable { name: "ctx".into() };
+        let string = |s: &str| Expr::String { value: s.into() };
+        let field = |name: &str| Expr::Field {
+            object: Box::new(Expr::Variable {
+                name: variable.clone(),
+            }),
+            name: name.into(),
+        };
+        let compare = |op: &str, left, value| Expr::Binary {
+            op: op.into(),
+            left: Box::new(left),
+            right: Box::new(Expr::Integer { value }),
+        };
+        let mut statements = vec![];
+        if *approve || *deny {
+            statements.push(Statement::Let {
+                name: variable.clone(),
+                annotation: None,
+                value: Expr::Try {
+                    value: Box::new(call("semantic", vec![context(), string(question)])),
+                },
+                span,
+            });
+        }
+        if *deny {
+            statements.push(Statement::If {
+                condition: compare("<=", field("upper_bps"), lower),
+                then_branch: vec![Statement::Return {
+                    value: call(
+                        "fail",
+                        vec![string("The request does not meet this preference.")],
+                    ),
+                    span,
+                }],
+                else_branch: vec![],
+                span,
+            });
+        }
+        statements.push(Statement::If {
+            condition: if *approve {
+                compare("<", field("lower_bps"), upper)
+            } else {
+                Expr::Boolean { value: true }
+            },
+            then_branch: vec![Statement::Expression {
+                value: Expr::Try {
+                    value: Box::new(Expr::Await {
+                        value: Box::new(call(
+                            "require_user_input",
+                            vec![context(), string(question)],
+                        )),
+                    }),
+                },
+                semicolon: true,
+                span,
+            }],
+            else_branch: vec![],
+            span,
+        });
+        self.helper_calls
+            .push(("check_preference".into(), call_span));
+        self.preference_steps
+            .push((span, args[1..].iter().map(argument).collect()));
+        Ok(Some(statements))
+    }
     // Readability helpers are checked source sugar. Contracts receive only the existing
     // integer/comparison IR; they never parse decimals or trust a new runtime opcode.
     fn readable_helper(
@@ -178,11 +319,15 @@ impl Parser {
         }
     }
     fn block(&mut self, block: &syn::Block, depth: usize) -> Result<Vec<Statement>, CompileError> {
-        block
-            .stmts
-            .iter()
-            .map(|s| self.statement(s, depth + 1))
-            .collect()
+        let mut statements = vec![];
+        for stmt in &block.stmts {
+            if let Some(expanded) = self.preference_step(stmt, depth + 1)? {
+                statements.extend(expanded);
+            } else {
+                statements.push(self.statement(stmt, depth + 1)?);
+            }
+        }
+        Ok(statements)
     }
     fn statement(&mut self, stmt: &Stmt, depth: usize) -> Result<Statement, CompileError> {
         self.tick(stmt.span(), depth)?;
@@ -208,6 +353,12 @@ impl Parser {
                 let Pat::Ident(ident) = pat else {
                     return Err(error(pat.span(), "Use a simple immutable variable name."));
                 };
+                if ident.ident.to_string().starts_with("__allowit_") {
+                    return Err(error(
+                        ident.span(),
+                        "This variable prefix is reserved for policy helpers.",
+                    ));
+                }
                 if ident.mutability.is_some() || ident.by_ref.is_some() || ident.subpat.is_some() {
                     return Err(error(pat.span(), "Variables must be immutable."));
                 }
@@ -313,6 +464,16 @@ impl Parser {
                     && p.path.segments.len() == 1
                     && p.path.segments[0].arguments.is_empty() =>
             {
+                if p.path.segments[0]
+                    .ident
+                    .to_string()
+                    .starts_with("__allowit_")
+                {
+                    return Err(error(
+                        p.span(),
+                        "This variable prefix is reserved for policy helpers.",
+                    ));
+                }
                 Expr::Variable {
                     name: p.path.segments[0].ident.to_string(),
                 }
@@ -588,6 +749,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     let mut parser = Parser {
         nodes: 0,
         helper_calls: vec![],
+        preference_steps: vec![],
     };
     let ir = Program {
         version: REGISTRY_VERSION.into(),
@@ -598,10 +760,31 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     let ir_hash = canonical_ir_hash(&ir)?;
     let mut workflow: Vec<WorkflowBlock> = vec![];
     let mut limit = String::new();
+    let mut projected_preferences = BTreeSet::new();
     for statement in &ir.statements {
         let span = statement.span();
+        if let Some((_, arguments)) = parser.preference_steps.iter().find(|(s, _)| *s == span) {
+            if projected_preferences.insert(span.start) {
+                let info = function("check_preference").expect("registered helper");
+                workflow.push(WorkflowBlock {
+                    id: digest(format!("{source_hash}:{}:preference", span.start).as_bytes())[..16]
+                        .into(),
+                    kind: "preference".into(),
+                    name: info.name,
+                    label: info.title,
+                    description: info.description,
+                    arguments: arguments.clone(),
+                    source: source_slice(source, span),
+                    start: offset(source, span.start),
+                    end: offset(source, span.end),
+                });
+            }
+            continue;
+        }
         let value = match statement {
-            Statement::Expression { value, .. } | Statement::Return { value, .. } => Some(value),
+            Statement::Expression { value, .. }
+            | Statement::Return { value, .. }
+            | Statement::Let { value, .. } => Some(value),
             _ => None,
         };
         let predefined = value

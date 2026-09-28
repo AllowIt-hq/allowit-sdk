@@ -89,3 +89,9 @@ if fit.lower_bps < percent("85")? {
 ```
 
 Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.
+
+## Preference gates and Local dev
+
+Use `check_preference(ctx, "Exact preference question", true, "85", true, "40").await?;` for a configurable Jev gate. The flags enable automatic approval at or above 85% and denial at or below 40%. Other scores require the owner's answer. Both flags may be disabled; that asks the owner without calling Jev. Thresholds are exact decimal percentage strings from 0 to 100 with at most two decimals; denial must be below approval when both outcomes are enabled. A preference pass cannot override other constraints. The host's explicit assessment result is an object with exactly one numeric field, `preference_fit`, from 0 to 1; it is not calibrated confidence or multiple estimated dimensions. Context is provided as JSON into the CLI or SDK and forwarded by the trusted host with the exact question and original owner intent.
+
+`local:dev` runs only in the oracle profile. Local records consume the local budget without a wallet or blockchain settlement. A consumer-generated SKILL.md can contain a private scoped access URL and bearer header. Treat that file as a credential, send it only to the intended agent, keep authorization on its specified origin, and obey its expiry/revocation. The capability does not authorize independent wallet spending.
