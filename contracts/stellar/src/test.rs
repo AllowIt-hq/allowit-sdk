@@ -429,7 +429,7 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
         f.env.budget().reset_default();
         std::println!("Soroban Wasm {label} register: wasm={}B", wasm.len());
         let registration = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            f.env.register(wasm.as_slice(), ())
+            f.env.deployer().upload_contract_wasm(wasm.as_slice())
         }));
         if let Err(error) = registration {
             std::println!(
@@ -439,9 +439,20 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
             );
             std::panic::resume_unwind(error);
         }
-        f.contract = registration.unwrap();
+        let wasm_hash = registration.unwrap();
         std::println!(
-            "Soroban Wasm {label} registered: CPU={} memory={}",
+            "Soroban Wasm {label} upload: CPU={} memory={}",
+            f.env.budget().cpu_instruction_cost(),
+            f.env.budget().memory_bytes_cost()
+        );
+        f.env.budget().reset_default();
+        f.contract = f
+            .env
+            .deployer()
+            .with_address(f.owner.clone(), BytesN::from_array(&f.env, &[73; 32]))
+            .deploy_v2(wasm_hash, ());
+        std::println!(
+            "Soroban Wasm {label} deploy: CPU={} memory={}",
             f.env.budget().cpu_instruction_cost(),
             f.env.budget().memory_bytes_cost()
         );
@@ -506,5 +517,26 @@ fn compact_sha256_matches_standard_vectors() {
     assert_eq!(
         allowit_sdk::digest(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
         "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    );
+}
+
+#[test]
+fn stellar_rejects_artifacts_above_its_canonical_size_profile() {
+    let mut f = Fixture::with_policy(support::maximum_semantic_fixture());
+    let artifact = allowit_contract_core::binary::decode(&f.policy.artifact).unwrap();
+    assert_eq!(serde_json::to_vec(&artifact).unwrap().len(), 4096);
+    assert!(artifact.original_intent.len() < 2048);
+    // Add one intent byte without changing the Program, preserving valid binary
+    // framing and IR hash. The owner/compiler authorize the new artifact digest.
+    let mut bytes = f.policy.artifact.clone();
+    let len = u16::from_le_bytes(bytes[8..10].try_into().unwrap());
+    bytes[8..10].copy_from_slice(&(len + 1).to_le_bytes());
+    bytes.insert(10 + usize::from(len), b'x');
+    f.policy.mandate.artifact_hash = allowit_sdk::digest(&bytes);
+    f.activation.mandate = Bytes::from_slice(&f.env, &borsh::to_vec(&f.policy.mandate).unwrap());
+    f.activation.artifact = Bytes::from_slice(&f.env, &bytes);
+    assert_eq!(
+        f.client().try_activate(&f.activation),
+        Err(Ok(Error::InvalidArtifact))
     );
 }

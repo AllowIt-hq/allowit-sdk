@@ -15,7 +15,10 @@ mod integer_json;
 
 pub const CORE_VERSION: &str = "0.1.0";
 pub const MAX_ARTIFACT_BYTES: usize = 16_384;
+#[cfg(not(feature = "stellar"))]
 pub const MAX_CHAIN_ARTIFACT_BYTES: usize = 8192;
+#[cfg(feature = "stellar")]
+pub const MAX_CHAIN_ARTIFACT_BYTES: usize = 4096;
 pub const MAX_CHAIN_IR_NODES: usize = 256;
 pub const MAX_CHAIN_IR_DEPTH: usize = 8;
 
