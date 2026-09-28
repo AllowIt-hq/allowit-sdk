@@ -8,6 +8,7 @@ mod compiler;
 pub mod lsp;
 pub mod prelude;
 mod protocol;
+mod readability;
 mod registry;
 mod runtime;
 mod types;

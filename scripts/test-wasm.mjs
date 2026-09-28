@@ -34,7 +34,7 @@ context.answers[awaiting.decision.input_key] = true;
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'oracle', context }).decision.outcome, 'pass');
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'panic!("no")') }).ok, false);
-assert.equal(invoke({ operation: 'registry' }).functions.length, 10);
+assert.equal(invoke({ operation: 'registry' }).functions.length, 14);
 for (let i = 0; i < 100; i++) {
   assert.equal(invoke({ operation: 'compile', source }).policy.ir_hash, compiled.policy.ir_hash);
 }
@@ -98,3 +98,15 @@ for (const typeSource of [
   assert.equal(invoke({ operation: 'compile', source }).ok, true);
 }
 console.log('WebAssembly ABI, no host imports, source spans, oracle/contract outcomes, semantic JSON, numeric limits, bounded parsing and stable memory checks passed.');
+
+// Decimal helpers compile to the same contract-safe integer IR.
+const readable = 'pub async fn evaluate(ctx: &Context) -> PolicyResult { if !amount_at_most(ctx, "5")? { return fail("Above limit"); } let amount = usdc("0.000001")?; let score = percent("85.25")?; let candidate = 400; let benchmark = 500; if !within_percentage_points(candidate, benchmark, "1")? { return fail("Return gap"); } Ok(()) }';
+const readableCompiled = invoke({operation: 'compile', source: readable});
+assert.equal(readableCompiled.ok, true);
+assert.equal(readableCompiled.policy.calls.filter(c => ['amount_at_most', 'usdc', 'percent', 'within_percentage_points'].includes(c.name)).length, 4);
+for (const c of readableCompiled.policy.calls) assert.equal(readable.slice(c.start, c.end), c.name);
+for (const profile of ['oracle', 'contract']) {
+ assert.equal(invoke({operation: 'evaluate', source: readable, profile, context}).decision.outcome, 'pass');
+ assert.equal(invoke({operation: 'evaluate', source: readable, profile, context: {...context, amount_units: 5000001}}).decision.outcome, 'fail');
+}
+assert.equal(invoke({operation: 'compile', source: readable.replace('"0.000001"', '"0.0000001"')}).ok, false);

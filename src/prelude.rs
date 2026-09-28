@@ -17,6 +17,30 @@ fn error(code: &str, reason: &str) -> PolicyError {
 pub fn fail(reason: &str) -> PolicyResult {
     Err(error("POLICY_REJECTED", reason))
 }
+/// Convert an exact six-decimal USDC amount to policy units. Zero is allowed for comparisons.
+pub fn usdc(amount: &str) -> Result<u64, PolicyError> {
+    crate::readability::decimal_units(amount, 6).map_err(|e| error(&e.code, &e.message))
+}
+/// Convert 0..=100 percent to basis points, with at most two decimal places.
+pub fn percent(value: &str) -> Result<u64, PolicyError> {
+    crate::readability::percentage_bps(value).map_err(|e| error(&e.code, &e.message))
+}
+/// Inclusive comparison in the policy's six-decimal USDC unit.
+pub fn amount_at_most(ctx: &Context, amount: &str) -> Result<bool, PolicyError> {
+    if ctx.token != "USDC" {
+        return Err(error("TOKEN_MISMATCH", "Token does not match."));
+    }
+    Ok(ctx.amount_units <= usdc(amount)?)
+}
+/// Whether a return is no more than the specified percentage points below the benchmark.
+pub fn within_percentage_points(
+    candidate: u64,
+    benchmark: u64,
+    gap: &str,
+) -> Result<bool, PolicyError> {
+    let gap = percent(gap)?;
+    Ok(candidate >= benchmark || benchmark - candidate <= gap)
+}
 pub fn set_cap(ctx: &Context, amount: &str, token: &str) -> PolicyResult {
     let cap =
         crate::validation::amount_units(amount).map_err(|e| error("INVALID_AMOUNT", &e.message))?;

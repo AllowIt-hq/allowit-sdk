@@ -60,7 +60,9 @@ fn deterministic_return_gap_cannot_be_overridden_by_a_high_semantic_score() {
     ctx.runtime_context["candidate_yield_bps"] = json!(399);
     assert_eq!(evaluate(&p, Profile::Oracle, &ctx).code, "POLICY_REJECTED");
     ctx.runtime_context["candidate_yield_bps"] = json!(u64::MAX);
-    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).code, "ARITHMETIC_ERROR");
+    // A higher candidate return passes the gap check without overflowing candidate + gap.
+    // This numeric comparison does not authenticate the supplied return estimate.
+    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).code, "PASS");
 }
 #[test]
 fn context_values_are_strict_u64_not_coerced() {

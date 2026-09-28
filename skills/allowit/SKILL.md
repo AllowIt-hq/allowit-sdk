@@ -54,7 +54,7 @@ Keep hard constraints deterministic. For a maximum loss of **one percentage poin
 ```rust
 let candidate = context_u64(ctx, "candidate_yield_bps")?;
 let benchmark = context_u64(ctx, "benchmark_yield_bps")?;
-if candidate + 100 < benchmark {
+if !within_percentage_points(candidate, benchmark, "1")? {
     return fail("The expected return difference exceeds one percentage point");
 }
 ```
@@ -64,3 +64,28 @@ This differs from a relative 1% decrease; preserve the owner's intended unit in 
 An oracle `awaiting_input` result requires authenticated owner approval through the engine's continuation protocol. Never reuse an answer from another request. A smart contract fails every reached `require_user_input` call even if an answer exists. Cancellation, expiry, replay protection and fresh budget checks belong to the engine and rail.
 
 Runnable policies and contexts are in `examples/research.rs`, `examples/approval.rs`, `examples/green-investments.rs` and `examples/green-context.json`. `allowit lsp` provides editor diagnostics, function help and the `allowit/workflow` projection from the same compiler.
+
+## Readable amounts and comparisons
+
+Use decimal strings in policy source; runtime context remains JSON with integer base units. The compiler checks these helpers and lowers them to the existing integer/comparison IR used by every rail. No floats or rounding are involved. Keep the `?` on each helper.
+
+| Helper | Meaning |
+| --- | --- |
+| `usdc("25.50")?` | 25.50 USDC, exactly 25,500,000 units; up to six decimals. Zero is allowed in comparisons. |
+| `percent("85.25")?` | 85.25%, exactly 8,525 basis points; 0–100 with up to two decimals. |
+| `amount_at_most(ctx, "25.50")?` | Whether this purchase is at or below 25.50 USDC, including equality. |
+| `within_percentage_points(candidate, benchmark, "1")?` | Whether a candidate return is at most one percentage point below the benchmark. Both values are immutable integer variables or literals in basis points; 4% versus 5% passes. Higher returns pass. |
+
+These helpers do not create an allowance. Use `set_cap` for the total allocation and `cap_per_transaction` for a per-purchase limit, with positive decimal strings. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.
+
+```rust
+if !amount_at_most(ctx, "25.50")? {
+    require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
+}
+let fit = semantic(ctx, "Is there primary evidence supporting this purchase?")?;
+if fit.lower_bps < percent("85")? {
+    return fail("The evidence does not meet your threshold");
+}
+```
+
+Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.

@@ -51,8 +51,121 @@ fn annotation(ty: &Type) -> Option<String> {
 
 struct Parser {
     nodes: usize,
+    helper_calls: Vec<(String, SourceSpan)>,
 }
 impl Parser {
+    // Readability helpers are checked source sugar. Contracts receive only the existing
+    // integer/comparison IR; they never parse decimals or trust a new runtime opcode.
+    fn readable_helper(
+        &mut self,
+        expr: &SynExpr,
+        depth: usize,
+    ) -> Result<Option<Expr>, CompileError> {
+        let SynExpr::Call(call) = expr else {
+            return Ok(None);
+        };
+        let SynExpr::Path(path) = &*call.func else {
+            return Ok(None);
+        };
+        let Some(name) = [
+            "usdc",
+            "percent",
+            "amount_at_most",
+            "within_percentage_points",
+        ]
+        .into_iter()
+        .find(|name| path.qself.is_none() && simple_path(&path.path, name)) else {
+            return Ok(None);
+        };
+        self.tick(call.span(), depth)?;
+        if !call.attrs.is_empty() || !path.attrs.is_empty() {
+            return Err(error(call.span(), "Helper attributes are not supported."));
+        }
+        let count = match name {
+            "amount_at_most" => 2,
+            "within_percentage_points" => 3,
+            _ => 1,
+        };
+        if call.args.len() != count {
+            return Err(error(
+                call.span(),
+                "Arguments do not match the helper signature.",
+            ));
+        }
+        let literal = &call.args[count - 1];
+        let SynExpr::Lit(value) = literal else {
+            return Err(error(
+                literal.span(),
+                "Amount and percentage helpers require decimal string literals.",
+            ));
+        };
+        let syn::Lit::Str(value_string) = &value.lit else {
+            return Err(error(
+                literal.span(),
+                "Use a decimal string literal, such as \"25.50\".",
+            ));
+        };
+        if !value.attrs.is_empty() || !value_string.suffix().is_empty() {
+            return Err(error(
+                literal.span(),
+                "Use an unadorned decimal string literal.",
+            ));
+        }
+        let value = if name == "percent" || name == "within_percentage_points" {
+            crate::readability::percentage_bps(&value_string.value())
+        } else {
+            crate::readability::decimal_units(&value_string.value(), 6)
+        }
+        .map_err(|e| error(literal.span(), e.message))?;
+        let integer = Expr::Integer { value };
+        let binary = |op: &str, left, right| Expr::Binary {
+            op: op.into(),
+            left: Box::new(left),
+            right: Box::new(right),
+        };
+        let result = match name {
+            "amount_at_most" => {
+                if !matches!(&call.args[0], SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path, "ctx"))
+                {
+                    return Err(error(
+                        call.args[0].span(),
+                        "Use amount_at_most(ctx, \"25.50\")?.",
+                    ));
+                }
+                binary(
+                    "<=",
+                    Expr::Field {
+                        object: Box::new(Expr::Variable { name: "ctx".into() }),
+                        name: "amount_units".into(),
+                    },
+                    integer,
+                )
+            }
+            "within_percentage_points" => {
+                // Restrict operands before recursing: repeating nested helpers could expand
+                // exponentially, and repeated effectful expressions would be misleading.
+                for arg in call.args.iter().take(2) {
+                    if !matches!(arg, SynExpr::Path(_) | SynExpr::Lit(_)) {
+                        return Err(error(
+                            arg.span(),
+                            "Bind each return to a variable before comparing returns.",
+                        ));
+                    }
+                }
+                let candidate = self.expr(&call.args[0], depth + 1)?;
+                let benchmark = self.expr(&call.args[1], depth + 1)?;
+                // Short-circuit before subtraction: safe even at u64::MAX.
+                binary(
+                    "||",
+                    binary(">=", candidate.clone(), benchmark.clone()),
+                    binary("<=", binary("-", benchmark, candidate), integer),
+                )
+            }
+            _ => integer,
+        };
+        self.helper_calls.push((name.into(), range(path.span())));
+        Ok(Some(result))
+    }
     fn tick(&mut self, span: Span, depth: usize) -> Result<(), CompileError> {
         self.nodes += 1;
         if self.nodes > crate::MAX_NODES || depth > crate::MAX_DEPTH {
@@ -256,8 +369,11 @@ impl Parser {
             SynExpr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => Expr::Not {
                 value: Box::new(self.expr(&u.expr, depth + 1)?),
             },
-            SynExpr::Try(t) => Expr::Try {
-                value: Box::new(self.expr(&t.expr, depth + 1)?),
+            SynExpr::Try(t) => match self.readable_helper(&t.expr, depth + 1)? {
+                Some(lowered) => lowered,
+                None => Expr::Try {
+                    value: Box::new(self.expr(&t.expr, depth + 1)?),
+                },
             },
             SynExpr::Await(a) => Expr::Await {
                 value: Box::new(self.expr(&a.base, depth + 1)?),
@@ -469,7 +585,10 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
             "Use pub async fn evaluate(ctx: &Context) -> PolicyResult.",
         ));
     }
-    let mut parser = Parser { nodes: 0 };
+    let mut parser = Parser {
+        nodes: 0,
+        helper_calls: vec![],
+    };
     let ir = Program {
         version: REGISTRY_VERSION.into(),
         statements: parser.block(&f.block, 0)?,
@@ -544,7 +663,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
             end: offset(source, span.end),
         });
     }
-    let mut found = vec![];
+    let mut found = parser.helper_calls;
     walk_block(&ir.statements, &mut found);
     found.sort_by_key(|(_, s)| s.start);
     let mut seen = BTreeSet::new();
