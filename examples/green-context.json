@@ -1,0 +1,24 @@
+{
+  "amount_units": 10000000,
+  "allocation_units": 250000000,
+  "spent_units": 0,
+  "action": "investment",
+  "merchant": "issuer.example",
+  "recipient": "11111111111111111111111111111111",
+  "token": "USDC",
+  "network": "devnet",
+  "now": 1790590000,
+  "original_intent": "Prioritize green investments and avoid hype, without sacrificing more than one percentage point of expected annual return.",
+  "runtime_context": {
+    "candidate_yield_bps": 420,
+    "benchmark_yield_bps": 500,
+    "candidate": {
+      "name": "Clean-energy bond",
+      "environmental_claims": ["Project proceeds finance grid-scale renewable energy"],
+      "sources": [{"url": "https://issuer.example/disclosures", "kind": "issuer disclosure"}]
+    },
+    "provenance": "Illustrative caller-supplied claims; authenticate sources before making a real decision."
+  },
+  "answers": {},
+  "confidence": {}
+}

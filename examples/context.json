@@ -1,0 +1,13 @@
+{
+  "amount_units": 5000000,
+  "allocation_units": 100000000,
+  "spent_units": 0,
+  "action": "research",
+  "merchant": "research.example",
+  "recipient": "11111111111111111111111111111111",
+  "token": "USDC",
+  "network": "devnet",
+  "now": 1790590000,
+  "answers": {},
+  "confidence": {"safety": {"lower_bps": 7000, "upper_bps": 9000}}
+}

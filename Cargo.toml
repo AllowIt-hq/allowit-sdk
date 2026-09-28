@@ -1,0 +1,42 @@
+[package]
+name = "allowit-sdk"
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+description = "AllowIt restricted Rust policy compiler, evaluator, CLI and language server"
+autoexamples = false
+
+[lib]
+name = "allowit_sdk"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "allowit"
+path = "src/bin/allowit.rs"
+required-features = ["compiler"]
+
+[features]
+default = ["std", "compiler"]
+std = ["serde/std", "serde_json/std", "sha2/std"]
+compiler = ["std", "dep:syn", "dep:proc-macro2"]
+
+[dependencies]
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.150", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10.9", default-features = false }
+syn = { version = "2.0.117", optional = true, features = ["full", "extra-traits", "parsing"] }
+proc-macro2 = { version = "1.0.106", optional = true, features = ["span-locations"] }
+
+[target.'cfg(target_os = "solana")'.dependencies]
+solana-sha256-hasher = { version = "=2.3.0", default-features = false }
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("solana"))']
+
+[profile.release]
+lto = true
+opt-level = "s"
+codegen-units = 1
+panic = "abort"
+strip = true
