@@ -1,0 +1,34 @@
+[package]
+name = "allowit-stellar"
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+allowit-contract-core = { path = "../common" }
+allowit-sdk = { path = "../..", default-features = false }
+borsh = { version = "=1.6.0", default-features = false, features = ["derive"] }
+soroban-sdk = { version = "=26.1.0", features = ["alloc"] }
+
+[dev-dependencies]
+allowit-sdk = { path = "../..", features = ["compiler"] }
+soroban-sdk = { version = "=26.1.0", features = ["testutils", "alloc"] }
+serde_json = "=1.0.150"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[profile.dev]
+debug = 0

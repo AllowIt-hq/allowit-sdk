@@ -1,0 +1,25 @@
+[package]
+name = "allowit-contract-core"
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+
+[workspace]
+
+[features]
+default = []
+compiler = ["allowit-sdk/compiler"]
+
+[[bin]]
+name = "allowit-contract-artifact"
+path = "src/bin/artifact.rs"
+required-features = ["compiler"]
+
+[dependencies]
+allowit-sdk = { path = "../..", default-features = false }
+serde = { version = "=1.0.228", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "=1.0.150", default-features = false, features = ["alloc"] }
+borsh = { version = "=1.6.0", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+allowit-sdk = { path = "../..", features = ["compiler"] }
