@@ -421,7 +421,16 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
                 Bytes::from_slice(&f.env, &borsh::to_vec(&f.policy.mandate).unwrap());
         }
         // This is the compiled artifact, not the native Rust entry point.
+        // Wallet/SAC setup and Wasm upload/deploy are distinct transactions.
+        f.env.budget().reset_default();
+        std::println!("Soroban Wasm {label} register: wasm={}B", wasm.len());
         f.contract = f.env.register(wasm.as_slice(), ());
+        std::println!(
+            "Soroban Wasm {label} registered: CPU={} memory={}",
+            f.env.budget().cpu_instruction_cost(),
+            f.env.budget().memory_bytes_cost()
+        );
+        f.env.budget().reset_default();
         TokenClient::new(&f.env, &f.asset).approve(&f.owner, &f.contract, &1_000_000_000, &5000);
         f.env.budget().reset_default();
         let id = f.client().activate(&f.activation);
@@ -434,6 +443,7 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
         let before = f.client().state(&id);
         let mut request = support::request(&f.policy, 100_000_000);
         if evidence {
+            f.env.budget().reset_default();
             request.runtime_context = r#"{"risk":2}"#.into();
             assert_eq!(
                 f.client().try_execute(
