@@ -189,3 +189,32 @@ fn stellar_json_numbers_use_exact_integers_without_floating_point() {
     support::semantic_evidence(&state, &mut request, 9500);
     assert!(prepare_binary_execution(&state, &request, 1000).is_ok());
 }
+
+#[cfg(feature = "integer-json")]
+#[test]
+fn stellar_canonical_encoding_is_part_of_the_attested_request() {
+    let mut state = support::fixture(support::SEMANTIC);
+    convert(&mut state);
+    state.mandate.evidence_authority = Some(allowit_contract_core::EvidenceAuthority {
+        key: [6; 32],
+        key_id: "attester".into(),
+        version: "1".into(),
+    });
+    let mut request = support::request(&state, 1_000_000);
+    request.runtime_context = r#"{"note":"🦀","risk":2}"#.into();
+    support::semantic_evidence(&state, &mut request, 9500);
+    assert!(prepare_binary_execution(&state, &request, 1000).is_ok());
+    for altered in [
+        r#"{"note":"\uD83E\uDD80","risk":2}"#,
+        r#"{"note":"🦀","risk":2}{}"#,
+        r#"{"note":"🦀","risk":2,"risk":0}"#,
+        r#"{"note":"🦀","risk":3}"#,
+    ] {
+        let mut bad = request.clone();
+        bad.runtime_context = altered.into();
+        assert_eq!(
+            prepare_binary_execution(&state, &bad, 1000),
+            Err(Error::InvalidEvidence)
+        );
+    }
+}
