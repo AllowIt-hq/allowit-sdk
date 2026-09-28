@@ -4,8 +4,8 @@ extern crate alloc;
 
 use alloc::string::String;
 use allowit_contract_core::{
-    Error as CoreError, MAX_CHAIN_ARTIFACT_BYTES, Mandate, Request, State, prepare_execution,
-    record_execution, validate_chain_artifact,
+    Error as CoreError, MAX_CHAIN_ARTIFACT_BYTES, Mandate, Request, State,
+    prepare_binary_execution, record_execution, validate_binary_chain_artifact,
 };
 use soroban_sdk::{
     Address, Bytes, BytesN, Env, IntoVal, contract, contracterror, contractimpl, contracttype,
@@ -68,7 +68,7 @@ pub struct Activation {
     pub recipient: Address,
     /// Exact Borsh encoding of the shared Mandate envelope.
     pub mandate: Bytes,
-    /// Compiler artifact JSON, with the exact digest bound in mandate.
+    /// ALITIR01 binary compiler artifact, with the exact digest bound in mandate.
     pub artifact: Bytes,
 }
 
@@ -205,7 +205,7 @@ impl AllowIt {
             _ => return Err(Error::BindingMismatch),
         }
         let bytes = activation.artifact.to_alloc_vec();
-        validate_chain_artifact(&mandate, &bytes)?;
+        validate_binary_chain_artifact(&mandate, &bytes)?;
         let id: BytesN<32> = env.crypto().sha256(&activation.mandate).into();
         let key = Key::Mandate(id.clone());
         if env.storage().persistent().has(&key) {
@@ -289,7 +289,7 @@ impl AllowIt {
         {
             return Err(Error::BindingMismatch);
         }
-        prepare_execution(&state, &request, env.ledger().timestamp())?;
+        prepare_binary_execution(&state, &request, env.ledger().timestamp())?;
         token::Client::new(&env, &stored.asset).transfer_from(
             &env.current_contract_address(),
             &stored.owner,

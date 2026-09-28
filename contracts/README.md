@@ -21,7 +21,11 @@ cargo run --manifest-path contracts/common/Cargo.toml --features compiler \
   --bin allowit-contract-artifact -- policy.rs intent.txt > artifact.json
 ```
 
-This command compiles source and emits compact JSON without a trailing newline. Set `artifact_hash` to SHA-256 of those exact bytes. Use `allowit_contract_core::Mandate`, `Request`, `mandate_hash` and `request_hash` when constructing client payloads. Borsh encoding, enum discriminants and the pinned version are part of this first wire protocol; arbitrary JSON is not an instruction.
+For Stellar, append `--binary` to emit the internal `ALITIR01` binary artifact instead of JSON. The SDK and CLI runtime-context interface remains JSON; only the stored Stellar policy artifact uses binary transport. `allowit_contract_core::binary::encode` converts the compiled artifact to this wire format. Both formats reconstruct the exact same SDK `Program`, source spans and canonical IR hash. The artifact hash covers the chosen exact wire bytes, so JSON and binary mandate IDs differ.
+
+`ALITIR01` has an eight-byte version marker, little-endian fixed-width integers, u16 byte lengths/counts, UTF-8 strings, exact boolean/optional tags and exhaustive expression/statement tags. The decoder rejects unknown versions/tags, malformed lengths/UTF-8, trailing bytes, depth above eight and more than 256 nodes before recursive allocation. The reconstructed canonical JSON artifact must still fit the shared 8,192-byte profile, so changing transport does not admit a larger policy. `validate_binary_artifact` rechecks all metadata and the canonical SDK IR hash; `prepare_binary_execution` uses the same shared deterministic evaluator and bindings as JSON execution.
+
+This command compiles source and emits exact bytes without a trailing newline. Set `artifact_hash` to SHA-256 of those exact bytes. Use `allowit_contract_core::Mandate`, `Request`, `mandate_hash` and `request_hash` when constructing client payloads. Borsh encoding, enum discriminants and the pinned version are part of this first wire protocol; arbitrary JSON is not an instruction.
 
 ## Requests and evidence
 
@@ -43,7 +47,7 @@ The program has no hardcoded program ID or default authority. A deployment choos
 
 ```sh
 ALLOWIT_SOLANA_NETWORK=devnet cargo build-sbf \
-  --manifest-path contracts/solana/Cargo.toml
+  --manifest-path contracts/solana/Cargo.toml --sbf-out-dir "$PWD/contracts/dist"
 ```
 
 Use `mainnet`, `testnet` or `devnet`. The deployable SBF build refuses an absent/unknown network setting. Solana does not expose a genesis-hash sysvar to programs: the deployment process must check RPC genesis and record the matching artifact/program ID on each cluster. Native tests use Devnet as their fixture network.
@@ -67,7 +71,9 @@ cargo build --release --locked --target wasm32v1-none \
   --manifest-path contracts/stellar/Cargo.toml
 ```
 
-Deploy the resulting `allowit_stellar.wasm` using the chosen Stellar account/network. No constructor installs a default authority.
+Optimize the Wasm with the checksum-pinned Binaryen 133 command in `contracts.yml` (`wasm-opt --mvp-features -Oz --converge --strip-debug --strip-dwarf`). Run the exact optimized bytes through the compiled-Wasm test before deployment. Upload costs count toward the network budget too; raw build output is not an accepted deployable artifact.
+
+Deploy the verified `allowit_stellar.wasm` using the chosen Stellar account/network. No constructor installs a default authority.
 
 - `activate(Activation) -> BytesN<32>` requires owner and compiler authorization covering every argument. It checks all bound addresses, actual token decimals, and the ledger network ID, then stores the immutable mandate and returns SHA-256 of its Borsh envelope as its ID.
 - The owner grants a SEP-41 allowance to the contract address. Funds stay in the owner's token account. This allowance is shared by all of that owner's active policies for this token; each policy still has its own signed allocation and spent counter. Cancelling the shared allowance stops all those policies.

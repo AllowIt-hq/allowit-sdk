@@ -24,6 +24,10 @@ impl Fixture {
         Self::with_policy(support::fixture(source))
     }
     fn with_policy(mut policy: State) -> Self {
+        let artifact: allowit_contract_core::Artifact =
+            serde_json::from_slice(&policy.artifact).unwrap();
+        policy.artifact = allowit_contract_core::binary::encode(&artifact).unwrap();
+        policy.mandate.artifact_hash = allowit_sdk::digest(&policy.artifact);
         let env = Env::default();
         env.mock_all_auths();
         env.ledger().with_mut(|ledger| {

@@ -9,6 +9,8 @@ use allowit_sdk::{
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
+pub mod binary;
+
 pub const CORE_VERSION: &str = "0.1.0";
 pub const MAX_ARTIFACT_BYTES: usize = 16_384;
 pub const MAX_CHAIN_ARTIFACT_BYTES: usize = 8192;
@@ -18,21 +20,20 @@ pub const MAX_CHAIN_IR_DEPTH: usize = 8;
 /// Bounded target profile shared by the Solana and Stellar interpreters.
 /// Larger SDK/headless profiles do not imply that every policy fits a chain VM.
 pub fn validate_chain_artifact(mandate: &Mandate, bytes: &[u8]) -> Result<(), Error> {
-    use allowit_sdk::{Expr, Statement};
     if bytes.len() > MAX_CHAIN_ARTIFACT_BYTES {
         return Err(Error::InvalidArtifact);
     }
     let artifact = validate_artifact(mandate, bytes)?;
+    validate_chain_program(&artifact.ir)
+}
+
+fn validate_chain_program(program: &Program) -> Result<(), Error> {
+    use allowit_sdk::{Expr, Statement};
     enum Node<'a> {
         S(&'a Statement),
         E(&'a Expr),
     }
-    let mut pending: Vec<_> = artifact
-        .ir
-        .statements
-        .iter()
-        .map(|s| (Node::S(s), 1))
-        .collect();
+    let mut pending: Vec<_> = program.statements.iter().map(|s| (Node::S(s), 1)).collect();
     let mut count = 0;
     while let Some((node, depth)) = pending.pop() {
         count += 1;
@@ -286,7 +287,7 @@ pub fn request_hash(m: &Mandate, request: &Request) -> Result<String, Error> {
     Ok(allowit_sdk::digest(&bytes))
 }
 
-pub fn validate_artifact(m: &Mandate, bytes: &[u8]) -> Result<Artifact, Error> {
+fn validate_artifact_bytes(m: &Mandate, bytes: &[u8]) -> Result<(), Error> {
     validate_mandate(m)?;
     if bytes.is_empty() || bytes.len() > MAX_ARTIFACT_BYTES {
         return Err(Error::InvalidArtifact);
@@ -294,7 +295,35 @@ pub fn validate_artifact(m: &Mandate, bytes: &[u8]) -> Result<Artifact, Error> {
     if allowit_sdk::digest(bytes) != m.artifact_hash {
         return Err(Error::ArtifactMismatch);
     }
+    Ok(())
+}
+
+pub fn validate_artifact(m: &Mandate, bytes: &[u8]) -> Result<Artifact, Error> {
+    validate_artifact_bytes(m, bytes)?;
     let artifact: Artifact = serde_json::from_slice(bytes).map_err(|_| Error::InvalidArtifact)?;
+    validate_decoded_artifact(m, artifact)
+}
+
+pub fn validate_binary_artifact(m: &Mandate, bytes: &[u8]) -> Result<Artifact, Error> {
+    validate_artifact_bytes(m, bytes)?;
+    let artifact = binary::decode(bytes)?;
+    // Changing the wire format must not widen the tested chain policy profile.
+    if serde_json::to_vec(&artifact)
+        .map_err(|_| Error::InvalidArtifact)?
+        .len()
+        > MAX_CHAIN_ARTIFACT_BYTES
+    {
+        return Err(Error::InvalidArtifact);
+    }
+    validate_decoded_artifact(m, artifact)
+}
+
+pub fn validate_binary_chain_artifact(m: &Mandate, bytes: &[u8]) -> Result<(), Error> {
+    // The binary decoder enforces chain depth/nodes/bytes before allocating.
+    validate_binary_artifact(m, bytes).map(|_| ())
+}
+
+fn validate_decoded_artifact(m: &Mandate, artifact: Artifact) -> Result<Artifact, Error> {
     if artifact.original_intent.len() > 2048 {
         return Err(Error::InvalidArtifact);
     }
@@ -319,6 +348,23 @@ pub fn validate_artifact(m: &Mandate, bytes: &[u8]) -> Result<Artifact, Error> {
 /// A rail MUST authenticate the bound evidence-authority account before passing
 /// evidence here. This function verifies its complete request/time/interval binding.
 pub fn prepare_execution(state: &State, request: &Request, now: u64) -> Result<Decision, Error> {
+    prepare_execution_with(state, request, now, validate_artifact)
+}
+
+pub fn prepare_binary_execution(
+    state: &State,
+    request: &Request,
+    now: u64,
+) -> Result<Decision, Error> {
+    prepare_execution_with(state, request, now, validate_binary_artifact)
+}
+
+fn prepare_execution_with(
+    state: &State,
+    request: &Request,
+    now: u64,
+    decode: impl FnOnce(&Mandate, &[u8]) -> Result<Artifact, Error>,
+) -> Result<Decision, Error> {
     let m = &state.mandate;
     if !state.active || state.revoked {
         return Err(Error::Inactive);
@@ -351,7 +397,7 @@ pub fn prepare_execution(state: &State, request: &Request, now: u64) -> Result<D
         return Err(Error::BudgetExceeded);
     }
     state.next_nonce.checked_add(1).ok_or(Error::Overflow)?;
-    let artifact = validate_artifact(m, &state.artifact)?;
+    let artifact = decode(m, &state.artifact)?;
     if request.runtime_context.len() > 1024 {
         return Err(Error::InvalidEvidence);
     }
