@@ -171,3 +171,5 @@ The trusted oracle host supplies `purchase_counts`, exactly 40 unsigned counts d
 Consumers need a build containing this helper; older evaluators fail closed on the new registry call. Wire registry version remains unchanged, so use the SDK commit and artifact digest for compatibility. Context continues to enter the CLI or SDK as JSON; user-supplied runtime evidence is separate from authoritative ledger fields.
 
 The default `oracle-ledger` feature includes host purchase counters. Contract builds disable default features and return `LEDGER_REQUIRED` for tier calls, excluding ledger-only code from tight on-chain upload budgets.
+
+Builds without `oracle-ledger` reject purchase-tier IR during validation with `LEDGER_REQUIRED`, before any evaluation. The registry still describes the function so callers can identify this unsupported feature. The public `spending` module is available only with `oracle-ledger`. Default SDK WASM and host builds include it; contract builds exclude it.

@@ -43,3 +43,37 @@ The fix works because several pieces combine:
 - **Integer thresholds:** the `Lit::Int` path parses them exactly, and the facade's `From<i32>` impl lets them type-check.
 - **Import parsing:** `allowit::v1::prelude::*` is parsed consistently in `valid_import` and `validate_signature`. `v2`, `other::v1` and doubled `v1` are rejected.
 - **Bands and shifts:** band ≤ 39 and `first_count << band` < 2^59, so there is no out-of-bounds index or overflow. The ledger length check is exactly 40.
+
+## Contract upload follow-up
+
+Actual Soroban CI caught a default-budget upload failure after the tier change. The no-default-feature profile now excludes the oracle ledger implementation and rejects tier IR at validation with `LEDGER_REQUIRED`. Default SDK/app/engine builds retain it. Two additional Claude Code responses used actual model `claude-opus-5-5`; neither found a fail-open path. The checks below close their source questions:
+
+- Registry has 16 entries, including the unconditional tier descriptor; the prior smoke assertion was stale. SDK WASM uses default features.
+- All four feature profiles compile. Default and no-default feature-profile tests pass; default clippy and SDK tests pass. Contracts use `default-features = false`; no_std compiles without floating-point source facades.
+- The evaluator retains its explicit `LEDGER_REQUIRED` arm without the feature, and every evaluation validates all IR first. Calls have one IR representation.
+- Contract CI still measures the actual optimized artifact under the default upload/invocation budget. No budget increase or skipped VM test is allowed; publication of source alone does not establish that result.
+
+The final narrow review response follows.
+
+# Review: reject purchase tiers when `oracle-ledger` is off
+
+I only reviewed the diff you pasted. I didn't open the rest of the repo, so a few checks below depend on code I haven't seen.
+
+**Verdict:** The `cfg` logic in the diff is correct, and I found no fail-open path inside `Expr::Call`. Before merging, you still need to confirm three things: the contract build actually has the feature off, the evaluator's fallback rejects unknown calls, and the contract is now under the 100M limit.
+
+## What's correct
+- **Early rejection:** the `#[cfg(not(feature = "oracle-ledger"))]` check runs first in the `Expr::Call` arm and returns before any arguments are checked. Nothing further down can accept the call. Arguments aren't validated first, so a malformed tier call reports `LEDGER_REQUIRED` instead of a type error. That's fine.
+- **Consistent gating:** the field, its initializer, the argument-type arm and the `tier_count` check all use the same `cfg`. The no-default build can't hit an unused-field or missing-field error.
+- **Test gating:** integration tests compile with the package's features, so `#[cfg(feature = "oracle-ledger")]` in `tests/feature_profiles.rs` picks the right branch. `cargo test` checks the accept path under default features, which presumably include `oracle-ledger`. The no-default test run checks the reject path.
+- **Registry:** it stays unconditional, and the test asserts that.
+
+## Check before merging
+1. **Feature unification (the most likely mistake).** This change only helps if the contract crate really builds the SDK with `oracle-ledger` off. If anything in the contract's dependency graph turns on SDK defaults or `oracle-ledger`, Cargo merges the features and the gate quietly compiles back in. Nothing in CI checks this. Run `cargo tree -e features -i allowit-sdk` from the contract crate, or add a CI step that builds the real contract.
+2. **Did it get under 100M?** You were 582,805 instructions over. This diff removes one match arm, a counter and a check, and adds a new error path with its string. That could save very little. Measure the Soroban upload again. The CI here only builds the default-feature cdylib and runs the WASM smoke test, and neither measures the contract profile.
+3. **Other ways to call it.** I can only see the `Expr::Call` arm. If the IR has any other call form that resolves to `cap_purchase_tiers`, such as a method call, a path call or a registry-driven dispatch, that path skips the new check. Search `validation.rs` and the compiler lowering for the string `cap_purchase_tiers`.
+4. **Evaluator fallback.** Validation is only the first gate. Confirm that with `oracle-ledger` off, the evaluator's default branch returns an error for `cap_purchase_tiers`, not a no-op or `Ok(())`. It matters for any entry point that runs IR without calling `validate_program`. The contract adapters cover the wire formats, but check SDK entry points such as `evaluate` on a deserialized `Program`.
+
+## Minor
+- **Missing test profile:** CI only type-checks `--features compiler` without `oracle-ledger`; no tests run in that combination. If the compiler path calls `validate_program` on its own, consider running `feature_profiles` there too.
+- **Warnings aren't enforced off-default:** clippy with `-D warnings` only runs on the default profile, so any helpers or messages used only by the tier logic could leave dead-code warnings in the no-ledger builds without failing CI. Optionally add `RUSTFLAGS=-D warnings` to the `cargo check` profile steps.
+- **Registry mismatch:** with the ledger off, the registry lists a function that validation always rejects. You've said that's intended and documented. Just make sure registry-driven tooling like autocomplete or docs doesn't present it as usable in those builds.

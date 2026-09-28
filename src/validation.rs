@@ -69,6 +69,7 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
 struct Validator {
     nodes: usize,
     config_count: usize,
+    #[cfg(feature = "oracle-ledger")]
     tier_count: usize,
 }
 impl Validator {
@@ -258,6 +259,13 @@ impl Validator {
                 _ => return Err(bad("Only require_user_input supports .await.")),
             },
             Expr::Call { name, args, .. } => {
+                #[cfg(not(feature = "oracle-ledger"))]
+                if name == "cap_purchase_tiers" {
+                    return Err(CompileError::new(
+                        "LEDGER_REQUIRED",
+                        "Purchase tiers require the oracle ledger feature.",
+                    ));
+                }
                 let types = args
                     .iter()
                     .map(|a| self.expr(a, env, depth + 1, false))
@@ -266,6 +274,7 @@ impl Validator {
                     "set_cap" | "cap_per_transaction" => {
                         alloc::vec![Type::Context, Type::String, Type::String]
                     }
+                    #[cfg(feature = "oracle-ledger")]
                     "cap_purchase_tiers" => {
                         alloc::vec![Type::Context, Type::String, Type::Integer, Type::String]
                     }
@@ -304,6 +313,7 @@ impl Validator {
                         }
                     }
                 }
+                #[cfg(feature = "oracle-ledger")]
                 if name == "cap_purchase_tiers" {
                     self.tier_count += 1;
                     if self.tier_count > 1 {
@@ -389,6 +399,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
     let mut validator = Validator {
         nodes: 0,
         config_count: 0,
+        #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
     if !validator.block(&program.statements, &mut env, 0, true)? {
