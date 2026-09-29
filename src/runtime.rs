@@ -37,44 +37,70 @@ impl Evaluator<'_> {
         env: &mut BTreeMap<String, Value>,
     ) -> Result<bool, alloc::boxed::Box<Decision>> {
         for statement in statements {
-            match statement {
-                Statement::Let { name, value, .. } => {
-                    let value = self.expr(value, env)?;
-                    env.insert(name.clone(), value);
-                }
-                Statement::Expression {
-                    value, semicolon, ..
-                } => {
-                    self.expr(value, env)?;
-                    if !semicolon {
+            let result = (|| {
+                match statement {
+                    Statement::Let { name, value, .. } => {
+                        let value = self.expr(value, env)?;
+                        env.insert(name.clone(), value);
+                    }
+                    Statement::Expression {
+                        value, semicolon, ..
+                    } => {
+                        self.expr(value, env)?;
+                        if !semicolon {
+                            return Ok(true);
+                        }
+                    }
+                    Statement::Return { value, .. } => {
+                        self.expr(value, env)?;
                         return Ok(true);
                     }
-                }
-                Statement::Return { value, .. } => {
-                    self.expr(value, env)?;
-                    return Ok(true);
-                }
-                Statement::If {
-                    condition,
-                    then_branch,
-                    else_branch,
-                    ..
-                } => {
-                    let Value::Boolean(condition) = self.expr(condition, env)? else {
-                        return Err(invalid());
-                    };
-                    if self.block(
-                        if condition { then_branch } else { else_branch },
-                        &mut env.clone(),
-                    )? {
-                        return Ok(true);
+                    Statement::If {
+                        condition,
+                        then_branch,
+                        else_branch,
+                        ..
+                    } => {
+                        let Value::Boolean(condition) = self.expr(condition, env)? else {
+                            return Err(invalid());
+                        };
+                        if self.block(
+                            if condition { then_branch } else { else_branch },
+                            &mut env.clone(),
+                        )? {
+                            return Ok(true);
+                        }
                     }
+                }
+                Ok(false)
+            })();
+            match result {
+                Ok(true) => return Ok(true),
+                Ok(false) => {}
+                Err(mut decision) => {
+                    if decision.source_start.is_none() {
+                        let span = statement.span();
+                        decision.source_start = Some(span.start);
+                        decision.source_end = Some(span.end);
+                    }
+                    return Err(decision);
                 }
             }
         }
         Ok(false)
     }
     fn expr(&mut self, expr: &Expr, env: &BTreeMap<String, Value>) -> EvalResult {
+        self.expr_inner(expr, env).map_err(|mut decision| {
+            if decision.source_start.is_none()
+                && let Expr::Call { span, .. } = expr
+            {
+                decision.source_start = Some(span.start);
+                decision.source_end = Some(span.end);
+            }
+            decision
+        })
+    }
+    fn expr_inner(&mut self, expr: &Expr, env: &BTreeMap<String, Value>) -> EvalResult {
         self.steps += 1;
         if self.steps > crate::MAX_NODES * 2 {
             return Err(failure(
@@ -361,6 +387,8 @@ impl Evaluator<'_> {
                                     input_key: Some(key),
                                     question: None,
                                     evidence_key: None,
+                                    source_start: None,
+                                    source_end: None,
                                 }));
                             }
                         }

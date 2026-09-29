@@ -246,6 +246,11 @@ pub struct Decision {
     pub question: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_key: Option<String>,
+    /// UTF-8 byte offsets of the operation that halted evaluation, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_end: Option<usize>,
 }
 impl Decision {
     pub fn fail(code: &str, reason: impl Into<String>) -> Self {
@@ -257,6 +262,8 @@ impl Decision {
             input_key: None,
             question: None,
             evidence_key: None,
+            source_start: None,
+            source_end: None,
         }
     }
     pub fn pass() -> Self {
@@ -268,6 +275,8 @@ impl Decision {
             input_key: None,
             question: None,
             evidence_key: None,
+            source_start: None,
+            source_end: None,
         }
     }
 }
