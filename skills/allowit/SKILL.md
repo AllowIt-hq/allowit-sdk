@@ -5,12 +5,12 @@ description: Compile, inspect and evaluate AllowIt Rust policies with structured
 
 # AllowIt policies
 
-Use the installed `allowit` CLI or this repository's `cargo run --locked --` commands. Compile the exact policy source before evaluating it. A valid compilation does not approve a transaction.
+This is the Rust SDK developer skill. Use this repository's `cargo run --locked --` commands. The separate Go `allowit` action client uses `show/eval/exec/status`; generated consumer skills target that client. Compile the exact policy source before evaluating it. A valid compilation does not approve a transaction.
 
 1. Read the original owner instructions and the immutable policy source. Preserve the original instructions across revisions and forks; never replace them with your own summary.
 2. Put the complete available request context in a JSON file. Supply `amount_units`, `allocation_units`, `spent_units`, `action`, `merchant`, `recipient`, `token`, `network`, `now`, `original_intent` and `runtime_context`. Amounts use exact integer micro-USDC. Runtime context is an object, at most 16 KiB/depth8/128 entries. Original intent is at most 16 KiB. Include source/provenance information for claims.
-3. Run `allowit compile POLICY.rs` and inspect its exact source, limits and workflow. Use `allowit registry` for supported functions and their help.
-4. Run `allowit evaluate POLICY.rs CONTEXT.json oracle` or submit the equivalent JSON request to the authenticated engine. Inspect `decision.outcome` and `decision.code`; CLI process success alone is not approval.
+3. Run `cargo run --locked -- compile POLICY.rs` and inspect its exact source, limits and workflow. Use `cargo run --locked -- registry` for supported functions and their help.
+4. Run `cargo run --locked -- evaluate POLICY.rs CONTEXT.json oracle` or submit the equivalent JSON request to the authenticated engine. Inspect `decision.outcome` and `decision.code`; CLI process success alone is not approval.
 5. A `pass` permits only the exact bound request within the host's authenticated mandate. It is not evidence that funds moved. The executing rail must enforce that mandate again and return an actual transaction result.
 
 ## Runtime JSON
@@ -63,7 +63,7 @@ This differs from a relative 1% decrease; preserve the owner's intended unit in 
 
 An oracle `awaiting_input` result requires authenticated owner approval through the engine's continuation protocol. Never reuse an answer from another request. A smart contract fails every reached `require_user_input` call even if an answer exists. Cancellation, expiry, replay protection and fresh budget checks belong to the engine and rail.
 
-Runnable policies and contexts are in `examples/research.rs`, `examples/approval.rs`, `examples/green-investments.rs` and `examples/green-context.json`. `allowit lsp` provides editor diagnostics, function help and the `allowit/workflow` projection from the same compiler.
+Runnable policies and contexts are in `examples/research.rs`, `examples/approval.rs`, `examples/green-investments.rs` and `examples/green-context.json`. `cargo run --locked -- lsp` provides editor diagnostics, function help and the `allowit/workflow` projection from the same compiler.
 
 ## Readable amounts and comparisons
 

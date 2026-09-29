@@ -14,6 +14,8 @@ pub async fn evaluate(ctx: &Context) -> PolicyResult {
 }
 ```
 
+The Go [action CLI](https://github.com/ackrate/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. Go also serves HTTP and controls the hosted microVM agent. Restricted Rust remains the policy source and enforcement language.
+
 ## Run
 
 Use Rust 1.98 or later. `Cargo.lock` pins the dependency graph.
@@ -56,6 +58,8 @@ The predefined registry contains `set_cap`, `cap_per_transaction`, `allow_action
 Pass and fail are the only terminal outcomes. In the oracle profile, reaching `require_user_input(...).await?` returns a non-authorizing `awaiting_input` decision with an input key and prompt. The engine must authenticate the owner, bind the exact policy/action/evidence snapshot, persist the suspension and answers, reject replay, enforce expiry/revocation and recheck fresh budgets before executing. The SDK does not authenticate a plain `answers` map. Each key binds the policy source digest, call location and prompt; distinct calls cannot share an approval by merely repeating the prompt.
 
 In the contract profile, every reached user-input call fails with `USER_INPUT_REQUIRED`, even when an answer is present. An oracle approval does not change this rule. Confidence intervals must come from trusted, bound evidence. Missing evidence fails, malformed intervals fail, and no score is invented. Valid bounds are ordered integers between 0 and 10,000 basis points. A self-reported model score is not a calibrated interval.
+
+Halted decisions may include `source_start` and `source_end`, exact UTF-8 byte offsets for the failing or awaiting-input call. Arithmetic failures without a call use the containing statement; preflight host guards may have no span. Treat spans as diagnostics, bounds-check them against the exact source, and never use them as authority. Consumers with strict older response decoders must accept these optional fields before upgrading the writer; Rust callers constructing `Decision` literals must supply the new optional fields.
 
 ## Preference questions and runtime JSON
 
