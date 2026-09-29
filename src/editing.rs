@@ -43,8 +43,15 @@ struct Bound {
 struct Bounds<'a> {
     variable: &'a str,
     found: Vec<Bound>,
+    reads: usize,
 }
 impl<'ast> Visit<'ast> for Bounds<'_> {
+    fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
+        if expr.path.is_ident(self.variable) {
+            self.reads += 1;
+        }
+        syn::visit::visit_expr_path(self, expr);
+    }
     fn visit_expr_binary(&mut self, expr: &'ast syn::ExprBinary) {
         let operator = match expr.op {
             syn::BinOp::Lt(_) => "<",
@@ -124,11 +131,18 @@ fn bounds(function: &ItemFn, start: usize) -> Vec<Bound> {
         let mut visitor = Bounds {
             variable: &variable,
             found: vec![],
+            reads: 0,
         };
         for later in &function.block.stmts[index + 1..] {
             visitor.visit_stmt(later);
         }
-        return visitor.found;
+        // Never present a partial set: aliases, computed/reversed comparisons and
+        // other unrecognized reads must remain an explicit source-edit operation.
+        return if visitor.reads == visitor.found.len() {
+            visitor.found
+        } else {
+            vec![]
+        };
     }
     vec![]
 }

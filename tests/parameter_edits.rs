@@ -500,3 +500,64 @@ fn no_op_parameter_edits_preserve_source_and_artifact_hashes() {
         response["policy"]["source_hash"]
     );
 }
+
+fn partial_semantic_edit_is_rejected(body: &str) {
+    let original = source(body);
+    let policy = compile(&original).unwrap();
+    let step = policy
+        .workflow
+        .iter()
+        .find(|step| step.name == "semantic")
+        .unwrap();
+    assert!(
+        step.score_thresholds.is_empty(),
+        "A partial list would conceal another use of the same assessment: {body}"
+    );
+    let response = thresholds(&original, &step.id, json!([9500]));
+    assert_eq!(response["error"]["code"], "INVALID_EDIT", "{response}");
+    rejected(response);
+}
+
+#[test]
+fn a_reversed_comparison_prevents_partial_literal_threshold_edits() {
+    partial_semantic_edit_is_rejected(
+        "let fit = semantic(ctx, \"Research\")?;\nif 5000 <= fit.lower_bps { return Ok(()); }\nif fit.lower_bps < 9000 { return fail(\"No\"); }\nOk(())",
+    );
+}
+
+#[test]
+fn a_computed_bound_prevents_partial_literal_threshold_edits() {
+    for other_comparison in [
+        "let cutoff = 5000; if fit.lower_bps >= cutoff { return Ok(()); }",
+        "if fit.lower_bps >= 4000 + 1000 { return Ok(()); }",
+        "if fit.lower_bps + 1000 >= 6000 { return Ok(()); }",
+    ] {
+        partial_semantic_edit_is_rejected(&format!(
+            "let fit = semantic(ctx, \"Research\")?;\n{other_comparison}\nif fit.lower_bps < 9000 {{ return fail(\"No\"); }}\nOk(())"
+        ));
+    }
+}
+
+#[test]
+fn an_aliased_assessment_prevents_partial_literal_threshold_edits() {
+    for alias in [
+        "let alias = fit; if alias.lower_bps >= 5000 { return Ok(()); }",
+        "let lower = fit.lower_bps; if lower >= 5000 { return Ok(()); }",
+    ] {
+        partial_semantic_edit_is_rejected(&format!(
+            "let fit = semantic(ctx, \"Research\")?;\n{alias}\nif fit.lower_bps < 9000 {{ return fail(\"No\"); }}\nOk(())"
+        ));
+    }
+}
+
+#[test]
+fn unsupported_reads_of_another_assessment_do_not_disable_the_selected_one() {
+    let original = source(
+        "let selected = semantic(ctx, \"Selected\")?;\nlet other = semantic(ctx, \"Other\")?;\nif 5000 <= other.lower_bps { return fail(\"Other\"); }\nif selected.lower_bps < 9000 { return fail(\"Selected\"); }\nOk(())",
+    );
+    let response = thresholds(&original, &step_id(&original, "semantic", 0), json!([9500]));
+    assert_eq!(
+        edited(&response),
+        original.replace("selected.lower_bps < 9000", "selected.lower_bps < 9500")
+    );
+}
