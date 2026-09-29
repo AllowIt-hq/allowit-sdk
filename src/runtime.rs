@@ -29,6 +29,10 @@ struct Evaluator<'a> {
     profile: Profile,
     binding: String,
     steps: usize,
+    #[cfg(feature = "compiler")]
+    trace: Option<&'a mut crate::trace::TraceRecorder>,
+    #[cfg(feature = "compiler")]
+    block_depth: usize,
 }
 impl Evaluator<'_> {
     fn block(
@@ -36,58 +40,75 @@ impl Evaluator<'_> {
         statements: &[Statement],
         env: &mut BTreeMap<String, Value>,
     ) -> Result<bool, alloc::boxed::Box<Decision>> {
-        for statement in statements {
-            let result = (|| {
-                match statement {
-                    Statement::Let { name, value, .. } => {
-                        let value = self.expr(value, env)?;
-                        env.insert(name.clone(), value);
-                    }
-                    Statement::Expression {
-                        value, semicolon, ..
-                    } => {
-                        self.expr(value, env)?;
-                        if !semicolon {
+        #[cfg(feature = "compiler")]
+        let top_level = self.block_depth == 0;
+        #[cfg(feature = "compiler")]
+        {
+            self.block_depth += 1;
+        }
+        let result = (|| {
+            for statement in statements {
+                let result = (|| {
+                    match statement {
+                        Statement::Let { name, value, .. } => {
+                            let value = self.expr(value, env)?;
+                            env.insert(name.clone(), value);
+                        }
+                        Statement::Expression {
+                            value, semicolon, ..
+                        } => {
+                            self.expr(value, env)?;
+                            if !semicolon {
+                                return Ok(true);
+                            }
+                        }
+                        Statement::Return { value, .. } => {
+                            self.expr(value, env)?;
                             return Ok(true);
                         }
-                    }
-                    Statement::Return { value, .. } => {
-                        self.expr(value, env)?;
-                        return Ok(true);
-                    }
-                    Statement::If {
-                        condition,
-                        then_branch,
-                        else_branch,
-                        ..
-                    } => {
-                        let Value::Boolean(condition) = self.expr(condition, env)? else {
-                            return Err(invalid());
-                        };
-                        if self.block(
-                            if condition { then_branch } else { else_branch },
-                            &mut env.clone(),
-                        )? {
-                            return Ok(true);
+                        Statement::If {
+                            condition,
+                            then_branch,
+                            else_branch,
+                            ..
+                        } => {
+                            let Value::Boolean(condition) = self.expr(condition, env)? else {
+                                return Err(invalid());
+                            };
+                            if self.block(
+                                if condition { then_branch } else { else_branch },
+                                &mut env.clone(),
+                            )? {
+                                return Ok(true);
+                            }
                         }
                     }
+                    Ok(false)
+                })();
+                #[cfg(feature = "compiler")]
+                if top_level && let Some(trace) = &mut self.trace {
+                    trace.record(statement.span(), result.as_ref().err().map(|d| &**d));
                 }
-                Ok(false)
-            })();
-            match result {
-                Ok(true) => return Ok(true),
-                Ok(false) => {}
-                Err(mut decision) => {
-                    if decision.source_start.is_none() {
-                        let span = statement.span();
-                        decision.source_start = Some(span.start);
-                        decision.source_end = Some(span.end);
+                match result {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => {}
+                    Err(mut decision) => {
+                        if decision.source_start.is_none() {
+                            let span = statement.span();
+                            decision.source_start = Some(span.start);
+                            decision.source_end = Some(span.end);
+                        }
+                        return Err(decision);
                     }
-                    return Err(decision);
                 }
             }
+            Ok(false)
+        })();
+        #[cfg(feature = "compiler")]
+        {
+            self.block_depth -= 1;
         }
-        Ok(false)
+        result
     }
     fn expr(&mut self, expr: &Expr, env: &BTreeMap<String, Value>) -> EvalResult {
         self.expr_inner(expr, env).map_err(|mut decision| {
@@ -536,6 +557,23 @@ fn failure(code: &str, reason: impl Into<String>) -> alloc::boxed::Box<Decision>
 }
 
 fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decision {
+    run_inner(
+        ir,
+        profile,
+        ctx,
+        binding,
+        #[cfg(feature = "compiler")]
+        None,
+    )
+}
+
+fn run_inner(
+    ir: &Program,
+    profile: Profile,
+    ctx: &Context,
+    binding: String,
+    #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
+) -> Decision {
     if let Err(error) = validate_program(ir) {
         return Decision::fail("INVALID_POLICY", error.message);
     }
@@ -553,6 +591,10 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
         profile,
         binding,
         steps: 0,
+        #[cfg(feature = "compiler")]
+        trace,
+        #[cfg(feature = "compiler")]
+        block_depth: 0,
     };
     let mut env = BTreeMap::new();
     env.insert("ctx".to_string(), Value::Context);
@@ -563,9 +605,15 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
             ..
         } = statement
             && matches!(&**value,Expr::Call{name,..} if name=="set_cap" || name=="cap_purchase_tiers")
-            && let Err(decision) = evaluator.expr(value, &env)
         {
-            return *decision;
+            let result = evaluator.expr(value, &env);
+            #[cfg(feature = "compiler")]
+            if let Some(trace) = &mut evaluator.trace {
+                trace.record(statement.span(), result.as_ref().err().map(|d| &**d));
+            }
+            if let Err(decision) = result {
+                return *decision;
+            }
         }
     }
     match evaluator.block(&ir.statements, &mut env) {
@@ -578,33 +626,62 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
 /// Evaluate an already compiled policy. Persisted artifacts are hash-checked before evaluation.
 #[cfg(feature = "compiler")]
 pub fn evaluate(policy: &CompiledPolicy, profile: Profile, ctx: &Context) -> Decision {
+    if let Err(decision) = validate_artifact(policy) {
+        return *decision;
+    }
+    run(&policy.ir, profile, ctx, policy.source_hash.clone())
+}
+
+/// Evaluate with bounded source-bound workflow evidence, only in the oracle profile.
+/// Invalid artifacts have no trace. Metadata is reconstructed from the approved source,
+/// never trusted from a caller-supplied workflow projection.
+#[cfg(feature = "compiler")]
+pub fn evaluate_with_trace(
+    policy: &CompiledPolicy,
+    ctx: &Context,
+) -> (Decision, Option<crate::WorkflowTrace>) {
+    let compiled = match validate_artifact(policy) {
+        Ok(compiled) => compiled,
+        Err(decision) => return (*decision, None),
+    };
+    let mut trace = crate::trace::TraceRecorder::new(&compiled);
+    let decision = run_inner(
+        &policy.ir,
+        Profile::Oracle,
+        ctx,
+        policy.source_hash.clone(),
+        Some(&mut trace),
+    );
+    let trace = trace.finish(&decision);
+    (decision, Some(trace))
+}
+
+#[cfg(feature = "compiler")]
+fn validate_artifact(
+    policy: &CompiledPolicy,
+) -> Result<CompiledPolicy, alloc::boxed::Box<Decision>> {
     if policy.language != crate::LANGUAGE
         || policy.registry_version != crate::REGISTRY_VERSION
         || digest(policy.source.as_bytes()) != policy.source_hash
         || canonical_ir_hash(&policy.ir).ok().as_ref() != Some(&policy.ir_hash)
     {
-        return Decision::fail(
+        return Err(failure(
             "INVALID_ARTIFACT",
             "The policy artifact failed its integrity check.",
-        );
+        ));
     }
-    #[cfg(feature = "compiler")]
+    let compiled = crate::compile(&policy.source)
+        .map_err(|_| failure("INVALID_ARTIFACT", "The policy source is not valid."))?;
+    if compiled.ir_hash != policy.ir_hash
+        || compiled.limit != policy.limit
+        || compiled.token != policy.token
     {
-        let compiled = match crate::compile(&policy.source) {
-            Ok(value) => value,
-            Err(_) => return Decision::fail("INVALID_ARTIFACT", "The policy source is not valid."),
-        };
-        if compiled.ir_hash != policy.ir_hash
-            || compiled.limit != policy.limit
-            || compiled.token != policy.token
-        {
-            return Decision::fail(
-                "INVALID_ARTIFACT",
-                "The policy source does not match its executable artifact.",
-            );
-        }
+        return Err(failure(
+            "INVALID_ARTIFACT",
+            "The policy source does not match its executable artifact.",
+        ));
     }
-    run(&policy.ir, profile, ctx, policy.source_hash.clone())
+    Ok(compiled)
 }
 
 /// Evaluate validated IR inside a target adapter. The adapter must authenticate its owner and

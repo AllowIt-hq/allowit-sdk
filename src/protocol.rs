@@ -25,7 +25,7 @@ pub fn process_value(request: Value) -> Value {
     };
     let allowed: &[&str] = match operation {
         "registry" => &["operation"],
-        "evaluate" => &["operation", "source", "profile", "context"],
+        "evaluate" => &["operation", "source", "profile", "context", "trace"],
         _ => &["operation", "source"],
     };
     if request
@@ -65,6 +65,17 @@ pub fn process_value(request: Value) -> Value {
             },
             None => return failure("INVALID_PROFILE", "Choose oracle or contract."),
         };
+        let trace = match request.get("trace") {
+            None | Some(Value::Bool(false)) => false,
+            Some(Value::Bool(true)) if profile == Profile::Oracle => true,
+            Some(Value::Bool(true)) => {
+                return failure(
+                    "INVALID_REQUEST",
+                    "Workflow traces are available only in the oracle profile.",
+                );
+            }
+            Some(_) => return failure("INVALID_REQUEST", "trace must be a boolean."),
+        };
         let context: Context = match request.get("context").cloned() {
             Some(v) => match serde_json::from_value(v) {
                 Ok(ctx) => ctx,
@@ -77,7 +88,16 @@ pub fn process_value(request: Value) -> Value {
             },
             None => return failure("INVALID_CONTEXT", "Supply an evaluation context."),
         };
-        json!({"ok":true,"decision":crate::evaluate(&policy,profile,&context),"source_hash":policy.source_hash,"ir_hash":policy.ir_hash})
+        if trace {
+            let (decision, trace) = crate::evaluate_with_trace(&policy, &context);
+            let mut response = json!({"ok":true,"decision":decision,"source_hash":policy.source_hash,"ir_hash":policy.ir_hash});
+            if let Some(trace) = trace {
+                response["trace"] = json!(trace);
+            }
+            response
+        } else {
+            json!({"ok":true,"decision":crate::evaluate(&policy,profile,&context),"source_hash":policy.source_hash,"ir_hash":policy.ir_hash})
+        }
     }
     #[cfg(not(feature = "compiler"))]
     {

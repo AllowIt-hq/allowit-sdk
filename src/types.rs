@@ -168,6 +168,42 @@ pub struct CompiledPolicy {
     pub ir: Program,
 }
 
+/// Oracle-only execution evidence for the compiler's source-bound workflow.
+/// A custom block reports the path actually taken, not every nested branch.
+#[cfg(feature = "compiler")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowTrace {
+    pub version: u8,
+    pub source_hash: String,
+    pub ir_hash: String,
+    /// False while evaluation requires semantic evidence or an owner answer.
+    pub complete: bool,
+    pub steps: Vec<WorkflowStepTrace>,
+}
+
+#[cfg(feature = "compiler")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowStepTrace {
+    pub node_id: String,
+    pub status: WorkflowStepStatus,
+    /// Includes configuration checks performed before ordinary control flow.
+    pub visited: bool,
+}
+
+#[cfg(feature = "compiler")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowStepStatus {
+    Passed,
+    Failed,
+    Verifying,
+    AwaitingInput,
+    Inactive,
+    Skipped,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Profile {

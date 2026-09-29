@@ -110,3 +110,28 @@ for (const profile of ['oracle', 'contract']) {
  assert.equal(invoke({operation: 'evaluate', source: readable, profile, context: {...context, amount_units: 5000001}}).decision.outcome, 'fail');
 }
 assert.equal(invoke({operation: 'compile', source: readable.replace('"0.000001"', '"0.0000001"')}).ok, false);
+
+// Opt-in workflow evidence records execution, including caps hoisted past early returns.
+const traceSource = 'pub async fn exec(ctx: &Context) -> PolicyResult { if ctx.amount_units > 0 { return Ok(()); } require_merchant(ctx,"unreached")?; set_cap(ctx,"10","USDC")?; Ok(()) }';
+const traceContext = {...context, amount_units: 750000};
+const traceRequest = {operation: 'evaluate', source: traceSource, profile: 'oracle', context: traceContext};
+const untraced = invoke(traceRequest);
+assert.equal(untraced.trace, undefined);
+const traced = invoke({...traceRequest, trace: true});
+assert.deepEqual(traced.decision, untraced.decision);
+assert.equal(traced.trace.version, 1);
+assert.equal(traced.trace.source_hash, traced.source_hash);
+assert.equal(traced.trace.ir_hash, traced.ir_hash);
+assert.equal(traced.trace.complete, true);
+assert.deepEqual(traced.trace.steps.map(s => s.status), ['passed', 'skipped', 'passed', 'skipped']);
+assert.deepEqual(traced.trace.steps.map(s => s.visited), [true, false, true, false]);
+const traceWorkflow = invoke({operation: 'compile', source: traceSource}).policy.workflow;
+assert.deepEqual(traced.trace.steps.map(s => s.node_id), traceWorkflow.map(s => s.id));
+const pendingSource = 'pub async fn exec(ctx: &Context) -> PolicyResult { check_preference(ctx,"Primary 🌱 evidence?",0.40,0.85).await?; Ok(()) }';
+const pendingTrace = invoke({...traceRequest, source: pendingSource, context: {...traceContext, original_intent: 'Buy original evidence'}, trace: true});
+assert.equal(pendingTrace.decision.code, 'SEMANTIC_EVIDENCE_REQUIRED');
+assert.equal(pendingTrace.trace.complete, false);
+assert.deepEqual(pendingTrace.trace.steps.map(s => s.status), ['verifying', 'inactive']);
+assert.equal(invoke({...traceRequest, profile: 'contract', trace: true}).error.code, 'INVALID_REQUEST');
+assert.equal(invoke({...traceRequest, trace: 'true'}).error.code, 'INVALID_REQUEST');
+console.log('Opt-in oracle workflow traces preserve actual execution, source bindings and contract isolation.');

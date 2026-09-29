@@ -13,6 +13,8 @@ mod registry;
 mod runtime;
 #[cfg(feature = "oracle-ledger")]
 pub mod spending;
+#[cfg(feature = "compiler")]
+mod trace;
 mod types;
 // The source type-checking facade uses floats; contract execution is integer-only.
 #[cfg(feature = "std")]
@@ -26,6 +28,8 @@ pub use registry::{FunctionInfo, registry};
 #[cfg(feature = "compiler")]
 pub use runtime::evaluate;
 pub use runtime::evaluate_ir;
+#[cfg(feature = "compiler")]
+pub use runtime::evaluate_with_trace;
 pub use types::*;
 pub use validation::validate_program;
 
