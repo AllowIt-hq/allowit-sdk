@@ -24,7 +24,7 @@ def main() -> int:
         print(f"Expected {toolchain}; got {result.stdout.strip()}", file=sys.stderr)
         return 1
     source = (directory / "AllowIt.lean").read_text()
-    if re.search(r"\b(?:sorry|admit|axiom|native_decide)\b", source):
+    if re.search(r"\b(?:sorry|admit|axiom|native_decide)\b|debug\.skipKernelTC", source):
         print("Unproved declarations or native proof evaluation are prohibited.", file=sys.stderr)
         return 1
     result = subprocess.run(
@@ -36,7 +36,7 @@ def main() -> int:
         return result.returncode
     expected = set(re.findall(r"^theorem\s+(\w+)", source, re.MULTILINE))
     audited: set[str] = set()
-    standard_axioms = {"propext", "Quot.sound", "Classical.choice"}
+    standard_axioms = {"propext", "Quot.sound"}
     for line in result.stdout.splitlines():
         match = re.fullmatch(
             r"'AllowIt\.(\w+)' (?:does not depend on any axioms|depends on axioms: \[(.*)\])",
