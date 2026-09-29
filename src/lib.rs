@@ -12,6 +12,8 @@ pub mod prelude;
 mod protocol;
 mod readability;
 mod registry;
+#[cfg(feature = "compiler")]
+mod requirements;
 mod runtime;
 #[cfg(feature = "oracle-ledger")]
 pub mod spending;

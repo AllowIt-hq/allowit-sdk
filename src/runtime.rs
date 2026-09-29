@@ -675,6 +675,7 @@ fn validate_artifact(
     if compiled.ir_hash != policy.ir_hash
         || compiled.limit != policy.limit
         || compiled.token != policy.token
+        || compiled.execution_requirements != policy.execution_requirements
     {
         return Err(failure(
             "INVALID_ARTIFACT",

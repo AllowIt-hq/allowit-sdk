@@ -925,6 +925,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         source_hash,
         ir_hash,
         registry_version: REGISTRY_VERSION.into(),
+        execution_requirements: crate::requirements::extract(&ir)?,
         limit,
         token: "USDC".into(),
         source: source.into(),
