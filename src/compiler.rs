@@ -832,6 +832,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
                     label: info.title,
                     description: info.description,
                     arguments: arguments.clone(),
+                    score_thresholds: vec![],
                     source: source_slice(source, span),
                     start: offset(source, span.start),
                     end: offset(source, span.end),
@@ -899,11 +900,13 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
             label,
             description,
             arguments,
+            score_thresholds: vec![],
             source: source_slice(source, span),
             start: offset(source, span.start),
             end: offset(source, span.end),
         });
     }
+    crate::editing::annotate(source, f, &mut workflow);
     let mut found = parser.helper_calls;
     walk_block(&ir.statements, &mut found);
     found.sort_by_key(|(_, s)| s.start);

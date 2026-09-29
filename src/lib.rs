@@ -5,6 +5,8 @@ extern crate alloc;
 #[cfg(feature = "compiler")]
 mod compiler;
 #[cfg(feature = "compiler")]
+mod editing;
+#[cfg(feature = "compiler")]
 pub mod lsp;
 pub mod prelude;
 mod protocol;

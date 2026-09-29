@@ -8,6 +8,31 @@ fn context() -> Context {
 }
 
 #[test]
+fn research_category_requires_assessment_regardless_of_caller_label() {
+    let policy = compile(include_str!("../examples/research.rs")).unwrap();
+    let mut ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
+    let question =
+        "Does this purchase count as research under the user's stated purpose and definitions?";
+    for label in ["research", "study", "caller-chosen-label"] {
+        ctx.action = label.into();
+        ctx.confidence.clear();
+        let missing = evaluate(&policy, Profile::Oracle, &ctx);
+        assert_eq!(missing.code, "SEMANTIC_EVIDENCE_REQUIRED");
+        assert_eq!(missing.question.as_deref(), Some(question));
+        for (score, outcome) in [(8500, "pass"), (4000, "fail")] {
+            ctx.confidence.insert(
+                semantic_evidence_key(question),
+                ConfidenceInterval {
+                    lower_bps: score,
+                    upper_bps: score,
+                },
+            );
+            assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, outcome);
+        }
+    }
+}
+
+#[test]
 fn semantic_request_identifies_exact_question_and_requires_original_intent() {
     let question = "Does this request avoid hype?";
     let p=compile(&source(&format!("let score = semantic(ctx, \"{question}\")?; if score.lower_bps < 8000 {{ return fail(\"Too much hype\"); }} Ok(())"))).unwrap();
@@ -45,15 +70,21 @@ fn semantic_request_identifies_exact_question_and_requires_original_intent() {
 fn deterministic_return_gap_cannot_be_overridden_by_a_high_semantic_score() {
     let p = compile(include_str!("../examples/green-investments.rs")).unwrap();
     let mut ctx = context();
-    let missing = evaluate(&p, Profile::Oracle, &ctx);
-    let key = missing.evidence_key.unwrap();
-    ctx.confidence.insert(
-        key,
-        ConfidenceInterval {
-            lower_bps: 10000,
-            upper_bps: 10000,
-        },
-    );
+    for question in [
+        "Does this transaction count as an investment under the user's stated purpose and definitions?",
+        "Does this investment prioritize credible environmental benefits and avoid hype?",
+    ] {
+        let missing = evaluate(&p, Profile::Oracle, &ctx);
+        assert_eq!(missing.code, "SEMANTIC_EVIDENCE_REQUIRED");
+        assert_eq!(missing.question.as_deref(), Some(question));
+        ctx.confidence.insert(
+            missing.evidence_key.unwrap(),
+            ConfidenceInterval {
+                lower_bps: 10000,
+                upper_bps: 10000,
+            },
+        );
+    }
     assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "pass");
     ctx.runtime_context["candidate_yield_bps"] = json!(400);
     assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "pass");

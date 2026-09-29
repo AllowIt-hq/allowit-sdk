@@ -43,7 +43,9 @@ Caller-provided facts are claims until authenticated by the host. Do not invent 
 
 ## Preferences and numeric rules
 
-`semantic(ctx, "exact question")?` requests an assessment of a preference. Missing evidence fails with `SEMANTIC_EVIDENCE_REQUIRED`, `question` and `evidence_key`; the key is lowercase SHA-256 of the exact UTF-8 question. The trusted engine may ask Jev by TypeSafe with the question, original owner instructions and complete bound runtime context, authenticate and persist the response, then reevaluate. This is a host operation; the policy and SDK make no network calls. Never turn that missing-evidence failure into a pass yourself or send context to an arbitrary provider.
+Use a separate configurable `check_preference` for each classification, including research purpose, wallet/merchant roles and customer-specific categories. Judge the supplied evidence against the user's definitions and exceptions. `allow_actions` is only caller-field string equality; it does not verify a category. Exact user-specified identifiers and numeric limits remain deterministic checks.
+
+`check_preference` lowers to the `semantic` evidence operation. Missing evidence fails with `SEMANTIC_EVIDENCE_REQUIRED`, `question` and `evidence_key`; the key is lowercase SHA-256 of the exact UTF-8 question. A configured trusted engine asks Jev with that question, original instructions and complete bound runtime context, authenticates and persists the response, then reevaluates. The policy and SDK make no network calls. Missing provider capability leaves the assessment unresolved.
 
 The question hash names a slot within one evaluation, not reusable approval. The trusted engine must bind evidence to the exact source/IR digests, revision, owner, action, amount, recipient, network, token, original intent, complete runtime-context digest and expiry. Never copy a score to another request or retrieve it by question hash alone. Changed context requires fresh applicable evidence. If the authorized provider path is unavailable, report the unresolved failure to the owner and stop that transaction.
 
@@ -82,10 +84,7 @@ These helpers do not create an allowance. Use `set_cap` for the total allocation
 if !amount_at_most(ctx, "25.50")? {
     require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
 }
-let fit = semantic(ctx, "Is there primary evidence supporting this purchase?")?;
-if fit.lower_bps < percent("85")? {
-    return fail("The evidence does not meet your threshold");
-}
+check_preference(ctx, "Is there primary evidence supporting this purchase?", true, "85", true, "40").await?;
 ```
 
 Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.
@@ -107,7 +106,11 @@ use allowit::v1::prelude::*;
 pub async fn exec(ctx: &Context) -> PolicyResult {
     set_cap(ctx, "10", "USDC")?;
     cap_purchase_tiers(ctx, "1", 2, "USDC")?;
-    allow_actions(ctx, &["research"])?;
+    check_preference(ctx,
+        "Does this purchase count as research under the user's stated purpose and definitions?",
+        0.40,
+        0.85,
+    ).await?;
     check_preference(ctx,
         "Is this primary evidence for the research task?",
         0.40, // deny at or below

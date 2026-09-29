@@ -143,6 +143,16 @@ pub struct WorkflowBlock {
     /// UTF-16 code-unit offsets, compatible with browser strings and LSP.
     pub start: usize,
     pub end: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub score_thresholds: Vec<ScoreThreshold>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScoreThreshold {
+    pub field: String,
+    pub operator: String,
+    pub value_bps: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -26,6 +26,8 @@ pub fn process_value(request: Value) -> Value {
     let allowed: &[&str] = match operation {
         "registry" => &["operation"],
         "evaluate" => &["operation", "source", "profile", "context", "trace"],
+        "edit_preference" => &["operation", "source", "settings"],
+        "edit_score_thresholds" => &["operation", "source", "step_id", "values"],
         _ => &["operation", "source"],
     };
     if request
@@ -42,7 +44,16 @@ pub fn process_value(request: Value) -> Value {
     }
     #[cfg(feature = "compiler")]
     {
-        if !["compile", "check", "workflow", "evaluate"].contains(&operation) {
+        if ![
+            "compile",
+            "check",
+            "workflow",
+            "evaluate",
+            "edit_preference",
+            "edit_score_thresholds",
+        ]
+        .contains(&operation)
+        {
             return failure(
                 "INVALID_OPERATION",
                 "Use compile, check, workflow, evaluate or registry.",
@@ -55,6 +66,37 @@ pub fn process_value(request: Value) -> Value {
             Ok(policy) => policy,
             Err(error) => return json!({"ok":false,"error":error}),
         };
+        if operation == "edit_preference" || operation == "edit_score_thresholds" {
+            let edited = if operation == "edit_preference" {
+                match request
+                    .get("settings")
+                    .cloned()
+                    .and_then(|s| serde_json::from_value(s).ok())
+                {
+                    Some(settings) => crate::editing::edit_preference(source, &policy, settings),
+                    None => return failure("INVALID_EDIT", "Supply preference settings."),
+                }
+            } else {
+                let Some(step) = request.get("step_id").and_then(Value::as_str) else {
+                    return failure("INVALID_EDIT", "Supply a step ID.");
+                };
+                let Some(values) = request
+                    .get("values")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value::<alloc::vec::Vec<u64>>(v).ok())
+                else {
+                    return failure("INVALID_EDIT", "Supply integer basis point values.");
+                };
+                crate::editing::edit_score_thresholds(source, &policy, step, &values)
+            };
+            return match edited {
+                Ok(source) => match crate::compile(&source) {
+                    Ok(policy) => json!({"ok":true,"source":source,"policy":policy}),
+                    Err(error) => json!({"ok":false,"error":error}),
+                },
+                Err(error) => json!({"ok":false,"error":error}),
+            };
+        }
         if operation != "evaluate" {
             return json!({"ok":true,"policy":policy});
         }

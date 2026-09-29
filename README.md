@@ -8,8 +8,8 @@ use allowit::prelude::*;
 pub async fn evaluate(ctx: &Context) -> PolicyResult {
     set_cap(ctx, "100", "USDC")?;
     cap_per_transaction(ctx, "10", "USDC")?;
-    allow_actions(ctx, &["research"])?;
     require_merchant(ctx, "research.example")?;
+    check_preference(ctx, "Does this purchase count as research under the user's stated purpose and definitions?", true, "85", true, "40").await?;
     Ok(())
 }
 ```
@@ -35,6 +35,8 @@ cargo run --locked -- lsp
 
 CLI output is JSON. A failed compile or malformed request exits unsuccessfully. A completed evaluation prints its `pass`, `fail` or non-terminal `awaiting_input` decision; callers must inspect that decision before authorizing an action.
 
+The research and green examples require semantic evidence; their supplied contexts intentionally contain no classification scores, so local evaluation returns `SEMANTIC_EVIDENCE_REQUIRED`.
+
 For normal Rust type-checking, depend on this package with the name `allowit`:
 
 ```toml
@@ -54,6 +56,8 @@ All monetary values in the portable core are micro-USDC (six decimal places). De
 `set_cap` is a configuration declaration: it may occur at most once, at the top level, with literal amount and token. It is enforced before user control flow, including when placed after an early return. The host allocation and spent amount are always enforced independently. Policies can restrict this budget but cannot increase it.
 
 The predefined registry contains `set_cap`, `cap_per_transaction`, `allow_actions`, `require_merchant`, `require_recipient`, `confidence`, `semantic`, `context_u64`, `require_user_input` and `fail`. Help, signatures and workflow labels come from that registry.
+
+Classifications such as research purpose, wallet role, or a customer's investment category belong in configurable `check_preference` questions evaluated by Jev. `allow_actions` only compares caller-supplied strings; it does not verify membership in a semantic category. Exact user-specified addresses, merchant identifiers and numeric restrictions remain deterministic checks. A matching address does not establish its purpose or ownership.
 
 Pass and fail are the only terminal outcomes. In the oracle profile, reaching `require_user_input(...).await?` returns a non-authorizing `awaiting_input` decision with an input key and prompt. The engine must authenticate the owner, bind the exact policy/action/evidence snapshot, persist the suspension and answers, reject replay, enforce expiry/revocation and recheck fresh budgets before executing. The SDK does not authenticate a plain `answers` map. Each key binds the policy source digest, call location and prompt; distinct calls cannot share an approval by merely repeating the prompt.
 
@@ -135,10 +139,7 @@ These helpers do not create an allowance. Use `set_cap` for the total allocation
 if !amount_at_most(ctx, "25.50")? {
     require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
 }
-let fit = semantic(ctx, "Is there primary evidence supporting this purchase?")?;
-if fit.lower_bps < percent("85")? {
-    return fail("The evidence does not meet your threshold");
-}
+check_preference(ctx, "Is there primary evidence supporting this purchase?", true, "85", true, "40").await?;
 ```
 
 Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.
@@ -162,7 +163,11 @@ use allowit::v1::prelude::*;
 pub async fn exec(ctx: &Context) -> PolicyResult {
     set_cap(ctx, "10", "USDC")?;
     cap_purchase_tiers(ctx, "1", 2, "USDC")?;
-    allow_actions(ctx, &["research"])?;
+    check_preference(ctx,
+        "Does this purchase count as research under the user's stated purpose and definitions?",
+        0.40,
+        0.85,
+    ).await?;
     check_preference(ctx,
         "Is this primary evidence for the research task?",
         0.40, // deny at or below
