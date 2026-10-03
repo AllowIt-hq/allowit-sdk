@@ -41,6 +41,10 @@ The policy core measures USDC in six decimal places. These rail adapters accept 
 
 Stellar derives the canonical network-specific Stellar Asset Contract address from `USDC` and Circle's issuer: `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` on Mainnet and `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` on Testnet. It checks seven decimals and converts atomic amounts exactly to six-decimal policy units. Sub-micro-unit dust is rejected, never rounded downward.
 
+## Fixed Devnet paid-API vault
+
+The separate [vault v1 interface](solana/VAULT.md) supports a funded PDA wallet with fixed hard limits and per-challenge replay markers. It does not execute arbitrary IR and does not change the allowance API below.
+
 ## Solana API
 
 The program has no hardcoded program ID or default authority. A deployment chooses its program ID. Build a separate artifact for each explicit network:
