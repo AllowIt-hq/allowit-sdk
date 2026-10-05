@@ -24,6 +24,8 @@ The separate [custody trace correspondence](traces/README.md) links a fresh isol
 
 The separate [finite model refusal certificates](refusal/README.md) prove that none of the 12 captured non-environment program-rejected requests admits a successful model transition, for any readiness predicate or post-state. A positive budget-case witness keeps environment failure separate. The prior trace corpus, models and receipts remain unchanged; this does not establish universal adapter refinement.
 
+The separate [single-fault transfer witnesses](isolation/README.md) leave spending headroom after a same-module rebind and isolate five modeled refusal conditions. Twelve observed VM executions generate 28 checked statements, including two generic completeness links and five positive model counterfactuals. This does not discharge platform readiness or prove an executable repair/authority grant.
+
 ## Evidence rules
 
 - Specify the intended claim before reviewing its proof. Include permitted cases and a successful witness as well as forbidden cases.

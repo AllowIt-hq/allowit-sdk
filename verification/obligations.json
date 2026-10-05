@@ -648,5 +648,22 @@
     "scope": "Twelve captured non-environment program refusals admit no successful model transition for any readiness predicate or post-state; universal tuning-capacity helper and positive budget case total 14 statements. Prior compiled trace acceptance reruns. Finite nonpermission only; exact error layer, failed cause and precedence unproved. Harness clock trusted. no single-fault revocation, platform readiness, universal adapter refinement, signature authentication, rollback, build provenance, clients or deployment proof. All 24 release obligations remain open.",
     "review": "../docs/reviews/2026-10-05-refusals.md",
     "reviewer": "Independent explicitly verified Claude Code claude-opus-5-5, closure session 1ab9f44d-d944-454c-a5fd-f0d835cd4e07: no material soundness/scope issue conditional on producer reproduction. Tools disabled; no production inspection/runtime rerun. Closure hardening applied without expanding claims."
+  },
+  "isolation_intake": {
+    "receipt": "isolation/receipt.json",
+    "level": "finite_single_fault_model_and_vm_witnesses",
+    "partial": true,
+    "obligations": [
+      "V06",
+      "V07",
+      "V08",
+      "V11",
+      "V12",
+      "V13",
+      "V23"
+    ],
+    "scope": "Separate 12-execution Solana VM corpus with seven successes and five refusals. Complete Boolean vectors of 11 non-environment model transfer prerequisites isolate one failing condition; five arbitrary-readiness/post-state refusals and positive ready=True model counterfactuals, successful-state certificates and arithmetic transcriptions plus two generic vector/model-completeness links total 28 statements. Observed raw continuity is checked from a constructed fixture, not initialization refinement. No real signatures, platform readiness, exact intervention correspondence, error cause/precedence, rollback, universal adapter refinement, program build provenance, clients or deployment. All 24 obligations stay open.",
+    "review": "../docs/reviews/2026-10-05-isolation.md",
+    "receipt_sha256": "a6aca312b76cd8805adc5c76610298793e3aae59842f1cf680ea40085d694000"
   }
 }
