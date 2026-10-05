@@ -1,0 +1,48 @@
+{
+  "level": "source_inspection_and_acceptance_design_only",
+  "runtimeExecuted": false,
+  "releaseObligationsClosed": [],
+  "sources": [
+    {
+      "repository": "LiteSVM/litesvm",
+      "revision": "980f39121cda14bc78d8c46489d2d12fb0cc6eae",
+      "path": "crates/litesvm/src/lib.rs",
+      "sha256": "8c2fac295ecdedac7dd62fd697fcf2796a4aca513a72518557b6afeef70efae9",
+      "repository_url": "https://github.com/LiteSVM/litesvm",
+      "hash_basis": "raw file bytes"
+    },
+    {
+      "repository": "LiteSVM/litesvm",
+      "revision": "980f39121cda14bc78d8c46489d2d12fb0cc6eae",
+      "path": "crates/litesvm/Cargo.toml",
+      "sha256": "653ca3b486644d2fed817ea4d4377d20b2791830330e025061ec7f83d37306b9",
+      "repository_url": "https://github.com/LiteSVM/litesvm",
+      "hash_basis": "raw file bytes"
+    },
+    {
+      "repository": "AllowIt-contracts-solana",
+      "revision": "e0fc5a19985a7c1d1d184754dba98ddbc98e2841",
+      "path": "programs/vault/src/lib.rs",
+      "sha256": "049c9e030d5450e92335ae601ec0ea21817ea3957b07959315c9d04b1b8964fd",
+      "repository_url": "https://github.com/ackrate/AllowIt-contracts-solana",
+      "hash_basis": "raw file bytes"
+    },
+    {
+      "repository": "AllowIt-contracts-solana",
+      "revision": "e0fc5a19985a7c1d1d184754dba98ddbc98e2841",
+      "path": "crates/interface/src/lib.rs",
+      "sha256": "62710f4afc6dce63a3720c4b1e3f482c8315de6cb7261a21cd79cd16c90d9d6e",
+      "repository_url": "https://github.com/ackrate/AllowIt-contracts-solana",
+      "hash_basis": "raw file bytes"
+    },
+    {
+      "repository": "LiteSVM/litesvm",
+      "repository_url": "https://github.com/LiteSVM/litesvm",
+      "revision": "980f39121cda14bc78d8c46489d2d12fb0cc6eae",
+      "path": "crates/litesvm/src/accounts_db.rs",
+      "hash_basis": "raw file bytes",
+      "sha256": "ab9aa19dd4ab16d290ed37a981d459e2f9ea759234a9b6e65f9ea46172c05605"
+    }
+  ],
+  "upstreamPinScope": "research source only; no selected build/toolchain/dependency closure"
+}

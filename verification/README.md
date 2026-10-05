@@ -39,3 +39,5 @@ The existing 13 theorems establish only their bounded model. The separate native
 The [9:13 p.m. readiness check](readiness/2026-10-04-2113.json) is retained as a historical snapshot of the uncommitted candidates. It does not describe the subsequent committed contract handoff.
 
 The [published contract handoff](published-handoff.md) now has committed targets and a separate source-bundle/artifact intake checker. Its 2,907-vector host receipt preserves the earlier frozen evidence. Source inspection finds the announced artifact and ceiling hardening; adapter/client/deployment and universal source refinement remain open.
+
+[Transaction rollback preparation](runtime/README.md) specifies a separate signed-transaction/store experiment. It records pinned upstream source research only; no new runtime execution or release obligation is claimed.
