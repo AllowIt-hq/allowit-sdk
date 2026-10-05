@@ -585,5 +585,27 @@
     "producer": "Codex verification task; pinned Charon/Aeneas extraction and Lean checker",
     "reviewer": "Independent Claude Code claude-opus-5-5, session bb015211-6675-4462-957a-c8781830934f; no remaining material findings after repairs; see ../docs/reviews/2026-10-04-kernel-refinement.md",
     "review": "../docs/reviews/2026-10-04-kernel-refinement.md"
+  },
+  "adapter_preparation": {
+    "receipt": "adapter/receipt.json",
+    "receipt_sha256": "44d176e3793bcaa1e92d71fd89b49e3b32ff7903f1aa18f9dee5c8babf1dc44e",
+    "level": "model_checked",
+    "partial": true,
+    "obligations": [
+      "V02",
+      "V06",
+      "V07",
+      "V08",
+      "V09",
+      "V10",
+      "V11",
+      "V12",
+      "V13",
+      "V23",
+      "V24"
+    ],
+    "scope": "Independent successful-transition specification: 21 model statements, separate replay of seven pinned cached Solana VM tests. No extracted adapter/refinement, trace-to-model correspondence, rebuilt provenance, clients or deployment proof. All obligations remain open. Each copied ELF dependency is tested by removal and invalid ELF magic; no proof of universal byte consumption is claimed.",
+    "review": "../docs/reviews/2026-10-04-adapter-state.md",
+    "reviewer": "Independent Claude Code claude-opus-5-5, session 7cec5bdb-bb84-4883-9b3f-51a466044e26; tools-disabled supplied-text closure, no remaining material problems. Runtime reproduction by verification producer only."
   }
 }

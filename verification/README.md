@@ -18,6 +18,8 @@ The verification owner maintains requirement IDs and domains, formal statements,
 
 Delivery validation and formal assurance are separate milestones. This space does not add a full-refinement gate to the immediate demonstration. It reports which claims have model proofs, tested correspondence, implementation proofs or only external assumptions. A demonstration can pass while formal refinement remains open; it must not be described as complete formal verification.
 
+The separate [adapter state specification](adapter/README.md) proves custody maintenance and replay requirements, with pinned ABI/source inventories and a separate replay of existing compiled Solana tests. Its handwritten model is not extracted custody code, and the cached VM executable has no checked build provenance. All obligations remain open.
+
 ## Evidence rules
 
 - Specify the intended claim before reviewing its proof. Include permitted cases and a successful witness as well as forbidden cases.
