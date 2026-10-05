@@ -1,6 +1,8 @@
 # Lean verification after the frontend and vault updates
 
-October 4, 2026. Proposed implementation plan; the only completed Lean proofs are the [bounded demonstrator](../verification/lean/README.md). This plan does not certify deployed code.
+October 4, 2026. Historical proposed implementation plan; current checked model proofs and source-correspondence evidence are in [verification](../verification/README.md). This plan does not certify deployed code.
+
+The owner subsequently assigned verification ownership to this task and specified literal native Rust execution with bounded daily-limit tuning. The authoritative [completeness contract](../verification/completeness.md) and [obligation ledger](../verification/obligations.json) cover that scope. This dated research plan's generic-template proposal is historical; current native-rule model/correspondence results are documented in [verification](../verification/README.md).
 
 ## Inspected revisions
 

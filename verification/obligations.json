@@ -1,0 +1,528 @@
+{
+  "version": 1,
+  "owner": "policy/Lean verification task",
+  "assessment": "native integration completeness unassessed",
+  "profiles": {
+    "native_solana": {
+      "description": "Immediate native execution integration demonstration",
+      "required_base_profile_any_of": []
+    },
+    "native_stellar": {
+      "description": "Same literal Rust policy with a separately validated Stellar adapter",
+      "required_base_profile_any_of": []
+    },
+    "semantic_policy": {
+      "description": "Conditional extension: policies that enforce semantic restrictions",
+      "required_base_profile_any_of": [
+        "native_solana",
+        "native_stellar"
+      ]
+    },
+    "paid_api": {
+      "description": "Deferred extension: payment settlement plus service delivery",
+      "required_base_profile_any_of": [
+        "native_solana",
+        "native_stellar"
+      ]
+    }
+  },
+  "evidence_levels": [
+    "specified",
+    "model_checked",
+    "tested_correspondence",
+    "implementation_proved",
+    "adapter_tested",
+    "client_tested",
+    "deployed_identity_checked",
+    "external_assumption",
+    "source_identity_checked",
+    "harness_checked"
+  ],
+  "scope_decisions_pending": [
+    "delivered exhaustive native ABI",
+    "tuning authority and parameter revision binding",
+    "revision/reapproval/revocation transitions",
+    "pending-operation behavior on tuning and upgrades",
+    "reservation day/expiry rules if reservations convey authority",
+    "supported native client methods and result schema"
+  ],
+  "obligations": [
+    {
+      "id": "V01",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "semantic_policy",
+        "paid_api"
+      ],
+      "components": [
+        "specification"
+      ],
+      "statement": "Every owner requirement has an independently reviewed obligation or explicit scope exclusion; unresolved intent remains explicit.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V02",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "semantic_policy",
+        "paid_api"
+      ],
+      "components": [
+        "contracts",
+        "sdk",
+        "gateway",
+        "cli",
+        "frontend",
+        "skills"
+      ],
+      "statement": "Delivered inventories exhaustively cover methods, schemas, errors, outcomes, primitives, authorities and protected state effects; every interface maps to support or explicit refusal.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V03",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts",
+        "sdk",
+        "builds"
+      ],
+      "statement": "Both native builds use identical literal Rust policy bytes and bind the reviewed source/API, configuration, dependencies, toolchains and compiled/deployed artifacts.",
+      "status": "open",
+      "evidence": [
+        {
+          "receipt": "native-correspondence.json",
+          "policy_sha256": "eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8",
+          "api_sha256": "70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d",
+          "model_sha256": "79fc03055aafe0c14ee1a998dcbb18c7429f47b1bd07365b8d24a4a2401184fb",
+          "corpus_sha256": "b5a7c358a6368ab3f7eacae921bff63935437c5e43bf040a6c4512fb78552f53",
+          "proof_log_sha256": "fc4de8270ec89c995dc89bbbb186a72990522d212072bc4380c5bef33e67a172",
+          "lean": "Lean (version 4.11.0, arm64-apple-darwin23.6.0, commit ec3042d94bd1, Release)",
+          "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+          "level": "source_identity_checked",
+          "scope": "Both inspected policy/API copies match the locked bytes; embedded SOURCE_HASH matches. No target build, adapter or deployment binding is established.",
+          "receipt_sha256": "4ecd71b85f2b16bc55b34462e93ad7ce8cc651facf30be115de909b25ef8c2a9",
+          "checked_at": "2026-10-05T00:42:45Z",
+          "host": "arm64 macOS, host execution only",
+          "reviewer": "Independent Claude Code claude-opus-5-5, session 587479fb-6529-4904-9964-1eabba8af668; see ../docs/reviews/2026-10-04-completeness.md",
+          "producer": "Codex verification task; local proof checker and host replay harness",
+          "independent_reproduction": {
+            "model": "claude-opus-5-5",
+            "session": "587479fb-6529-4904-9964-1eabba8af668",
+            "record": "../docs/reviews/2026-10-04-completeness.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "V04",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "policy",
+        "lean"
+      ],
+      "statement": "For every u64 context/result, native kernel success is equivalent to the independently specified permission predicate and returns exactly effectiveSpent+amount; preserve ordered errors and a successful witness.",
+      "status": "open",
+      "evidence": [
+        {
+          "receipt": "native-correspondence.json",
+          "policy_sha256": "eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8",
+          "api_sha256": "70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d",
+          "model_sha256": "79fc03055aafe0c14ee1a998dcbb18c7429f47b1bd07365b8d24a4a2401184fb",
+          "corpus_sha256": "b5a7c358a6368ab3f7eacae921bff63935437c5e43bf040a6c4512fb78552f53",
+          "proof_log_sha256": "fc4de8270ec89c995dc89bbbb186a72990522d212072bc4380c5bef33e67a172",
+          "lean": "Lean (version 4.11.0, arm64-apple-darwin23.6.0, commit ec3042d94bd1, Release)",
+          "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+          "level": "model_checked",
+          "scope": "15 universal theorems plus one concrete success witness for AllowIt.NativeDaily, over Fin(2^64) inputs; only standard logical axioms. Not a Rust refinement.",
+          "receipt_sha256": "4ecd71b85f2b16bc55b34462e93ad7ce8cc651facf30be115de909b25ef8c2a9",
+          "checked_at": "2026-10-05T00:42:45Z",
+          "host": "arm64 macOS, host execution only",
+          "reviewer": "Independent Claude Code claude-opus-5-5, session 587479fb-6529-4904-9964-1eabba8af668; see ../docs/reviews/2026-10-04-completeness.md",
+          "producer": "Codex verification task; local proof checker and host replay harness",
+          "independent_reproduction": {
+            "model": "claude-opus-5-5",
+            "session": "587479fb-6529-4904-9964-1eabba8af668",
+            "record": "../docs/reviews/2026-10-04-completeness.md"
+          }
+        },
+        {
+          "receipt": "native-correspondence.json",
+          "policy_sha256": "eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8",
+          "api_sha256": "70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d",
+          "model_sha256": "79fc03055aafe0c14ee1a998dcbb18c7429f47b1bd07365b8d24a4a2401184fb",
+          "corpus_sha256": "b5a7c358a6368ab3f7eacae921bff63935437c5e43bf040a6c4512fb78552f53",
+          "proof_log_sha256": "fc4de8270ec89c995dc89bbbb186a72990522d212072bc4380c5bef33e67a172",
+          "lean": "Lean (version 4.11.0, arm64-apple-darwin23.6.0, commit ec3042d94bd1, Release)",
+          "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+          "level": "tested_correspondence",
+          "scope": "2907 host Rust/Lean/specification vectors across both source copies and nine caught kernel mutations; finite correspondence only.",
+          "receipt_sha256": "4ecd71b85f2b16bc55b34462e93ad7ce8cc651facf30be115de909b25ef8c2a9",
+          "checked_at": "2026-10-05T00:42:45Z",
+          "host": "arm64 macOS, host execution only",
+          "reviewer": "Independent Claude Code claude-opus-5-5, session 587479fb-6529-4904-9964-1eabba8af668; see ../docs/reviews/2026-10-04-completeness.md",
+          "producer": "Codex verification task; local proof checker and host replay harness",
+          "independent_reproduction": {
+            "model": "claude-opus-5-5",
+            "session": "587479fb-6529-4904-9964-1eabba8af668",
+            "record": "../docs/reviews/2026-10-04-completeness.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "V05",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "paid_api"
+      ],
+      "components": [
+        "contracts",
+        "sdk",
+        "gateway",
+        "cli",
+        "frontend"
+      ],
+      "statement": "Amounts and limits use exact specified integer units with checked decimal conversion, precision, overflow and target-asset representability. Signed-to-unsigned chain-clock conversion is checked; negative timestamps cannot wrap.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V06",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "semantic_policy"
+      ],
+      "components": [
+        "contracts",
+        "gateway"
+      ],
+      "statement": "Approval, executor, revision, parameters, spending/day and time come from authenticated current state; stale, revoked, foreign or caller-forged authority cannot execute.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V07",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts"
+      ],
+      "statement": "A successful operation transfers exactly the bound asset, amount and recipient from the intended vault and commits spending/replay atomically; rejection leaves protected state unchanged.",
+      "status": "open",
+      "evidence": [],
+      "pending_mutation_checks": [
+        "failed-transfer accounting or custody mutation"
+      ]
+    },
+    {
+      "id": "V08",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts",
+        "gateway"
+      ],
+      "statement": "Each accepted transfer records the authenticated execution day and exact effective spending within that execution's limit; only legitimate day advancement supplies a fresh allowance, with no skipped-day accumulation. Adapter day/reset arithmetic must agree with kernel DAY_SECONDS and returned next spending; persist that day and result without a divergent second definition.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V09",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts",
+        "gateway",
+        "frontend"
+      ],
+      "statement": "Deposit/top-up changes only declared custody effects and never approval, code/parameter revision, limit, spending/day or replay identity.",
+      "status": "open",
+      "evidence": [],
+      "pending_mutation_checks": [
+        "reset on deposit"
+      ]
+    },
+    {
+      "id": "V10",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts",
+        "sdk",
+        "frontend"
+      ],
+      "statement": "Authorized tuning changes only the declared daily-limit parameter within compiled bounds; it preserves accounting/replay and handles a limit below already-spent without reset. Source authoring does not introduce extra mutable native parameters.",
+      "status": "open",
+      "evidence": [],
+      "pending_mutation_checks": [
+        "reset on tuning"
+      ]
+    },
+    {
+      "id": "V11",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts",
+        "builds"
+      ],
+      "statement": "Approved code/revision transitions preserve custody/accounting identity, balances, spending/day and replay under an explicit migration relation; old requests cannot silently gain new authority.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V12",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "paid_api"
+      ],
+      "components": [
+        "contracts",
+        "gateway"
+      ],
+      "statement": "Concurrent operations serialize against authoritative state; duplicate/retried identities cannot transfer twice, including across day/configuration changes and restart.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V13",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts",
+        "sdk",
+        "gateway",
+        "cli",
+        "frontend",
+        "skills"
+      ],
+      "statement": "Unsupported valid methods return an explicit unsupported-method error; malformed ABI input has a specified decode error; neither path mutates protected state or falls back to transfer.",
+      "status": "open",
+      "evidence": [],
+      "pending_mutation_checks": [
+        "unsupported-method fallback"
+      ]
+    },
+    {
+      "id": "V14",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "sdk",
+        "gateway",
+        "cli",
+        "frontend"
+      ],
+      "statement": "Preview/eval/read/status do not transfer, reserve funds, consume replay identity, change daily accounting or approve authority; projections accurately identify their observed state.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V15",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "paid_api"
+      ],
+      "components": [
+        "gateway",
+        "cli"
+      ],
+      "statement": "Stable operation identity and signed proof persist before broadcast; uncertain outcomes remain unresolved; reconciliation discovers the first outcome without automatically initiating another payment.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V16",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "paid_api"
+      ],
+      "components": [
+        "sdk",
+        "gateway",
+        "cli",
+        "frontend"
+      ],
+      "statement": "Every client encodes the same supported ABI/units/bindings and maps preview, refusal, required input/signature, submission, uncertainty and finalized execution without conflating them.",
+      "status": "open",
+      "evidence": [],
+      "pending_mutation_checks": [
+        "submitted or unknown reported as executed"
+      ]
+    },
+    {
+      "id": "V17",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "semantic_policy"
+      ],
+      "components": [
+        "frontend",
+        "sdk"
+      ],
+      "statement": "Every visible policy field maps to its exact enforced meaning or an explicit unsupported/separate profile; total budget, monetary review, reserve and source edits are not silently mapped to daily tuning.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V18",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "semantic_policy"
+      ],
+      "components": [
+        "sdk",
+        "gateway",
+        "skills"
+      ],
+      "statement": "Requirement extraction and descriptor/fragment closure cover supported operations/providers; unknown dependencies refuse issuance; context provenance and caller capabilities are explicit and permission is not inferred from metadata.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V19",
+      "profiles": [
+        "semantic_policy"
+      ],
+      "components": [
+        "sdk",
+        "frontend",
+        "lean"
+      ],
+      "statement": "Selected score/toggle AST edits preserve unrelated source/normalized structure, validate ranges, reject stale/unsupported selections and refresh bindings without model regeneration.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V20",
+      "profiles": [
+        "semantic_policy"
+      ],
+      "components": [
+        "semantic_provider",
+        "gateway",
+        "contracts",
+        "lean"
+      ],
+      "statement": "Every semantic restriction uses the customer's Jev predicate and bound authentic evidence; missing/stale/malformed/wrong-request evidence cannot permit; inclusive configured thresholds preserve hard rules and unresolved outcomes.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V21",
+      "profiles": [
+        "semantic_policy"
+      ],
+      "components": [
+        "semantic_provider",
+        "specification"
+      ],
+      "statement": "Any statistical interval/calibration claim identifies labeled domain, method, risk and assumptions; otherwise explicitly report a point score and decision thresholds without a statistical guarantee.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V22",
+      "profiles": [
+        "paid_api"
+      ],
+      "components": [
+        "gateway",
+        "provider",
+        "cli",
+        "frontend"
+      ],
+      "statement": "Payment settlement and request-bound service delivery are separate outcomes; failed/retried delivery cannot authorize a second charge and provider compatibility is evidenced independently.",
+      "status": "open",
+      "evidence": []
+    },
+    {
+      "id": "V23",
+      "profiles": [
+        "native_solana",
+        "native_stellar",
+        "semantic_policy",
+        "paid_api"
+      ],
+      "components": [
+        "verification",
+        "builds"
+      ],
+      "statement": "Proof/test receipts identify their exact statement, supported domain, assumptions, implementation connection and artifacts; affected evidence becomes stale on changes and unsupported/timeouts remain unknown.",
+      "status": "open",
+      "evidence": [
+        {
+          "receipt": "native-correspondence.json",
+          "policy_sha256": "eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8",
+          "api_sha256": "70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d",
+          "model_sha256": "79fc03055aafe0c14ee1a998dcbb18c7429f47b1bd07365b8d24a4a2401184fb",
+          "corpus_sha256": "b5a7c358a6368ab3f7eacae921bff63935437c5e43bf040a6c4512fb78552f53",
+          "proof_log_sha256": "fc4de8270ec89c995dc89bbbb186a72990522d212072bc4380c5bef33e67a172",
+          "lean": "Lean (version 4.11.0, arm64-apple-darwin23.6.0, commit ec3042d94bd1, Release)",
+          "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+          "level": "harness_checked",
+          "scope": "Source/API/embedded hash and verifier dependencies checked before/after replay; stale source/API and embedded hash refusal unit tests pass. Release manifests, adapters, clients and deployments remain unbound.",
+          "receipt_sha256": "4ecd71b85f2b16bc55b34462e93ad7ce8cc651facf30be115de909b25ef8c2a9",
+          "checked_at": "2026-10-05T00:42:45Z",
+          "host": "arm64 macOS, host execution only",
+          "reviewer": "Independent Claude Code claude-opus-5-5, session 587479fb-6529-4904-9964-1eabba8af668; see ../docs/reviews/2026-10-04-completeness.md",
+          "producer": "Codex verification task; local proof checker and host replay harness",
+          "independent_reproduction": {
+            "model": "claude-opus-5-5",
+            "session": "587479fb-6529-4904-9964-1eabba8af668",
+            "record": "../docs/reviews/2026-10-04-completeness.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "V24",
+      "profiles": [
+        "native_solana",
+        "native_stellar"
+      ],
+      "components": [
+        "contracts",
+        "gateway",
+        "sdk",
+        "cli",
+        "frontend"
+      ],
+      "statement": "If exposed by the delivered ABI, withdrawal uses the declared owner authority and exact asset, amount and recipient, has explicit daily-limit applicability, and cannot reset approval, revisions, limit, spending/day or replay identity. Otherwise record an ABI-backed scope exclusion.",
+      "status": "open",
+      "evidence": []
+    }
+  ],
+  "profile_composition": "An extension assessment selects at least one declared base profile and includes all of its obligations recursively. A standalone extension assessment is invalid; scopes may exclude an operation only with explicit owner requirements and ABI evidence."
+}
