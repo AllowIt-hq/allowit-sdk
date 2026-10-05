@@ -40,8 +40,8 @@
   ],
   "scope_decisions_pending": [
     "delivered exhaustive native ABI",
-    "tuning authority and parameter revision binding",
-    "revision/reapproval/revocation transitions",
+    "delivered ABI confirmation of tuning authority, independently enforced ceiling, state revision and standing approval semantics",
+    "delivered ABI confirmation of module-switch and replacement-activation authority retirement",
     "pending-operation behavior on tuning and upgrades",
     "reservation day/expiry rules if reservations convey authority",
     "supported native client methods and result schema"
@@ -93,7 +93,7 @@
         "sdk",
         "builds"
       ],
-      "statement": "Both native builds use identical literal Rust policy bytes and bind the reviewed source/API, configuration, dependencies, toolchains and compiled/deployed artifacts.",
+      "statement": "Both native builds use identical literal Rust policy bytes and bind the reviewed source/API, configuration, dependencies, toolchains and compiled/deployed artifacts. Portable source identity is separate from each chain artifact identity. Bind custody separately from policy executable identity; Solana policy loader/ProgramData association, immutability and code identity require reviewed ABI evidence.",
       "status": "open",
       "evidence": [
         {
@@ -208,7 +208,7 @@
         "contracts",
         "gateway"
       ],
-      "statement": "Approval, executor, revision, parameters, spending/day and time come from authenticated current state; stale, revoked, foreign or caller-forged authority cannot execute.",
+      "statement": "Approval, executor, revision, parameters, spending/day and time come from authenticated current state; stale, revoked, foreign or caller-forged authority cannot execute. Separate editor/server revision, on-chain state/parameter revision and standing module approval; none substitutes for another.",
       "status": "open",
       "evidence": []
     },
@@ -271,7 +271,7 @@
         "sdk",
         "frontend"
       ],
-      "statement": "Authorized tuning changes only the declared daily-limit parameter within compiled bounds; it preserves accounting/replay and handles a limit below already-spent without reset. Source authoring does not introduce extra mutable native parameters.",
+      "statement": "Authorized tuning changes only the declared daily-limit parameter within compiled bounds; it preserves accounting/replay and handles a limit below already-spent without reset. Source authoring does not introduce extra mutable native parameters. Under the announced native handoff, owner-authorized bounded tuning preserves standing module approval and counters, advances state/parameter revision and invalidates old unsigned request revisions; the ceiling is independently anchored in custody state or the verified artifact, not merely reported by a candidate module.",
       "status": "open",
       "evidence": [],
       "pending_mutation_checks": [
@@ -288,7 +288,7 @@
         "contracts",
         "builds"
       ],
-      "statement": "Approved code/revision transitions preserve custody/accounting identity, balances, spending/day and replay under an explicit migration relation; old requests cannot silently gain new authority.",
+      "statement": "Approved code/revision transitions preserve custody/accounting identity, balances, spending/day and replay under an explicit migration relation; old requests cannot silently gain new authority. In-place module switching withdraws standing approval and preserves counters. MVP enforcement-code replacement is a new reviewed activation: retire old standing execution authority before authorizing the replacement, retain old funds/counters/recovery identities, and disclose the replacement vault's separate daily allowance.",
       "status": "open",
       "evidence": []
     },
@@ -355,7 +355,7 @@
         "gateway",
         "cli"
       ],
-      "statement": "Stable operation identity and signed proof persist before broadcast; uncertain outcomes remain unresolved; reconciliation discovers the first outcome without automatically initiating another payment.",
+      "statement": "Stable operation identity and signed proof persist before broadcast; uncertain outcomes remain unresolved; reconciliation discovers the first outcome without automatically initiating another payment. Tuning does not establish failure of an already signed request; retain its identity and uncertainty until reliable finalized or expiry/absence evidence resolves it.",
       "status": "open",
       "evidence": []
     },
@@ -479,7 +479,7 @@
         "verification",
         "builds"
       ],
-      "statement": "Proof/test receipts identify their exact statement, supported domain, assumptions, implementation connection and artifacts; affected evidence becomes stale on changes and unsupported/timeouts remain unknown.",
+      "statement": "Proof/test receipts identify their exact statement, supported domain, assumptions, implementation connection and artifacts; affected evidence becomes stale on changes and unsupported/timeouts remain unknown. Keep host, compiled-VM, local-RPC integration and public Devnet acceptance as separate evidence domains; one cannot stand in for another.",
       "status": "open",
       "evidence": [
         {
@@ -524,5 +524,14 @@
       "evidence": []
     }
   ],
-  "profile_composition": "An extension assessment selects at least one declared base profile and includes all of its obligations recursively. A standalone extension assessment is invalid; scopes may exclude an operation only with explicit owner requirements and ABI evidence."
+  "profile_composition": "An extension assessment selects at least one declared base profile and includes all of its obligations recursively. A standalone extension assessment is invalid; scopes may exclude an operation only with explicit owner requirements and ABI evidence.",
+  "design_inputs": [
+    {
+      "repository": "AllowIt-app",
+      "revision": "3a0ae62bd6b454217d75bf666fd83e5c6eb9ef22",
+      "path": "docs/solana-mvp-integration-plan.md",
+      "sha256": "876ece399344db4fbcba9166a9c87ecd133f10573c3d45bca21eecfd03cca2b6",
+      "scope": "Reviewed integration-plan handoff only; not delivered ABI, build, adapter or deployment evidence."
+    }
+  ]
 }

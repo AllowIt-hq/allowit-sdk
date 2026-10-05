@@ -47,6 +47,18 @@ Offchain reservations assist scheduling; they do not authorize a transfer. The m
 
 The adapter must use checked signed-to-unsigned time conversion where required and persist the kernel-defined day and returned spending rather than diverging arithmetic. The pure `Context` lacks executor, asset, recipient, revision, method and replay identity. Those checks belong to adapters. Exact unit conversion is also mandatory: never equate raw chain units with policy units without verifying decimals and representability. Stellar classic asset amounts use seven decimals; six-decimal policy amounts require checked conversion where applicable.
 
+## Native handoff identities and transitions
+
+The integration plan at AllowIt-app `3a0ae62bd6b454217d75bf666fd83e5c6eb9ef22`, `docs/solana-mvp-integration-plan.md`, supplies the following design boundaries. The ledger records its exact bytes as a design input. These are obligations to check against the delivered ABI and implementation, not new proof or deployment evidence.
+
+- Keep portable Rust source identity separate from each chain's compiled/deployed artifact identity. Custody identity is also separate from policy executable identity. The Solana adapter must verify the reviewed loader/ProgramData association, immutable policy code and deployed identity; a source hash alone establishes none of these.
+- Separate editor/server save revision, on-chain state/parameter revision and standing module approval. Owner-authorized in-bounds tuning preserves standing approval and spending counters, advances the state revision and makes old unsigned requests stale. Verify the compiled tuning ceiling independently in custody state or the verified artifact; a module's reported bound is insufficient.
+- Signed requests made uncertain before tuning keep their exact identity and proof. A new state revision cannot establish that the earlier transfer failed or authorize a replacement signature/payment.
+- An in-place module switch withdraws standing approval and preserves counters. Its contract tests remain required even though the MVP UI uses a new reviewed activation for enforcement-code replacement. Retire the old standing execution authority before authorizing the replacement; retain funds, counter history and unresolved recovery identities. A new vault has a separate daily allowance, which must be disclosed rather than presented as a preserved global wallet cap.
+- Host comparisons, compiled-VM tests, connected local-RPC execution and finalized public Devnet acceptance are distinct evidence domains. Report their network, target and exact artifacts separately.
+
+V03, V06, V10, V11, V15 and V23 cover these boundaries. The current Lean daily kernel accepts an already-supplied approval boolean and state; it does not prove these transition or authentication properties. Additional Lean state/refinement work follows implementation readiness and does not gate completion of the immediate Solana integration plan.
+
 ## Required coverage
 
 The stable IDs below are detailed in the ledger. A semantic or paid-API extension assessment must select a supported native base profile and include its obligations recursively, then add its extension obligations. An extension cannot be assessed alone or inherit an unmet proof. Explicit ABI-backed exclusions remain visible.
