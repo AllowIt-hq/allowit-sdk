@@ -116,6 +116,48 @@ export class Driver {
     return (await this.rpc('getAccountInfo', [key, { commitment, encoding: 'base64' }])).value;
   }
   recordPath(owner, policyId) { return join(this.config.privateDirectory, 'policies', `${policyStorageKey(owner, policyId)}.json`); }
+  // All demo policies use this owner's canonical USDC ATA. Share the existing
+  // queue across policy IDs so the saved preparation also reserves that account.
+  ownerQueueKey(owner) { return `source:${owner}`; }
+  async availableSource(owner, sourceTokenAccount, current) {
+    const source = await this.token(sourceTokenAccount, owner);
+    const delegate = source.delegate ? decodeAddress(source.delegate) : null;
+    const terminalDelegates = new Set();
+    let files;
+    try { files = await readdir(join(this.config.privateDirectory, 'policies')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; files = []; }
+    for (const name of files) {
+      if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+      const saved = await readJSON(join(this.config.privateDirectory, 'policies', name));
+      if (saved.owner !== owner || (saved.sourceTokenAccount && saved.sourceTokenAccount !== sourceTokenAccount) || saved.policyId === current?.policyId) continue;
+      const { state } = await this.fetchedState(saved, saved.status === 'prepared');
+      const terminal = state && (state.revoked || BigInt(state.spentUnits) >= BigInt(saved.mandate.allocationUnits));
+      if (!terminal) throw new Error('owner token account already has an unfinished or active policy; recover or revoke it first');
+      terminalDelegates.add(saved.delegateAddress);
+    }
+    if (delegate && delegate !== current?.delegateAddress && !terminalDelegates.has(delegate)) throw new Error('owner token account has an unknown or live delegate; authorization will not be replaced');
+    return source;
+  }
+  phaseVariants(record, key) {
+    record.preparedVariants ??= {};
+    const variants = record.preparedVariants[key] ??= [];
+    const current = key === 'revocation' ? record.revocationTransaction : record.preparedTransactions?.[Number(key.split(':')[1])];
+    if (current && !variants.some(item => item.transaction === current.transaction)) variants.push({ ...current });
+    return variants;
+  }
+  savePrepared(record, key, transaction) {
+    const variants = this.phaseVariants(record, key);
+    if (!variants.some(item => item.transaction === transaction.transaction)) {
+      if (variants.length >= 8) throw new Error('owner phase has eight prepared variants; recover its original signature before preparing another');
+      variants.push({ ...transaction });
+    }
+    if (key === 'revocation') record.revocationTransaction = transaction;
+    else record.preparedTransactions[Number(key.split(':')[1])] = transaction;
+  }
+  phaseLifetime(record, key) {
+    const heights = this.phaseVariants(record, key).map(item => item.lastValidBlockHeight).filter(value => value !== undefined).map(value => decimal(String(value), 'lastValidBlockHeight'));
+    return heights.length ? heights.reduce((a, b) => a > b ? a : b).toString() : undefined;
+  }
   async record(owner, policyId) {
     const record = await readJSON(this.recordPath(owner, policyId), null);
     if (!record || record.owner !== owner || record.policyId !== policyId) throw new Error('unknown owner policy activation');
@@ -248,7 +290,7 @@ export class Driver {
   async activationPrepare(body) {
     address(body.owner);
     if (!/^[0-9a-f]{64}$/.test(body.policyId ?? '')) throw new Error('policyId must be 32-byte lowercase hex');
-    return this.queue.run(policyStorageKey(body.owner, body.policyId), async () => {
+    return this.queue.run(this.ownerQueueKey(body.owner), async () => {
       await this.assertNetwork();
       const preset = (this.config.presets ?? []).find(preset => preset.id === body.preset);
       if (!preset) throw new Error('choose a configured reviewed preset');
@@ -265,12 +307,16 @@ export class Driver {
       if (existing) {
         if (existing.source !== source || existing.originalIntent !== originalIntent || existing.mandate.allocationUnits !== allocationUnits || existing.mandate.recipient !== recipient || existing.mandate.action !== action || existing.mandate.merchant !== merchant || existing.preset !== body.preset || (body.expiresAt && body.expiresAt !== existing.mandate.expiresAt)) throw new Error('policyId already names different immutable activation details');
         if (existing.status !== 'prepared') throw new Error('policyId already has an active or revoked mandate; choose a new policyId');
+        await this.availableSource(body.owner, existing.sourceTokenAccount, existing);
         // A lost prepare response never replaces the state key, head or compiler
         // authorization. Complete only templates not yet persisted by a crash.
-        for (let i=existing.preparedTransactions.length;i<existing.phases.length;i++) existing.preparedTransactions.push(await this.prepared(existing, existing.phases[i]));
+        for (let i=existing.preparedTransactions.length;i<existing.phases.length;i++) this.savePrepared(existing, `activation:${i}`, await this.prepared(existing, existing.phases[i]));
         await durableJSON(this.recordPath(existing.owner, existing.policyId), existing);
         return this.activationResponse(existing);
       }
+      const sourceTokenAccount = await this.associated(body.owner);
+      const sourceToken = await this.availableSource(body.owner, sourceTokenAccount);
+      if (sourceToken.amount === 0n) throw new Error(`owner has no canonical Devnet USDC; fund ${sourceTokenAccount}`);
       const activationId = randomUUID(); const stateKey = await this.newStateKey(activationId);
       const addresses = await this.codec({ op: 'addresses', programId: this.config.programId, owner: body.owner, policyId: body.policyId, stateAddress: stateKey.address });
       const head = await this.getAccount(addresses.headAddress);
@@ -286,9 +332,7 @@ export class Driver {
         stateAddress: stateKey.address, source, originalIntent, executor: this.keys.executor.address, compiler: this.keys.compiler.address,
         evidenceAuthority: { address: this.keys.evidence.address, keyId: 'demo-evidence', version: '0.1.0' }, recipient,
         revision: revision.toString(), expiresAt, allocationUnits, action, merchant, uploadChunkBytes: 480 });
-      const sourceTokenAccount = await this.associated(body.owner); const destinationTokenAccount = await this.associated(recipient);
-      const sourceToken = await this.token(sourceTokenAccount, body.owner);
-      if (sourceToken.amount === 0n) throw new Error(`owner has no canonical Devnet USDC; fund ${sourceTokenAccount}`);
+      const destinationTokenAccount = await this.associated(recipient);
       const rent = String(await this.rpc('getMinimumBalanceForRentExemption', [prepared.stateBytes, { commitment: 'finalized' }]));
       const createState = await this.codec({ op: 'create-state', owner: body.owner, stateAddress: stateKey.address, programId: this.config.programId, lamports: rent });
       const approval = await this.codec({ op: 'approve', owner: body.owner, sourceTokenAccount, delegateAddress: prepared.delegateAddress, allocationUnits });
@@ -307,51 +351,67 @@ export class Driver {
         sourceTokenAccount, destinationTokenAccount, phases, preparedTransactions: [], confirmedSignatures: [], status: 'prepared' };
       await durableJSON(this.recordPath(body.owner, body.policyId), record);
       // Every following phase is refreshed after confirming its predecessor.
-      for (const phase of phases) record.preparedTransactions.push(await this.prepared(record, phase));
+      for (let i=0;i<phases.length;i++) this.savePrepared(record, `activation:${i}`, await this.prepared(record, phases[i]));
       await durableJSON(this.recordPath(body.owner, body.policyId), record);
       return this.activationResponse(record);
     });
   }
-  async confirmedWire(signature, expectedWire) {
+  async confirmedWire(signature, expectedWires) {
     const tx = await this.rpc('getTransaction', [signature, { commitment: 'finalized', encoding: 'base64', maxSupportedTransactionVersion: 0 }]);
-    if (!tx || tx.meta?.err) throw new Error(`transaction failed or not finalized:${signature}`);
+    if (!tx || !tx.meta || tx.meta.err === undefined) throw new Error(`finalized owner receipt unavailable:${signature}`);
+    if (tx.meta.err !== null) throw new Error(`finalized owner transaction failed:${signature}`);
     const actual = getTransactionDecoder().decode(Buffer.from(tx.transaction[0], 'base64'));
-    const expected = getTransactionDecoder().decode(Buffer.from(expectedWire, 'base64'));
-    if (!Buffer.from(actual.messageBytes).equals(Buffer.from(expected.messageBytes))) throw new Error('wallet transaction differs from prepared owner-approved message');
+    const variants = (Array.isArray(expectedWires) ? expectedWires : [expectedWires]).map(wire => getTransactionDecoder().decode(Buffer.from(wire, 'base64')));
+    const expected = variants.find(item => Buffer.from(actual.messageBytes).equals(Buffer.from(item.messageBytes)));
+    if (!expected) throw new Error('wallet transaction differs from prepared owner-approved message');
+    if (getSignatureFromTransaction(actual) !== signature || Object.keys(actual.signatures).join(',') !== Object.keys(expected.signatures).join(',')) throw new Error('wallet transaction required signatures differ from prepared phase');
+    for (const [signer, partial] of Object.entries(expected.signatures)) {
+      const signed = actual.signatures[signer];
+      if (!signed || signed.length !== 64 || signed.every(byte => byte === 0) || (partial && !Buffer.from(partial).equals(Buffer.from(signed)))) throw new Error('wallet transaction required signatures differ from prepared phase');
+    }
     await durableJSON(join(this.config.privateDirectory, 'wallet-receipts', `${signature}.json`), { signature, wire: tx.transaction[0], receipt: tx });
     return tx;
   }
   async confirm(body) {
-    return this.queue.run(policyStorageKey(body.owner, body.policyId), async () => {
+    return this.queue.run(this.ownerQueueKey(body.owner), async () => {
       const record = await this.record(body.owner, body.policyId);
       const pendingKey = body.activationId ? `activation:${body.transactionIndex}` : 'revocation';
       if (body.activationId && (body.activationId !== record.activationId || !Number.isInteger(body.transactionIndex) || body.transactionIndex < 0 || body.transactionIndex >= record.phases.length)) throw new Error('invalid activation phase');
       if (!body.activationId && (!body.revocationId || body.revocationId !== record.revocationId)) throw new Error('wrong revocation ID');
+      const alreadyConfirmed = body.activationId ? record.confirmedSignatures[body.transactionIndex] : record.revocationSignature;
+      if (alreadyConfirmed && alreadyConfirmed !== body.signature) throw new Error('owner phase already has a different signature');
+      if (body.activationId && !alreadyConfirmed && record.confirmedSignatures.length !== body.transactionIndex) throw new Error('activation phases must be confirmed in order');
       record.pendingConfirmations ??= {};
       if (record.pendingConfirmations[pendingKey] && record.pendingConfirmations[pendingKey] !== body.signature) throw new Error('a different signature is already pending for this owner phase');
       record.pendingConfirmations[pendingKey] = body.signature;
       await durableJSON(this.recordPath(record.owner, record.policyId), record);
-      await this.waitFinalized(body.signature, body.lastValidBlockHeight);
+      await this.waitFinalized(body.signature, this.phaseLifetime(record, pendingKey));
+      try { await this.confirmedWire(body.signature, this.phaseVariants(record, pendingKey).map(item => item.transaction)); }
+      catch (error) {
+        // A finalized unrelated wire cannot claim this phase. Unknown outcomes
+        // remain pending and are never replaced or sent by the server.
+        if (/wallet transaction (differs|required signatures differ)|finalized owner transaction failed/.test(error.message)) {
+          delete record.pendingConfirmations[pendingKey];
+          await durableJSON(this.recordPath(record.owner, record.policyId), record);
+        }
+        throw error;
+      }
       let nextTransaction;
       if (body.activationId) {
         if (body.activationId !== record.activationId || !Number.isInteger(body.transactionIndex) || body.transactionIndex < 0 || body.transactionIndex >= record.phases.length) throw new Error('invalid activation phase');
         const index = body.transactionIndex;
-        const alreadyConfirmed = record.confirmedSignatures[index];
-        if (alreadyConfirmed && alreadyConfirmed !== body.signature) throw new Error('activation phase already has a different signature');
-        if (!alreadyConfirmed && record.confirmedSignatures.length !== index) throw new Error('activation phases must be confirmed in order');
-        await this.confirmedWire(body.signature, record.preparedTransactions[index].transaction);
         if (!alreadyConfirmed) record.confirmedSignatures.push(body.signature);
         delete record.pendingConfirmations[pendingKey];
         if (!alreadyConfirmed && index + 1 < record.phases.length && index + 1 === record.confirmedSignatures.length && !record.pendingConfirmations[`activation:${index+1}`]) {
+          if (index + 1 === record.phases.length - 1) await this.availableSource(record.owner, record.sourceTokenAccount, record);
           nextTransaction = await this.prepared(record, record.phases[index+1]);
-          record.preparedTransactions[index+1] = nextTransaction;
+          this.savePrepared(record, `activation:${index+1}`, nextTransaction);
         } else if (index + 1 < record.phases.length) {
           nextTransaction = record.preparedTransactions[index+1];
         }
         await durableJSON(this.recordPath(record.owner, record.policyId), record);
       } else if (body.revocationId) {
         if (body.revocationId !== record.revocationId) throw new Error('wrong revocation ID');
-        await this.confirmedWire(body.signature, record.revocationTransaction.transaction);
         record.revocationSignature = body.signature;
         delete record.pendingConfirmations[pendingKey];
         await durableJSON(this.recordPath(record.owner, record.policyId), record);
@@ -362,29 +422,34 @@ export class Driver {
     });
   }
   async refreshTransaction(body) {
-    return this.queue.run(policyStorageKey(body.owner, body.policyId), async () => {
+    return this.queue.run(this.ownerQueueKey(body.owner), async () => {
       await this.assertNetwork();
       const record = await this.record(body.owner, body.policyId);
       let transaction;
       if (body.activationId) {
         if (body.activationId !== record.activationId || body.transactionIndex !== record.confirmedSignatures.length || body.transactionIndex >= record.phases.length) throw new Error('only the next unconfirmed activation phase can be refreshed');
         if (record.pendingConfirmations?.[`activation:${body.transactionIndex}`]) throw new Error('owner transaction signature is pending; confirm that exact signature before refreshing');
+        if (this.phaseVariants(record, `activation:${body.transactionIndex}`).length >= 8) throw new Error('recover the existing owner phase before preparing another variant');
+        if (body.transactionIndex === record.phases.length - 1) await this.availableSource(record.owner, record.sourceTokenAccount, record);
         transaction = await this.prepared(record, record.phases[body.transactionIndex]);
-        record.preparedTransactions[body.transactionIndex] = transaction;
+        this.savePrepared(record, `activation:${body.transactionIndex}`, transaction);
       } else if (body.revocationId === record.revocationId && body.revocationId) {
         if (record.revocationSignature) throw new Error('revocation already has a signature; confirm it before refreshing');
         if (record.pendingConfirmations?.revocation) throw new Error('revocation signature is pending; confirm it before refreshing');
+        if (this.phaseVariants(record, 'revocation').length >= 8) throw new Error('recover the existing owner phase before preparing another variant');
         const dto = await this.codec({ op: 'revoke', programId: this.config.programId, owner: body.owner, stateAddress: record.stateAddress });
         transaction = { label: 'Permanently revoke this mandate', ...await this.build([...dto.computeBudgetInstructions, dto.instruction], body.owner) };
-        record.revocationTransaction = transaction;
+        this.savePrepared(record, 'revocation', transaction);
       } else { throw new Error('refresh requires the existing activation or revocation ID'); }
       await durableJSON(this.recordPath(record.owner, record.policyId), record);
       return { ...this.binding(record), transaction, nextTransaction: transaction };
     });
   }
-  async fetchedState(record) {
+  async fetchedState(record, allowMissing = false) {
     const raw = await this.getAccount(record.stateAddress);
+    if (!raw && allowMissing) return { state: null };
     if (!raw || raw.owner !== this.config.programId || raw.executable) throw new Error('state account is missing or has wrong program owner');
+    if (allowMissing && Buffer.from(raw.data[0], 'base64').every(byte => byte === 0)) return { state: null };
     const state = await this.codec({ op: 'decode-state', stateBase64: raw.data[0] });
     const m = state.mandate;
     // The owner/compiler approved every mandate field, including the evidence
@@ -396,7 +461,12 @@ export class Driver {
     const head = await this.getAccount(record.headAddress);
     if (!head || head.owner !== this.config.programId) throw new Error('missing program-owned head');
     const headData = Buffer.from(head.data[0], 'base64');
-    if (headData.length !== 48 || headData.subarray(0,8).toString() !== 'ALTHD001' || headData.readBigUInt64LE(8).toString() !== m.revision || decodeAddress(headData.subarray(16,48)) !== record.stateAddress) throw new Error('head does not select this mandate revision');
+    if (headData.length !== 48 || headData.subarray(0,8).toString() !== 'ALTHD001') throw new Error('invalid program-owned head');
+    const selected = headData.readBigUInt64LE(8).toString() === m.revision && decodeAddress(headData.subarray(16,48)) === record.stateAddress;
+    // Initialize/upload precede activation's head update. Such a mandate can
+    // be recovered or revoked, but never advertised as executable.
+    const beforeActivation = !state.active && headData.readBigUInt64LE(8) + 1n === BigInt(m.revision);
+    if (!selected && !beforeActivation) throw new Error('head does not select this mandate revision');
     Object.assign(state, { allocationUnits: m.allocationUnits, expiresAt: m.expiresAt, revision: m.revision,
       status: state.revoked ? 'revoked' : state.active ? 'active' : 'inactive' });
     return { state, stateBase64: raw.data[0] };
@@ -473,26 +543,41 @@ export class Driver {
     return results;
   }
   async state(body) {
-    return this.queue.run(policyStorageKey(body.owner, body.policyId), () => this.stateUnlocked(body));
+    return this.queue.run(this.ownerQueueKey(body.owner), () => this.stateUnlocked(body));
+  }
+  executionState(record, state, source) {
+    const delegate = source.delegate ? decodeAddress(source.delegate) : null;
+    const now = BigInt(Math.floor(Date.now()/1000));
+    const status = state.revoked ? 'revoked' : !state.active ? 'inactive' : BigInt(state.expiresAt) <= now ? 'expired'
+      : BigInt(state.spentUnits) >= BigInt(state.allocationUnits) ? 'completed'
+      : delegate !== record.delegateAddress ? 'delegate_mismatch' : source.delegatedAmount === 0n ? 'allowance_exhausted' : 'active';
+    return { ...state, status, executionUsable: status === 'active' };
   }
   async stateUnlocked(body) {
     const record = await this.record(body.owner, body.policyId);
-    const { state } = await this.fetchedState(record);
+    const lifecycle = { activation: this.activationResponse(record), pendingConfirmations: { ...record.pendingConfirmations },
+      ...(record.revocationId ? { revocation: { revocationId: record.revocationId, transactions: [record.revocationTransaction],
+        signatures: record.revocationSignature ? [record.revocationSignature] : [], nextIndex: record.revocationSignature ? 1 : 0 } } : {}) };
+    const fetched = await this.fetchedState(record, record.status === 'prepared');
+    if (!fetched.state) return { ...this.binding(record), activationId: record.activationId, stateAddress: record.stateAddress,
+      state: { status: 'prepared', active: false, revoked: false, executionUsable: false }, chainVerified: false, ...lifecycle, requests: [] };
     const source = await this.token(record.sourceTokenAccount, record.owner);
-    const destination = await this.token(record.destinationTokenAccount, record.mandate.recipient);
+    const state = this.executionState(record, fetched.state, source);
+    const destination = record.status === 'prepared' && !(await this.getAccount(record.destinationTokenAccount)) ? null : await this.token(record.destinationTokenAccount, record.mandate.recipient);
     return { ...this.binding(record), activationId: record.activationId, revocationId: record.revocationId,
       stateAddress: record.stateAddress, headAddress: record.headAddress, delegateAddress: record.delegateAddress,
-      state, chainVerified: true, sourceBalanceUnits: source.amount.toString(), destinationBalanceUnits: destination.amount.toString(),
+      state, chainVerified: true, ...lifecycle, sourceBalanceUnits: source.amount.toString(), destinationBalanceUnits: destination?.amount.toString() ?? '0',
       delegatedAmountUnits: source.delegatedAmount.toString(), delegate: source.delegate ? decodeAddress(source.delegate) : null,
       requests: await this.requestReceipts(record, state) };
   }
   async activationVerify(body) {
-    return this.queue.run(policyStorageKey(body.owner, body.policyId), async () => {
+    return this.queue.run(this.ownerQueueKey(body.owner), async () => {
       const record = await this.record(body.owner, body.policyId);
       if (body.activationId !== record.activationId || !Array.isArray(body.signatures) || body.signatures.length !== record.phases.length) throw new Error('activation ID or signature count differs');
       for (let i=0;i<body.signatures.length;i++) {
-        await this.waitFinalized(body.signatures[i], record.preparedTransactions[i].lastValidBlockHeight);
-        await this.confirmedWire(body.signatures[i], record.preparedTransactions[i].transaction);
+        if (record.confirmedSignatures[i] && record.confirmedSignatures[i] !== body.signatures[i]) throw new Error('activation phase already has a different signature');
+        await this.waitFinalized(body.signatures[i], this.phaseLifetime(record, `activation:${i}`));
+        await this.confirmedWire(body.signatures[i], this.phaseVariants(record, `activation:${i}`).map(item => item.transaction));
       }
       const result = await this.stateUnlocked(body);
       if (!result.state.active || result.state.revoked || result.delegate !== record.delegateAddress || BigInt(result.delegatedAmountUnits) !== BigInt(record.mandate.allocationUnits)) throw new Error('activation or exact delegated allowance is not finalized');
@@ -543,7 +628,7 @@ export class Driver {
       ...(receipt.assessmentStateJSON !== undefined ? { assessmentStateJSON: receipt.assessmentStateJSON } : {}) };
   }
   async execute(body) {
-    return this.queue.run(policyStorageKey(body.owner, body.policyId), async () => {
+    return this.queue.run(this.ownerQueueKey(body.owner), async () => {
       if (typeof body.requestId !== 'string' || !body.requestId || body.requestId.length > 128) throw new Error('bounded requestId is required');
       decimal(body.amountUnits);
       const record = await this.record(body.owner, body.policyId);
@@ -625,23 +710,31 @@ export class Driver {
     });
   }
   async revokePrepare(body) {
-    await this.assertNetwork();
-    const record = await this.record(body.owner, body.policyId); await this.fetchedState(record);
-    if (!record.revocationId) {
-      const instruction = await this.codec({ op: 'revoke', programId: this.config.programId, owner: body.owner, stateAddress: record.stateAddress });
-      record.revocationId = randomUUID(); record.revocationTransaction = await this.build([...instruction.computeBudgetInstructions, instruction.instruction], body.owner);
-      await durableJSON(this.recordPath(record.owner, record.policyId), record);
-    }
-    return { ...this.binding(record), revocationId: record.revocationId, transactions: [{ label: 'Permanently revoke this mandate', ...record.revocationTransaction }] };
+    return this.queue.run(this.ownerQueueKey(body.owner), async () => {
+      await this.assertNetwork();
+      const record = await this.record(body.owner, body.policyId); await this.fetchedState(record);
+      if (!record.revocationId) {
+        const instruction = await this.codec({ op: 'revoke', programId: this.config.programId, owner: body.owner, stateAddress: record.stateAddress });
+        const transaction = await this.build([...instruction.computeBudgetInstructions, instruction.instruction], body.owner);
+        record.revocationId = randomUUID(); this.savePrepared(record, 'revocation', transaction);
+        await durableJSON(this.recordPath(record.owner, record.policyId), record);
+      }
+      return { ...this.binding(record), revocationId: record.revocationId, transactions: [{ label: 'Permanently revoke this mandate', ...record.revocationTransaction }] };
+    });
   }
   async revokeVerify(body) {
-    const record = await this.record(body.owner, body.policyId);
-    if (record.revocationId !== body.revocationId || body.signatures?.length !== 1) throw new Error('revocation ID or signatures differ');
-    await this.waitFinalized(body.signatures[0], record.revocationTransaction.lastValidBlockHeight);
-    await this.confirmedWire(body.signatures[0], record.revocationTransaction.transaction);
-    const result = await this.state(body);
-    if (!result.state.revoked || result.state.active) throw new Error('revocation did not finalize');
-    record.status = 'revoked'; await durableJSON(this.recordPath(record.owner, record.policyId), record);
-    return { ...result, signatures: body.signatures };
+    return this.queue.run(this.ownerQueueKey(body.owner), async () => {
+      const record = await this.record(body.owner, body.policyId);
+      if (record.revocationId !== body.revocationId || body.signatures?.length !== 1) throw new Error('revocation ID or signatures differ');
+      if (record.revocationSignature && record.revocationSignature !== body.signatures[0]) throw new Error('revocation already has a different signature');
+      await this.waitFinalized(body.signatures[0], this.phaseLifetime(record, 'revocation'));
+      await this.confirmedWire(body.signatures[0], this.phaseVariants(record, 'revocation').map(item => item.transaction));
+      const result = await this.stateUnlocked(body);
+      if (!result.state.revoked || result.state.active) throw new Error('revocation did not finalize');
+      record.status = 'revoked'; record.revocationSignature = body.signatures[0];
+      delete record.pendingConfirmations?.revocation;
+      await durableJSON(this.recordPath(record.owner, record.policyId), record);
+      return { ...result, signatures: body.signatures };
+    });
   }
 }
