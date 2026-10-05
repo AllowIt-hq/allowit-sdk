@@ -57,8 +57,9 @@ sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??
  }
  const options=command==='execute'?{recipient:clean[0],amount:clean[1]}:clean.length?{amount:clean[0]}:{};
  let result=await lifecycle.submit(policy,ownerAddress,command,options,process.env.ALLOWIT_REQUEST_ID);
-  const until=Date.now()+60_000;
+ const replayed=result.replayed===true;const until=Date.now()+60_000;
  while(!['settled','failed'].includes(result.status)&&Date.now()<until){await new Promise(r=>setTimeout(r,1000));result=await lifecycle.recover(result.id,policy,ownerAddress);}
+ if(replayed)result={...result,replayed:true};
  const output=publicResult(result);
  if(result.status==='settled'&&command==='deploy'){
   const state=await sdk.state(policy,ownerAddress,true);output.skill=sdk.skill(policy,state);await writeFile(stateDirectory+'/SKILL.md',output.skill,{mode:0o600});
