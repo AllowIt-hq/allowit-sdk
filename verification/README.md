@@ -45,3 +45,5 @@ The [published contract handoff](published-handoff.md) now has committed targets
 The separate [LiteSVM loader preflight](runtime/loader.md) built the pinned upstream and observed both unchanged published SBF files loading, accessor-byte equality and invalid-ELF refusal. It executes no instruction/transaction and adds no rollback/readiness or dependency-closed refinement claim.
 
 The separate [signed transaction/store experiment](runtime/transaction/README.md) records seven submissions, a committing multi-transfer control, a transfer-prefix/unsupported-instruction abort and nonce reuse, plus signature/blockhash negatives. Independent strict Python wire/account checks support finite LiteSVM store correspondence, with no Lean transaction theorem or fully closed build provenance.
+
+The separate [custody failure boundaries](runtime/failure-boundary/README.md) experiment records token-CPI budget failure and token success followed by failure of that same custody instruction, with persistent-store frames and successful nonce reuse. It supplies finite trusted-runtime evidence, no universal refinement or deployment proof.

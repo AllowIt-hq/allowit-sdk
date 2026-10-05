@@ -33,3 +33,5 @@ Lean can check finite decoded account/frame arithmetic and a separately specifie
 | Reproduction and identity | V23 | Fresh isolated runs, exact source/artifact/tool/dependency binding and retained test seeds |
 
 These are partial evidence targets, not closure criteria for whole release obligations. Frozen source hashes use Git blob content bytes (without the Git object header) for production and raw GitHub API file bytes for upstream. The published artifact manifest binds binary identity separately, without establishing source/build correspondence.
+
+The separate [custody failure boundaries](failure-boundary/README.md) experiment now supplies finite witnesses for resource failure inside token CPI and after successful token CPI within the same custody instruction. These are separate from the historical multi-instruction abort; no intermediate account image or universal rollback is proved.

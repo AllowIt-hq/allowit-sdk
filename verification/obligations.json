@@ -680,5 +680,21 @@
     ],
     "scope": "Seven local LiteSVM submissions: four successes, a successful transfer prefix followed by unsupported-request failure, invalid blockhash and executor-signature controls. Complete protected-store fingerprints and selected raw bytes support finite transaction-abort/fee-frame correspondence and nonce reuse. Independent strict wire/account/ELF/role validation, retained normalized replay and targeted decoder controls. Constructed approved fixture; Clock/syscall and compiler/cache/runtime fidelity trusted. No Lean transaction proof, same-custody-instruction failure, universal readiness/refinement, build provenance, clients or deployment; all24 obligations open.",
     "review": "../docs/reviews/2026-10-05-transactions.md"
+  },
+  "failure_boundary_intake": {
+    "observation": "runtime/failure-boundary/observation.json",
+    "observation_sha256": "2ee3a9d1c86d2c91c6f116567eb651767bb949d5d77d1e56129c61538b940a3c",
+    "level": "producer_observed_finite_same_instruction_resource_failure_store_correspondence",
+    "partial": true,
+    "obligations": [
+      "V06",
+      "V07",
+      "V08",
+      "V12",
+      "V23"
+    ],
+    "scope": "Two finite execution resource failures: token CPI exhausts compute; token CPI succeeds then the same custody instruction exhausts compute. Each preserves protected persistent store and has immediately successful transfer-instruction nonce reuse with a changed budget/signed transaction. No intermediate account image, universal rollback or deployed runtime proof. Constructed approved fixture; compiler/cache/runtime, observation, cryptography and Clock-cache fidelity trusted. No new Lean theorem, universal readiness/refinement, program build provenance, clients or deployment. All 24 obligations open.",
+    "review": "../docs/reviews/2026-10-05-failure-boundaries.md",
+    "reviewer": "Independent explicitly verified Claude Code claude-opus-5-5 final session 66517061-c2ca-44c9-9458-5d08a555ebe6: close conditional on producer factual checks, now checked. Tools disabled; no production/runtime inspection or reproduction."
   }
 }
