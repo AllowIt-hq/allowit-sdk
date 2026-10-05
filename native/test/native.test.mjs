@@ -35,7 +35,7 @@ test('uncertain retry reuses exact signed proof; blocks conflicting and addition
  const retry=await f.life.submit(f.p,o,'execute',args,'same-request-001');assert(retry.replayed);assert.equal(f.signs(),1);assert.equal(f.sends.length,2);assert(f.sends[0].equals(f.sends[1]));
  await assert.rejects(f.life.submit(f.p,o,'execute',{...args,amount:'2'},'same-request-001'),/conflict/);
  await assert.rejects(f.life.submit(f.p,o,'execute',args,'next-request-001'),/uncertain/);
- f.s.connection.getBlockHeight=async()=>101;f.s.connection.getSlot=async()=>99;f.s.connection.getBlock=async()=>({blockHeight:101});f.s.state=async()=>({nonce:'1',revision:'1'});await f.life.submit(f.p,o,'execute',args,'same-request-001');assert.equal(f.sends.length,2);
+ f.s.connection.getBlockHeight=async()=>101;f.s.connection.getSlot=async()=>99;f.s.connection.getBlock=async()=>({blockHeight:101});f.s.state=async()=>({nonce:'1',revision:'1'});const expired=await f.life.submit(f.p,o,'execute',args,'same-request-001');assert.equal(f.sends.length,2);assert.equal(expired.blockhashExpired,true);assert.equal(expired.status,'uncertain');
 });
 test('saved proof cannot be substituted with another signed transaction or configuration',async()=>{
  const f=await fixture(),o=owner.publicKey.toBase58();await f.life.submit(f.p,o,'execute',{recipient:o,amount:'1'},'integrity-request');
@@ -87,5 +87,6 @@ test('CLI imports the exact browser instance without any key or RPC; status neve
   await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'status'],{env:{...env,ALLOWIT_MINT:Keypair.generate().publicKey.toBase58()}}),e=>e.code===3&&/differs/.test(e.stderr));
   await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'status'],{env}),e=>e.code===3&&/genesis/.test(e.stderr)&&!/key file|ENOENT/.test(e.stderr));
   await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'import',file],{env}),e=>e.code===3&&/already exists/.test(e.stderr));
+  const occupied={...env,ALLOWIT_POLICY_DIR:join(directory,'occupied')};await run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'generate',p.prompt],{env:occupied});await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'import',file],{env:occupied}),e=>e.code===3&&/already exists/.test(e.stderr));await assert.rejects(readFile(join(directory,'occupied/context.json')),e=>e.code==='ENOENT');
  }finally{server.close();await rm(directory,{recursive:true,force:true});}
 });

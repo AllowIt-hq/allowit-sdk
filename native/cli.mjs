@@ -31,7 +31,7 @@ sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??
   if(bundle.version!==1||!bundle.context)throw Error('Invalid executor bundle');const policy=await validatePolicy(bundle.policy),c=bundle.context;
   if(c.policyId!==policy.id||c.network!==policy.network||typeof c.owner!=='string')throw Error('Bundle network/owner mismatch');
   const imported=new NativePolicySDK({network:c.network,mint:c.mint,executor:c.executor,deployment:c.deployment});imported.publicBinding(policy,c.owner);
-  const canonical=await imported.bundle(policy,c.owner);await journal.locked(async()=>{let present;try{present=await readFile(stateDirectory+'/context.json','utf8');}catch(e){if(e.code!=='ENOENT')throw e;}const text=JSON.stringify(canonical.context,null,2)+'\n';if(present&&present!==text)throw Error('A different public context already exists here; choose a new policy directory');if(!present)await writeFile(stateDirectory+'/context.json',text,{mode:0o600,flag:'wx'});await savePolicy(policy);});
+  const canonical=await imported.bundle(policy,c.owner);await journal.locked(async()=>{let present;try{present=await readFile(stateDirectory+'/context.json','utf8');}catch(e){if(e.code!=='ENOENT')throw e;}const text=JSON.stringify(canonical.context,null,2)+'\n';try{await lstat(policyFile);throw Error('A policy already exists here. Choose a new ALLOWIT_POLICY_DIR; keep the previous policy and journal for recovery.');}catch(e){if(e.code!=='ENOENT')throw e;}if(present&&present!==text)throw Error('A different public context already exists here; choose a new policy directory');if(!present)await writeFile(stateDirectory+'/context.json',text,{mode:0o600,flag:'wx'});await savePolicy(policy);});
   console.log(json?JSON.stringify({policyId:policy.id,owner:c.owner,imported:true}):`Imported policy ${policy.id}. Configure only ALLOWIT_EXECUTOR_KEYPAIR on the executor device; never the owner key.`);return;
  }
  if(command==='generate'){
@@ -61,13 +61,14 @@ sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??
  if(['fund','withdraw'].includes(command))options.additionalOwnerOperation=process.env.ALLOWIT_ADDITIONAL_OWNER_OPERATION==='1';
  let result=await lifecycle.submit(policy,ownerAddress,command,options,process.env.ALLOWIT_REQUEST_ID);
  const replayed=result.replayed===true;const until=Date.now()+60_000;
- while(!['settled','failed'].includes(result.status)&&Date.now()<until){await new Promise(r=>setTimeout(r,1000));result=await lifecycle.recover(result.id,policy,ownerAddress);}
+ while(!['settled','failed'].includes(result.status)&&result.blockhashExpired!==true&&Date.now()<until){await new Promise(r=>setTimeout(r,1000));result=await lifecycle.recover(result.id,policy,ownerAddress);}
  if(replayed)result={...result,replayed:true};
  const output=publicResult(result);
  if(result.status==='settled'&&command==='deploy'){
   const state=await sdk.state(policy,ownerAddress,true);output.skill=sdk.skill(policy,state);await writeFile(stateDirectory+'/SKILL.md',output.skill,{mode:0o600});
  }
  if(json)console.log(JSON.stringify(output));else {console.log(`Policy ${policy.id}\n${command}: ${result.replayed?'replayed ('+result.status+')':result.status}\nRequest: ${result.id}\n${result.transactionUrl}`);if(output.skill)console.log('\n'+output.skill);}
+ if(result.blockhashExpired===true)console.error('The original operation remains uncertain and cannot be broadcast again. For an explicitly additional fund/withdraw, set both a fresh ALLOWIT_REQUEST_ID and ALLOWIT_ADDITIONAL_OWNER_OPERATION=1; retain the old proof.');
  if(result.decisionCode==='EXPIRED_UNEXECUTED')console.error('This request expired without execution. For a deliberate retry, set a new ALLOWIT_REQUEST_ID; keep the original journal.');
  if(result.status==='failed')process.exitCode=20;else if(result.status!=='settled')process.exitCode=5;else if(result.replayed)process.exitCode=6;
 }

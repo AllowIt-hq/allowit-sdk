@@ -48,6 +48,7 @@ export class PolicyLifecycle{
     if(['fund','withdraw'].includes(record.method))return {...record,...result,blockhashExpired:true};
     const unchanged=record.method==='deploy'?state===null:state&&(record.method==='execute'?state.nonce===record.nonce:state.revision===record.revision);
     if(unchanged)return {...record,status:'failed',decisionCode:'EXPIRED_UNEXECUTED',absence:{kind:'expired-'+record.method,height:block.blockHeight,slot,nonce:state?.nonce,revision:state?.revision}};
+    return {...record,...result,blockhashExpired:true};
    }
   }
   if(result.status==='settled'){
