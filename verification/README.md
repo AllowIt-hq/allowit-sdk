@@ -12,6 +12,8 @@ The currently inspected native source is `policy/policy.rs` in the two contract 
 
 ## Ownership and handoff
 
+The [extracted kernel refinement](refinement/README.md) now checks the unchanged committed Rust kernel through pinned Charon/Aeneas and a separate Lean 4.31 environment. Its universal equality covers ordered errors, exact success, termination and every bounded input; success also agrees with the independent permission predicate. This is conditional on translator/compiler fidelity and trusted upstream library artifacts. Compiled adapters, clients and deployments remain outside the proof. The Lean 4.11 model and earlier receipts are preserved.
+
 The verification owner maintains requirement IDs and domains, formal statements, source/model mappings, expected vectors, counterexamples, proof acceptance and evidence freshness. Each implementation team supplies its operation/schema inventory, exact source/build revisions and reproducible execution traces. [Required evidence](completeness.md#implementation-handoff) specifies the packet.
 
 Delivery validation and formal assurance are separate milestones. This space does not add a full-refinement gate to the immediate demonstration. It reports which claims have model proofs, tested correspondence, implementation proofs or only external assumptions. A demonstration can pass while formal refinement remains open; it must not be described as complete formal verification.

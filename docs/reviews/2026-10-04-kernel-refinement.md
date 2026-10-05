@@ -1,0 +1,9 @@
+# Extracted kernel refinement review
+
+Independent Claude Code review requested and completed with `claude-opus-5-5`. Both JSON responses confirm that canonical model; session `bb015211-6675-4462-957a-c8781830934f`. The [retained reports](2026-10-04-kernel-refinement-report.json) include the initial findings and closure. No remaining material findings were reported after repairs.
+
+The reviewer checked both pinned production source copies, actual re-extraction and exact generated-byte agreement, the full input/result/termination bridge, the independent permission predicate and successful witness. It independently reran the checker, compared stdout byte-for-byte with the retained receipt, and passed all 18 verification tests. The historical Lean 4.11 sources, original receipts and published checker/lock were unchanged.
+
+Initial findings required a valid ledger schema, automatic retained-receipt freshness, complete toolchain library identity and tighter acceptance robustness. Repairs add the separate refinement evidence level and schema, default receipt comparison, pre/post fingerprints of every Lean/Rust `lib/` file, compilation from fresh generated and frozen proof/specification snapshots, and negative guard/tool/cache tests. The closure's remaining bookkeeping request is resolved by this record and updated ledger review references.
+
+This review accepts the conditional extracted-model refinement and its harness. Rustc/Charon/Aeneas translation fidelity, the Lean kernel/toolchain, cached upstream library artifacts and their build provenance remain trusted boundaries. Hash identity is not build provenance. No compiled adapter, ABI, authorization, storage, client or deployment proof is accepted, and all 24 release obligations remain open. The reviewer did not independently disable networking; this task's successful acceptance runs used the restricted execution environment and explicitly offline Cargo.

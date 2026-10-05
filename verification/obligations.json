@@ -36,7 +36,8 @@
     "deployed_identity_checked",
     "external_assumption",
     "source_identity_checked",
-    "harness_checked"
+    "harness_checked",
+    "extracted_model_refinement"
   ],
   "scope_decisions_pending": [
     "delivered exhaustive native ABI",
@@ -175,6 +176,22 @@
             "model": "claude-opus-5-5",
             "session": "587479fb-6529-4904-9964-1eabba8af668",
             "record": "../docs/reviews/2026-10-04-completeness.md"
+          }
+        },
+        {
+          "receipt": "refinement/receipt.json",
+          "receipt_sha256": "5779896547f6092ea78eacfbb0e565694a0791c0750b267c3117fffcf65f360c",
+          "level": "extracted_model_refinement",
+          "partial": true,
+          "scope": "Universal equality and permission equivalence for unchanged published pure kernel; conditional on translator/compiler fidelity and trusted cached upstream Lean libraries. No compiled adapter/client/deployment refinement.",
+          "checked_at": "2026-10-05T02:49:00Z",
+          "host": "arm64 macOS; unchanged kernel extraction and separate Lean4.31 proof",
+          "producer": "Codex verification task; pinned Charon/Aeneas extraction and Lean checker",
+          "reviewer": "Independent Claude Code claude-opus-5-5, session bb015211-6675-4462-957a-c8781830934f; no remaining material findings after repairs; see ../docs/reviews/2026-10-04-kernel-refinement.md",
+          "independent_reproduction": {
+            "model": "claude-opus-5-5",
+            "session": "bb015211-6675-4462-957a-c8781830934f",
+            "record": "../docs/reviews/2026-10-04-kernel-refinement.md"
           }
         }
       ]
@@ -503,6 +520,22 @@
             "session": "587479fb-6529-4904-9964-1eabba8af668",
             "record": "../docs/reviews/2026-10-04-completeness.md"
           }
+        },
+        {
+          "receipt": "refinement/receipt.json",
+          "receipt_sha256": "5779896547f6092ea78eacfbb0e565694a0791c0750b267c3117fffcf65f360c",
+          "level": "extracted_model_refinement",
+          "partial": true,
+          "scope": "Universal equality and permission equivalence for unchanged published pure kernel; conditional on translator/compiler fidelity and trusted cached upstream Lean libraries. No compiled adapter/client/deployment refinement.",
+          "checked_at": "2026-10-05T02:49:00Z",
+          "host": "arm64 macOS; unchanged kernel extraction and separate Lean4.31 proof",
+          "producer": "Codex verification task; pinned Charon/Aeneas extraction and Lean checker",
+          "reviewer": "Independent Claude Code claude-opus-5-5, session bb015211-6675-4462-957a-c8781830934f; no remaining material findings after repairs; see ../docs/reviews/2026-10-04-kernel-refinement.md",
+          "independent_reproduction": {
+            "model": "claude-opus-5-5",
+            "session": "bb015211-6675-4462-957a-c8781830934f",
+            "record": "../docs/reviews/2026-10-04-kernel-refinement.md"
+          }
         }
       ]
     },
@@ -540,5 +573,17 @@
     "status": "tested_correspondence_only",
     "scope": "Committed current kernels agree on the host corpus; local artifact bytes match manifests. No source refinement, rebuilt provenance, adapter execution, deployed identity or native client completeness is established.",
     "review": "../docs/reviews/2026-10-04-published-intake.md"
+  },
+  "refinement_intake": {
+    "receipt": "refinement/receipt.json",
+    "receipt_sha256": "5779896547f6092ea78eacfbb0e565694a0791c0750b267c3117fffcf65f360c",
+    "level": "extracted_model_refinement",
+    "partial": true,
+    "scope": "Universal equality and permission equivalence for unchanged published pure kernel; conditional on translator/compiler fidelity and trusted cached upstream Lean libraries. No compiled adapter/client/deployment refinement.",
+    "checked_at": "2026-10-05T02:49:00Z",
+    "host": "arm64 macOS; unchanged kernel extraction and separate Lean4.31 proof",
+    "producer": "Codex verification task; pinned Charon/Aeneas extraction and Lean checker",
+    "reviewer": "Independent Claude Code claude-opus-5-5, session bb015211-6675-4462-957a-c8781830934f; no remaining material findings after repairs; see ../docs/reviews/2026-10-04-kernel-refinement.md",
+    "review": "../docs/reviews/2026-10-04-kernel-refinement.md"
   }
 }

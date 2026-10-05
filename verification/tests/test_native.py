@@ -67,7 +67,7 @@ class NativeEvidenceTests(unittest.TestCase):
                          ["V%02d" % n for n in range(1, 25)])
         levels = {"specified", "model_checked", "tested_correspondence", "implementation_proved",
                   "adapter_tested", "client_tested", "deployed_identity_checked", "external_assumption",
-                  "source_identity_checked", "harness_checked"}
+                  "source_identity_checked", "harness_checked", "extracted_model_refinement"}
         self.assertEqual(set(ledger["evidence_levels"]), levels)
         components = {"specification", "contracts", "sdk", "gateway", "cli", "frontend", "skills",
                       "builds", "policy", "lean", "semantic_provider", "provider", "verification"}
@@ -92,6 +92,20 @@ class NativeEvidenceTests(unittest.TestCase):
                 receipt_bytes = (DIRECTORY / evidence["receipt"]).read_bytes()
                 self.assertEqual(evidence["receipt_sha256"], native.digest(receipt_bytes))
                 receipt = json.loads(receipt_bytes)
+                if evidence["level"] == "extracted_model_refinement":
+                    refinement_lock_bytes = (DIRECTORY / "refinement/lock.json").read_bytes()
+                    refinement_lock = json.loads(refinement_lock_bytes)
+                    self.assertEqual(receipt["evidence"], evidence["level"])
+                    self.assertEqual(receipt["lockSha256"], native.digest(refinement_lock_bytes))
+                    self.assertEqual(receipt["dependencies"], refinement_lock["files"])
+                    for path, digest in receipt["dependencies"].items():
+                        self.assertEqual(native.digest((DIRECTORY / "refinement" / path).read_bytes()), digest)
+                    self.assertTrue(evidence["partial"])
+                    self.assertTrue(evidence["producer"])
+                    self.assertTrue(evidence["reviewer"])
+                    self.assertTrue(evidence["checked_at"])
+                    self.assertEqual(obligation["status"], "open")
+                    continue
                 for key, field in (("policy_sha256", "policySha256"), ("api_sha256", "apiSha256"),
                                    ("model_sha256", "modelSha256"), ("corpus_sha256", "corpusSha256"),
                                    ("proof_log_sha256", "proofCheckLogSha256")):
