@@ -696,5 +696,19 @@
     "scope": "Two finite execution resource failures: token CPI exhausts compute; token CPI succeeds then the same custody instruction exhausts compute. Each preserves protected persistent store and has immediately successful transfer-instruction nonce reuse with a changed budget/signed transaction. No intermediate account image, universal rollback or deployed runtime proof. Constructed approved fixture; compiler/cache/runtime, observation, cryptography and Clock-cache fidelity trusted. No new Lean theorem, universal readiness/refinement, program build provenance, clients or deployment. All 24 obligations open.",
     "review": "../docs/reviews/2026-10-05-failure-boundaries.md",
     "reviewer": "Independent explicitly verified Claude Code claude-opus-5-5 final session 66517061-c2ca-44c9-9458-5d08a555ebe6: close conditional on producer factual checks, now checked. Tools disabled; no production/runtime inspection or reproduction."
+  },
+  "frame_intake": {
+    "receipt": "runtime/frame/receipt.json",
+    "receipt_sha256": "269e2bc211bc28d12ebd6df8e9f3f3b7ddd7d72eba0e4d4cff8c3ed8ff2b44d7",
+    "level": "retained_corpus_finite_frame_and_reuse_certificates",
+    "partial": true,
+    "obligations": [
+      "V07",
+      "V08",
+      "V12",
+      "V23"
+    ],
+    "scope": "Ten generic handwritten finite-store fee/failure statements,16 finite retained-corpus certificates and three derived nonce corollaries: seven failure frames/three custody preservation/three identical-action state-nonce/revision bindings/three arbitrary-readiness reuse successes with explicit environment hypotheses/three derived nonce advances. Fresh Lean4.31 source compilation and axiom audit; restored official core identities match historical pins. Strict old Python validators replay retained data only; no fresh VM execution. Opaque digest identities and observer/decoder/runtime/standard-library fidelity trusted. No adapter extraction/refinement, universal readiness/rollback, program build provenance, clients or deployment. All24 obligations open.",
+    "review": "../docs/reviews/2026-10-05-transaction-frames.md"
   }
 }
