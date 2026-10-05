@@ -1,6 +1,6 @@
 # Transaction rollback acceptance preparation
 
-No signed-transaction/store experiment has run here. A subsequent [finite loader preflight](loader.md) is recorded separately. All 24 release obligations remain open. This is preparation for V06–V08/V12/V23, separate from the retained Mollusk corpora. Initial inspection found no validator executable or cached LiteSVM package; the separate preflight subsequently prepared an isolated LiteSVM build. The [research inventory](research.json) binds inspected source bytes; it is not a build lock or runtime receipt.
+This document specifies the acceptance design. A subsequent [finite signed transaction/store experiment](transaction/README.md) and [loader preflight](loader.md) are recorded separately. All 24 release obligations remain open. This is preparation for V06–V08/V12/V23, separate from the retained Mollusk corpora. Initial inspection found no validator executable or cached LiteSVM package; the separate preflight subsequently prepared an isolated LiteSVM build. The [research inventory](research.json) binds inspected source bytes; it is not a build lock or runtime receipt.
 
 Solana's [transaction pipeline](https://solana.com/docs/core/transactions/transaction-pipeline) documents failed-execution account rollback with fee-payer and durable-nonce exceptions. Existing Mollusk instruction and transaction APIs return input accounts on error. Rechecking those returned values cannot observe a rollback in a store that persists across transactions.
 

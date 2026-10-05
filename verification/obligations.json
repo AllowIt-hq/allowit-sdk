@@ -665,5 +665,20 @@
     "scope": "Separate 12-execution Solana VM corpus with seven successes and five refusals. Complete Boolean vectors of 11 non-environment model transfer prerequisites isolate one failing condition; five arbitrary-readiness/post-state refusals and positive ready=True model counterfactuals, successful-state certificates and arithmetic transcriptions plus two generic vector/model-completeness links total 28 statements. Observed raw continuity is checked from a constructed fixture, not initialization refinement. No real signatures, platform readiness, exact intervention correspondence, error cause/precedence, rollback, universal adapter refinement, program build provenance, clients or deployment. All 24 obligations stay open.",
     "review": "../docs/reviews/2026-10-05-isolation.md",
     "receipt_sha256": "a6aca312b76cd8805adc5c76610298793e3aae59842f1cf680ea40085d694000"
+  },
+  "transaction_intake": {
+    "observation": "runtime/transaction/observation.json",
+    "observation_sha256": "42ba6b0844f81d48d3cc72fa9c1de273b475f6463954ebd96411cb2fefd49138",
+    "level": "producer_observed_finite_signed_transaction_store_correspondence",
+    "partial": true,
+    "obligations": [
+      "V06",
+      "V07",
+      "V08",
+      "V12",
+      "V23"
+    ],
+    "scope": "Seven local LiteSVM submissions: four successes, a successful transfer prefix followed by unsupported-request failure, invalid blockhash and executor-signature controls. Complete protected-store fingerprints and selected raw bytes support finite transaction-abort/fee-frame correspondence and nonce reuse. Independent strict wire/account/ELF/role validation, retained normalized replay and targeted decoder controls. Constructed approved fixture; Clock/syscall and compiler/cache/runtime fidelity trusted. No Lean transaction proof, same-custody-instruction failure, universal readiness/refinement, build provenance, clients or deployment; all24 obligations open.",
+    "review": "../docs/reviews/2026-10-05-transactions.md"
   }
 }
