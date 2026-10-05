@@ -115,3 +115,5 @@ receipt evidence. Shared program provisioning must precede that test.
 Browser handoff downloads SKILL.md and executor.json. `policy import` preserves
 the original policy instance and writes only public configuration; configure
 the executor signer separately. Status reads all saved operations.
+
+Generated Rust contains only `execute`, calling standard `require_approval` and `enforce_daily_limit` system functions. Their exact implementation lives in the paired, pinned `policy_api.rs`, included in the source-bundle identity. Standard daily rollover, overflow, approval and compiled parameter bounds are not regenerated per policy. The native ABI remains version 1; a new immutable policy version is required for this source bundle. The separate restricted-Rust compiler also accepts `execute` for new policies and retains read compatibility with historical `exec` and `evaluate` source.

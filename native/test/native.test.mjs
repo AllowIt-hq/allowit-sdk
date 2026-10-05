@@ -90,3 +90,14 @@ test('CLI imports the exact browser instance without any key or RPC; status neve
   const occupied={...env,ALLOWIT_POLICY_DIR:join(directory,'occupied')};await run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'generate',p.prompt],{env:occupied});await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'import',file],{env:occupied}),e=>e.code===3&&/already exists/.test(e.stderr));await assert.rejects(readFile(join(directory,'occupied/context.json')),e=>e.code==='ENOENT');
  }finally{server.close();await rm(directory,{recursive:true,force:true});}
 });
+
+ test('generated source is execute-only and delegates standard daily checks to the pinned library', async()=>{
+  const p=await new NativePolicySDK().generate('Spend up to 5 test tokens per day');
+  assert.equal((p.rust.match(/\bfn\s+/g)||[]).length,1);
+  assert.match(p.rust,/pub fn execute\(/);
+  assert.match(p.rust,/require_approval\(ctx\)\?;/);
+  assert.match(p.rust,/enforce_daily_limit\(ctx\)/);
+  assert.doesNotMatch(p.rust,/checked_add|fn validate_daily_limit/);
+  assert.match(RELEASE.sources['policy_api.rs'],/pub fn enforce_daily_limit/);
+  assert.match(RELEASE.sources['policy_api.rs'],/checked_add\(ctx.amount\)/);
+ });
