@@ -1,0 +1,110 @@
+{
+  "checked_at": "2026-10-05T01:13:31Z",
+  "local_time": "October 4, 2026, 9:13 p.m. America/Toronto",
+  "scope": "Read-only readiness assessment of local checkouts, candidate source bytes and latest task summaries; no remote update, production build, chain execution or source refinement performed.",
+  "readiness": "pending reviewed implementation handoff",
+  "repositories": {
+    "AllowIt-contracts-solana": {
+      "head": "f810e40bd8ca2509d5fea2e7b55cc17825b7347b",
+      "branch": "feat/native-policy-vault",
+      "status": [
+        "?? Cargo.lock",
+        "?? Cargo.toml",
+        "?? crates/",
+        "?? policy/",
+        "?? programs/",
+        "?? sbf-tests/"
+      ],
+      "inspected_sha256": {
+        "policy/policy.rs": "eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8",
+        "policy/policy_api.rs": "70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d",
+        "policy/source_hash.rs": "14e98494986e3f151bdf9eb31b5c73d8726b0370b9df5246e6e6dd6d24dfe8e8",
+        "crates/interface/src/lib.rs": "fb741dc98f8317841d85262fe52d136189d4be76c39f8616ba5623776aef3352",
+        "programs/vault/src/lib.rs": "669f33e16a74621877bc592f0c5e58b182a5dff776dc786a9095664ed24745fe",
+        "programs/policy/src/lib.rs": "fe620462be7df6c06708d19f18b4c8ad162be4cb874b38603959e24a81f0a5a3"
+      }
+    },
+    "AllowIt-contracts-stellar": {
+      "head": "bf1d8d51512aa0451c3c3141da419d19f4af5fd5",
+      "branch": "feat/native-policy-vault",
+      "status": [
+        "?? Cargo.lock",
+        "?? Cargo.toml",
+        "?? crates/",
+        "?? policy/",
+        "?? scripts/"
+      ],
+      "inspected_sha256": {
+        "policy/policy.rs": "eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8",
+        "policy/policy_api.rs": "70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d",
+        "policy/source_hash.rs": "14e98494986e3f151bdf9eb31b5c73d8726b0370b9df5246e6e6dd6d24dfe8e8",
+        "crates/vault/src/lib.rs": "5eb1135794b5092d71aa6fa0000da170a7f2e36b702d36ddb48ebde73056aa95",
+        "crates/policy/src/lib.rs": "04e13602dd83681cd5d3e2073458b2da4faa05ce5e27272e866f7c7e40cf8c0c"
+      }
+    },
+    "AllowIt-sdk": {
+      "head": "f393d671c05be3e09acd085d2bc594ca73273c97",
+      "branch": "feat/policy-parameter-edits",
+      "status": []
+    },
+    "AllowIt-app": {
+      "head": "325a1367844e1cd7bee37196b1b6429d77f5d5f0",
+      "branch": "feat/rust-policy-runtime",
+      "status": []
+    },
+    "allowit-cli": {
+      "head": "3090822bc5f0ad519b96f6dab297f22c64c51dff",
+      "branch": "main",
+      "status": []
+    }
+  },
+  "app_plan_revision": "3a0ae62bd6b454217d75bf666fd83e5c6eb9ef22",
+  "cli_compatibility_revision": "3090822bc5f0ad519b96f6dab297f22c64c51dff",
+  "source_lock_changed": false,
+  "model_changed": false,
+  "receipt_changed": false,
+  "observations": [
+    {
+      "obligations": [
+        "V03",
+        "V23"
+      ],
+      "finding": "Both contract HEADs are initialization commits; implementation directories and Cargo manifests/locks remain untracked. No final implementation revision or release ABI/artifact manifest was found in the inspected repository state."
+    },
+    {
+      "obligations": [
+        "V03",
+        "V06"
+      ],
+      "finding": "Inspected Solana ABI/state carry policy program and policy_source but no separately bound compiled policy artifact or ProgramData identity. The vault checks executable/return-data producer/binding/source, but no loader/ProgramData immutability validation was found in the inspected vault source. The announced hardening remains unassessed."
+    },
+    {
+      "obligations": [
+        "V10"
+      ],
+      "finding": "Both inspected tuning paths delegate limit validation to the selected policy. No independently anchored ceiling was found in the inspected custody state/tuning paths. This is a provisional implementation gap against the supplied plan, not a deployed-contract finding."
+    },
+    {
+      "obligations": [
+        "V10",
+        "V11"
+      ],
+      "finding": "Inspected tuning branches preserve the standing-approval field and counters while advancing revision; module-switch branches clear approval. Source observation only, not compiled/state-transition proof."
+    },
+    {
+      "obligations": [
+        "V16",
+        "V17"
+      ],
+      "finding": "Latest app integration handoff is plan-only at 3a0ae62. CLI compatibility is merged at 3090822; neither establishes native gateway/SDK/frontend integration."
+    }
+  ],
+  "verification_checks": {
+    "unit_tests": 6,
+    "result": "passed",
+    "live_policy_and_api_match_frozen_target": true,
+    "new_proof_claims": false
+  },
+  "external_evidence": "Contract-task compiled/local/Testnet measurements may exist; this cycle did not independently validate their build, deployment or transaction evidence. Do not promote them to verified adapter or public Devnet acceptance.",
+  "next_action": "Inspect the reviewed ABI, committed contract hardening, artifact manifests and native SDK/gateway/client handoff when delivered; then advance the isolated source-refinement and adapter-state proof of concept."
+}
