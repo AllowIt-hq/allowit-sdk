@@ -22,6 +22,8 @@ The separate [adapter state specification](adapter/README.md) proves custody mai
 
 The separate [custody trace correspondence](traces/README.md) links a fresh isolated Rust/Mollusk harness to the independent specification through 32 finite Lean certificates. It covers 26 ordinary instruction executions and one explicitly invalid-supply diagnostic. Readiness, real signature authentication, universal adapter refinement, program build provenance, clients and deployment remain unproved; all 24 obligations remain open.
 
+The separate [finite model refusal certificates](refusal/README.md) prove that none of the 12 captured non-environment program-rejected requests admits a successful model transition, for any readiness predicate or post-state. A positive budget-case witness keeps environment failure separate. The prior trace corpus, models and receipts remain unchanged; this does not establish universal adapter refinement.
+
 ## Evidence rules
 
 - Specify the intended claim before reviewing its proof. Include permitted cases and a successful witness as well as forbidden cases.

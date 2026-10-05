@@ -629,5 +629,24 @@
     "scope": "Fresh task-authored host Rust harness executes pinned Solana SBF through trusted cached Mollusk dependencies. 26 ordinary cases, one invalid-supply exact-wrap diagnostic and 32 Lean certificates, with independent raw-state decoding and account frames. Rejection equality reflects Mollusk explicitly returning input accounts on failure, not adapter rollback. Readiness instantiated True; model refusal, real signatures, universal adapter refinement, program build provenance, clients and deployment remain unproved. All 24 obligations remain open.",
     "review": "../docs/reviews/2026-10-04-custody-traces.md",
     "reviewer": "Independent verified Claude Code claude-opus-5-5, final session de6b1eb0-b6cd-4c3d-a626-0b387c266e34: no blocking soundness or claim-scope issue. Tools-disabled supplied-text review; production source/runtime not independently rerun. Remaining low findings retained; producer reproduces acceptance."
+  },
+  "refusal_intake": {
+    "receipt": "refusal/receipt.json",
+    "receipt_sha256": "34151b4434f313d870ff3ad43fa793dd9cf814a1d8f7180866d232324b612ecd",
+    "level": "finite_model_nonpermission_correspondence",
+    "partial": true,
+    "obligations": [
+      "V06",
+      "V07",
+      "V08",
+      "V10",
+      "V11",
+      "V12",
+      "V13",
+      "V23"
+    ],
+    "scope": "Twelve captured non-environment program refusals admit no successful model transition for any readiness predicate or post-state; universal tuning-capacity helper and positive budget case total 14 statements. Prior compiled trace acceptance reruns. Finite nonpermission only; exact error layer, failed cause and precedence unproved. Harness clock trusted. no single-fault revocation, platform readiness, universal adapter refinement, signature authentication, rollback, build provenance, clients or deployment proof. All 24 release obligations remain open.",
+    "review": "../docs/reviews/2026-10-05-refusals.md",
+    "reviewer": "Independent explicitly verified Claude Code claude-opus-5-5, closure session 1ab9f44d-d944-454c-a5fd-f0d835cd4e07: no material soundness/scope issue conditional on producer reproduction. Tools disabled; no production inspection/runtime rerun. Closure hardening applied without expanding claims."
   }
 }
