@@ -38,6 +38,8 @@ Jev's output is an external observation. No theorem establishes classification t
 
 ## Architecture implication
 
+The [October 4 verification plan](../../docs/lean-verification-plan.md) incorporates the divergent customer workspace, owner-review flow and separate fixed-policy Devnet vault. It prioritizes shared-rule semantics and custody/journal transitions, then the actual IR bridge; all production proof milestones remain proposed.
+
 Lean can own the typed language specification, executable reference evaluator, extension laws and proofs. Rust can continue to own parsing, source-preserving edits, validated IR, deterministic execution and WASM/contract adapters. Go can own transport, lifecycle and capability-aware skill assembly. A verified Lean model plus Rust/Go tests remains a tested correspondence; a production correctness claim needs a proved refinement or a verified/extracted implementation with its trust boundary stated.
 
 A useful next bridge is to compare the actual Rust requirement extractor and Go fragment selector with this model over generated typed trees, including every registered function and both branches. That would add differential evidence, not a theorem about either implementation. A separate lowering theorem should establish that `check_preference`'s actual IR implements the interval/disabled-state specification. A skill renderer can then derive fragments from the verified machine descriptor; its English interpretation still is not a formal proof.
