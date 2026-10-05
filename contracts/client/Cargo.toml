@@ -1,0 +1,20 @@
+[package]
+name = "allowit-contract-client"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+allowit-contract-core = { path = "../common", features = ["compiler"] }
+allowit-solana = { path = "../solana", features = ["no-entrypoint"] }
+allowit-sdk = { path = "../..", default-features = false, features = ["compiler"] }
+borsh = "=1.6.0"
+serde_json = "=1.0.150"
+base64 = "0.22.1"
+solana-program = "=2.3.0"
+spl-token = { version = "=8.0.0", features = ["no-entrypoint"] }
+
+[[bin]]
+name = "allowit-contract-client"
+path = "src/main.rs"
