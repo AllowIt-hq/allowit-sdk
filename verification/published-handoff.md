@@ -1,0 +1,36 @@
+# Published native kernel handoff
+
+October 4, 2026 (Toronto). Read-only intake targets Solana `e0fc5a19985a7c1d1d184754dba98ddbc98e2841` and Stellar `8eb495e0a2abd923ae01c81d46f1f5aad1da4114`. Both working trees are clean. Their manifests identify code commits `8373496dbf4a67c639533f15cc343f484c639aed` and `ff7833a9963e194b25698f0d9ed3650b56fcb1c9`; these are ancestors of the pinned evidence commits. The checker rejects any intervening change outside a narrow README/manifest/evidence allowlist; this guards stale source transitions but does not prove a reproducible build. The contract task reports exact-head CI passing. That CI claim was not queried independently here.
+
+## Identity and replay
+
+The current policy file SHA-256 is `e07e148b2403a43e3080d043db7fcd49e505cb661adbb8e40c0f2ae4aeb6978b`; API SHA-256 remains `70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d`. The inspected diff from the [retained old policy](history/frozen-source/policy.rs) changes formatting only. Its SHA-256 is the original `eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8`. This is a reviewed mapping observation, not a Rust semantics theorem.
+
+The embedded source identity is now a **bundle digest**, `c445348186c8d7ee9132539528c82a3c6a718718993db879cd9ceaf28e1d7cfa`. Hash the bytes `allowit-policy-source-v1` plus NUL, then `policy.rs` and `policy_api.rs` in that order, each framed as filename plus NUL, eight-byte little-endian length and contents. It is neither the plain policy digest nor an executable digest. The independent checker rejects stale file/bundle/embedded identities and mismatched local artifacts.
+
+Run from this worktree:
+
+```sh
+LEAN_BIN=/absolute/path/to/lean python3 verification/check_published.py
+PYTHONPYCACHEPREFIX=/tmp/allowit-proof-python-cache python3 -m unittest discover -s verification/tests -v
+```
+
+The [published lock](published-source-lock.json) pins commits and manifest bytes. The [receipt](published-correspondence.json) binds the reused Lean model, corpus and checker dependencies. All 2,907 host Rust/Lean/specification vectors agree. All five local binaries match manifest size and SHA-256: Solana policy/custody and Stellar policy/custody/factory. These identity checks do not establish that the binaries were built from the pinned source. No chain VM, RPC or client was executed by this checker.
+
+The original lock, model, frozen source snapshots and receipt remain untouched. The nine mutation results belong to that earlier frozen experiment; the published checker reports that it did not rerun mutations. The model header retains its original source provenance. Its independently specified daily semantics are reused for the new finite comparison; no universal production refinement is inherited.
+
+## Adapter evidence still to validate
+
+Source inspection now finds independently compiled limit validation in both custody implementations, Solana loader/ProgramData linkage and immutability checks, and Stellar resolved-Wasm identity checks. This supersedes the provisional source gaps in the 9:13 p.m. readiness report. It does not close V03/V06/V10: exact compiled behavior, authority paths, rollback, malformed ABI, client projections and deployment trust remain separate obligations.
+
+The contract review report is retained in each production repo's `evidence/opus-review.json`. It explicitly did not rerun builds or tests, and lists untested wrong-authority/loader/account paths and weak negative assertions. Its MVP approval is not a completeness proof. Stellar Testnet transaction evidence is present but has not been independently reconciled here. Solana public Devnet and connected frontend/gateway/SDK/CLI acceptance remain pending. All 24 release obligations remain open.
+
+## Source refinement preparation
+
+[Aeneas](https://github.com/AeneasVerif/aeneas) translates Charon LLBC to an executable Lean model for supported safe Rust. Use `charon cargo --preset=aeneas`, then the Lean backend, and prove extracted success/error semantics against `NativeDaily`. Pin Aeneas, its required Charon commit, Rust extraction toolchain, generated LLBC, backend library and Lean dependencies; compilation and translation remain explicit trusted components.
+
+The inspected [backend toolchain](https://raw.githubusercontent.com/AeneasVerif/aeneas/main/backends/lean/lean-toolchain) currently says Lean 4.31.0, while this demonstrator uses 4.11.0. The [Charon pin](https://raw.githubusercontent.com/AeneasVerif/aeneas/main/charon-pin) currently names `c8f15d7d658c86a95658f71ad99cddd4be002e04`. These mutable-main observations are research inputs, not a reproducible extraction pin. Create a separate Lake/tool environment after selecting an exact Aeneas revision; preserve the existing checker.
+
+This machine has no discovered OCaml/OPAM/Dune, Charon or Aeneas executable. Extraction has not run. The first feasibility target is the published pure kernel, with `checked_add`, error propagation and u64 division audited in the generated definitions. Do not rewrite the Rust implementation to make extraction appear successful, or call hand-transcribed Lean a source refinement. Adapter and interface proofs follow their own delivered code; their readiness does not prevent isolated kernel extraction research.
+
+Independent [Opus 5.5 review](../docs/reviews/2026-10-04-published-intake.md) reproduced the receipt and all 12 verification tests after guard repairs. No remaining material findings were reported for this checker; that verdict does not audit the contracts or close the unassessed obligations.

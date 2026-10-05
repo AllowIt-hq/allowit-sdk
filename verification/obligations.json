@@ -533,5 +533,12 @@
       "sha256": "876ece399344db4fbcba9166a9c87ecd133f10573c3d45bca21eecfd03cca2b6",
       "scope": "Reviewed integration-plan handoff only; not delivered ABI, build, adapter or deployment evidence."
     }
-  ]
+  ],
+  "published_intake": {
+    "receipt": "published-correspondence.json",
+    "receipt_sha256": "91d597d5880518a4c9a788a07858626d5b06436ee086776f05db6cac56c3e01e",
+    "status": "tested_correspondence_only",
+    "scope": "Committed current kernels agree on the host corpus; local artifact bytes match manifests. No source refinement, rebuilt provenance, adapter execution, deployed identity or native client completeness is established.",
+    "review": "../docs/reviews/2026-10-04-published-intake.md"
+  }
 }
