@@ -17,7 +17,7 @@ fn standalone_cli_and_lsp_transport_run_without_ui() {
         .unwrap();
     assert!(output.status.success());
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["decision"]["outcome"], "pass");
+    assert_eq!(result["decision"]["code"], "SEMANTIC_EVIDENCE_REQUIRED");
     let mut child = Command::new(env!("CARGO_BIN_EXE_allowit"))
         .arg("lsp")
         .stdin(Stdio::piped())

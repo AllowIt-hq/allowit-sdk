@@ -5,11 +5,15 @@ extern crate alloc;
 #[cfg(feature = "compiler")]
 mod compiler;
 #[cfg(feature = "compiler")]
+mod editing;
+#[cfg(feature = "compiler")]
 pub mod lsp;
 pub mod prelude;
 mod protocol;
 mod readability;
 mod registry;
+#[cfg(feature = "compiler")]
+mod requirements;
 mod runtime;
 #[cfg(feature = "oracle-ledger")]
 pub mod spending;
