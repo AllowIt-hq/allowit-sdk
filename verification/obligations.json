@@ -607,5 +607,27 @@
     "scope": "Independent successful-transition specification: 21 model statements, separate replay of seven pinned cached Solana VM tests. No extracted adapter/refinement, trace-to-model correspondence, rebuilt provenance, clients or deployment proof. All obligations remain open. Each copied ELF dependency is tested by removal and invalid ELF magic; no proof of universal byte consumption is claimed.",
     "review": "../docs/reviews/2026-10-04-adapter-state.md",
     "reviewer": "Independent Claude Code claude-opus-5-5, session 7cec5bdb-bb84-4883-9b3f-51a466044e26; tools-disabled supplied-text closure, no remaining material problems. Runtime reproduction by verification producer only."
+  },
+  "trace_intake": {
+    "receipt": "traces/receipt.json",
+    "receipt_sha256": "76024d2c39ab05f9ee35a3a409d1c4feda080c91ab6fda0ef4d881bb4eda4fcf",
+    "level": "finite_compiled_adapter_projection_correspondence",
+    "partial": true,
+    "obligations": [
+      "V05",
+      "V06",
+      "V07",
+      "V08",
+      "V09",
+      "V10",
+      "V11",
+      "V12",
+      "V13",
+      "V23",
+      "V24"
+    ],
+    "scope": "Fresh task-authored host Rust harness executes pinned Solana SBF through trusted cached Mollusk dependencies. 26 ordinary cases, one invalid-supply exact-wrap diagnostic and 32 Lean certificates, with independent raw-state decoding and account frames. Rejection equality reflects Mollusk explicitly returning input accounts on failure, not adapter rollback. Readiness instantiated True; model refusal, real signatures, universal adapter refinement, program build provenance, clients and deployment remain unproved. All 24 obligations remain open.",
+    "review": "../docs/reviews/2026-10-04-custody-traces.md",
+    "reviewer": "Independent verified Claude Code claude-opus-5-5, final session de6b1eb0-b6cd-4c3d-a626-0b387c266e34: no blocking soundness or claim-scope issue. Tools-disabled supplied-text review; production source/runtime not independently rerun. Remaining low findings retained; producer reproduces acceptance."
   }
 }

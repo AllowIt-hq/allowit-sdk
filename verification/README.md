@@ -20,6 +20,8 @@ Delivery validation and formal assurance are separate milestones. This space doe
 
 The separate [adapter state specification](adapter/README.md) proves custody maintenance and replay requirements, with pinned ABI/source inventories and a separate replay of existing compiled Solana tests. Its handwritten model is not extracted custody code, and the cached VM executable has no checked build provenance. All obligations remain open.
 
+The separate [custody trace correspondence](traces/README.md) links a fresh isolated Rust/Mollusk harness to the independent specification through 32 finite Lean certificates. It covers 26 ordinary instruction executions and one explicitly invalid-supply diagnostic. Readiness, real signature authentication, universal adapter refinement, program build provenance, clients and deployment remain unproved; all 24 obligations remain open.
+
 ## Evidence rules
 
 - Specify the intended claim before reviewing its proof. Include permitted cases and a successful witness as well as forbidden cases.
