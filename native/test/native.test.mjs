@@ -47,9 +47,9 @@ test('saved proof cannot be substituted with another signed transaction or confi
 
 test('classic SPL mint offsets and init state are decoded exactly',async()=>{const {getMint,TOKEN_PROGRAM_ID}=await import('../token.mjs');const data=Buffer.alloc(82);data[44]=6;data[45]=1;const connection={getAccountInfo:async()=>({owner:TOKEN_PROGRAM_ID,data})};assert.equal((await getMint(connection,owner.publicKey)).decimals,6);data[45]=0;await assert.rejects(getMint(connection,owner.publicKey),/initialized/);});
 
-test('expired execute releases only with coherent unchanged nonce AND revision',async()=>{const f=await fixture(),o=owner.publicKey.toBase58();await f.life.submit(f.p,o,'execute',{recipient:o,amount:'1'},'expired-request-01');f.s.connection.getBlockHeight=async()=>101;f.s.connection.getSlot=async()=>99;f.s.connection.getBlock=async()=>({blockHeight:101});let got;f.s.state=async(p,owner,recovery,slot)=>{got=slot;return {nonce:'0',revision:'1'};};const r=await f.life.recover('expired-request-01',f.p,o);assert.equal(r.status,'failed');assert.equal(r.decisionCode,'EXPIRED_UNEXECUTED');assert.equal(got,99);});
+test('expired execute releases only with coherent unchanged nonce even after revision advances',async()=>{const f=await fixture(),o=owner.publicKey.toBase58();await f.life.submit(f.p,o,'execute',{recipient:o,amount:'1'},'expired-request-01');f.s.connection.getBlockHeight=async()=>101;f.s.connection.getSlot=async()=>99;f.s.connection.getBlock=async()=>({blockHeight:101});let got;f.s.state=async(p,owner,recovery,slot)=>{got=slot;return {nonce:'0',revision:'2'};};const r=await f.life.recover('expired-request-01',f.p,o);assert.equal(r.status,'failed');assert.equal(r.decisionCode,'EXPIRED_UNEXECUTED');assert.equal(got,99);});
 
-test('amount spelling does not change operation identity',async()=>{const {intentFor}=await import('../lifecycle.mjs');const p=await sdk.generate('Spend up to 5 test tokens per day'),o=owner.publicKey.toBase58();assert.equal(intentFor(sdk,p,o,'fund',{amount:'2'}),intentFor(sdk,p,o,'fund',{amount:'2.0'}));const bundle=await sdk.bundle(p,o);assert.equal(bundle.context.owner,o);assert.equal(bundle.policy.id,p.id);assert(!JSON.stringify(bundle).includes('secretKey'));});
+test('amount spelling does not change operation identity',async()=>{const {intentFor}=await import('../lifecycle.mjs');const p=await sdk.generate('Spend up to 5 test tokens per day'),o=owner.publicKey.toBase58();assert.equal(intentFor(sdk,p,o,'fund',{amount:'2'}),intentFor(sdk,p,o,'fund',{amount:'2.0'}));const bundle=await sdk.bundle(p,o);assert.equal(bundle.context.owner,o);assert.equal(bundle.policy.id,p.id);assert.equal(bundle.context.policyId,p.id);assert(!JSON.stringify(bundle).includes('secretKey'));});
 
 test('coherent expiry releases revoke/tune/deploy but never infers fund or withdrawal absence',async()=>{
  const {createAssociatedTokenAccountIdempotentInstruction,getAssociatedTokenAddressSync}=await import('../token.mjs');
@@ -66,7 +66,12 @@ test('coherent expiry releases revoke/tune/deploy but never infers fund or withd
   const record={id:'expiry-'+method,intent,method,status:'uncertain',signature:base58(tx.signature),signedBytes:tx.serialize().toString('base64'),blockhash,lastValidBlockHeight:100,revision:rev,nonce:'0'};
   await f.journal.write('request-'+record.id,record);f.s.connection.getBlockHeight=async()=>101;f.s.connection.getSlot=async()=>99;f.s.connection.getBlock=async()=>({blockHeight:101});f.s.state=async(p,o,recovery,slot)=>{assert.equal(slot,99);return method==='deploy'?null:{revision:rev,nonce:'0'};};
   const recovered=await f.life.recover(record.id,f.p,o);assert.equal(recovered.status,['fund','withdraw'].includes(method)?'uncertain':'failed');
-  if(['fund','withdraw'].includes(method))assert.equal(recovered.blockhashExpired,true);
+  if(['fund','withdraw'].includes(method)){
+   assert.equal(recovered.blockhashExpired,true);await f.journal.write('owner-slot-'+method,{id:record.id});
+   await assert.rejects(f.life.submit(f.p,o,method,{amount:'2'},'additional-'+method),/Earlier .* uncertain/);
+   f.s.prepare=async()=>{const tx=new Transaction({feePayer:owner.publicKey,blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:200}).add(...(method==='fund'?[f.s.instruction(b,'deposit',{amount:2000000n,source:getAssociatedTokenAddressSync(new PublicKey(b.mint),owner.publicKey).toBase58()})]:[createAssociatedTokenAccountIdempotentInstruction(owner.publicKey,getAssociatedTokenAddressSync(new PublicKey(b.mint),owner.publicKey),owner.publicKey,new PublicKey(b.mint)),f.s.instruction(b,'withdraw',{amount:2000000n,destination:getAssociatedTokenAddressSync(new PublicKey(b.mint),owner.publicKey).toBase58()})]));return {transaction:tx,blockhash:tx.recentBlockhash,lastValidBlockHeight:200,nonce:'0',revision:rev};};
+   const life=new PolicyLifecycle(f.s,f.journal,async tx=>{tx.sign(owner);return tx;});const extra=await life.submit(f.p,o,method,{amount:'2',additionalOwnerOperation:true},'additional-'+method);assert.equal(extra.status,'uncertain');assert.equal((await f.journal.read('request-'+record.id)).status,'uncertain');assert.equal((await f.journal.read('owner-slot-'+method)).id,extra.id);
+  }
   else {f.s.state=async()=>{throw Error('Must reuse persisted absence evidence');};assert.equal((await f.life.recover(record.id,f.p,o)).status,'failed');}
  }
 });
@@ -79,6 +84,7 @@ test('CLI imports the exact browser instance without any key or RPC; status neve
   const file=join(directory,'executor.json');await writeFile(file,JSON.stringify(bundle));
   const env={PATH:process.env.PATH,ALLOWIT_POLICY_DIR:join(directory,'policy'),ALLOWIT_OWNER_KEYPAIR:'/nonexistent-owner-key',ALLOWIT_EXECUTOR_KEYPAIR:'/nonexistent-executor-key',ALLOWIT_RPC_URL:'http://127.0.0.1:'+server.address().port};
   const output=await run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'import',file,'--json'],{env});assert.equal(JSON.parse(output.stdout).policyId,p.id);assert.deepEqual(JSON.parse(await readFile(join(directory,'policy/policy.json'),'utf8')),p);
+  await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'status'],{env:{...env,ALLOWIT_MINT:Keypair.generate().publicKey.toBase58()}}),e=>e.code===3&&/differs/.test(e.stderr));
   await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'status'],{env}),e=>e.code===3&&/genesis/.test(e.stderr)&&!/key file|ENOENT/.test(e.stderr));
   await assert.rejects(run(process.execPath,[new URL('../cli.mjs',import.meta.url).pathname,'import',file],{env}),e=>e.code===3&&/already exists/.test(e.stderr));
  }finally{server.close();await rm(directory,{recursive:true,force:true});}

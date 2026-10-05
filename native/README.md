@@ -62,6 +62,7 @@ Environment overrides and the public imported context configure the lifecycle:
 | ALLOWIT_OWNER | Public owner key for executor/status; no owner signing key is loaded |
 | ALLOWIT_OWNER_KEYPAIR | Dedicated owner test key; regular file, mode 0600 |
 | ALLOWIT_EXECUTOR_KEYPAIR | Dedicated executor test key, 0600; execute only |
+| ALLOWIT_ADDITIONAL_OWNER_OPERATION | `1` explicitly authorizes another fund/withdraw only after verified expiry of the unresolved prior operation |
 | ALLOWIT_REQUEST_ID | Optional distinct ASCII request ID for a new intended operation |
 
 Generate requires no key, RPC or deployment. Status requires no signer. Execute loads only the executor signer. Owner commands
@@ -75,8 +76,8 @@ fund/transfer, set a fresh `ALLOWIT_REQUEST_ID`; do not change it after uncertai
 Exit 5 means unconfirmed/uncertain, 20 policy refusal or finalized failure,
 6 replay of a settled earlier operation, 3 invalid configuration. A missing/pruned signature alone is uncertainty. An expired execute can be
 released only when finalized height exceeds validity and a coherent finalized
-vault observation retains its exact nonce and revision. Revoke/tune can also prove nonexecution from an unchanged revision, and deploy from an absent uniquely derived vault at that coherent finalized slot. Fund/withdraw have no marker and stay uncertain without their finalized receipt; an owner may explicitly authorize an additional operation after verified expiry while retaining the original proof. Status never signs a replacement.
-The local journal serializes one unresolved executor spend per policy. It is
+vault observation retains its exact nonce (even if tuning/revocation advanced revision). Revoke/tune can also prove nonexecution from an unchanged revision, and deploy from an absent uniquely derived vault at that coherent finalized slot. Fund/withdraw have no marker and stay uncertain without their finalized receipt; an owner may explicitly authorize an additional operation after verified expiry while retaining the original proof. Status never signs a replacement.
+The local journal serializes one unresolved executor spend per policy and guards unresolved deposits/withdrawals per method. Use a new request ID plus `ALLOWIT_ADDITIONAL_OWNER_OPERATION=1` only for an explicitly additional owner operation after verified expiry; the earlier proof remains uncertain. It is
 not a distributed signing service; multiple devices/process journals sharing
 an executor require a gateway with transactional storage before production.
 

@@ -146,7 +146,7 @@ export class NativePolicySDK{
   const latest=await this.connection.getLatestBlockhash('finalized');const tx=new Transaction({...latest,feePayer:key(signer)}).add(...instructions);
   return {transaction:tx,method,binding:b,policy,owner,options,nonce:s?.nonce,revision:s?.revision,lastValidBlockHeight:latest.lastValidBlockHeight,blockhash:latest.blockhash,amount:amount?.toString(),recipient:options.recipient};
  }
- async bundle(policy,owner){await validatePolicy(policy);this.publicBinding(policy,owner);return {version:1,policy,context:{owner,network:policy.network,mint:this.config.mint,executor:this.config.executor,deployment:this.config.deployment}};}
+ async bundle(policy,owner){await validatePolicy(policy);this.publicBinding(policy,owner);return {version:1,policy,context:{policyId:policy.id,owner,network:policy.network,mint:this.config.mint,executor:this.config.executor,deployment:this.config.deployment}};}
  async chainTime(){const slot=await this.connection.getSlot('finalized');const time=await this.connection.getBlockTime(slot);if(time===null)throw Error('Chain time is unavailable');return time;}
  async status(signature){
   await this.checkNetwork();const value=(await this.connection.getSignatureStatuses([signature],{searchTransactionHistory:true})).value[0];

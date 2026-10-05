@@ -46,7 +46,7 @@ export class PolicyLifecycle{
     if(!block||block.blockHeight===null||block.blockHeight<=record.lastValidBlockHeight)return {...record,...result};
     const state=await this.sdk.state(policy,owner,true,slot);
     if(['fund','withdraw'].includes(record.method))return {...record,...result,blockhashExpired:true};
-    const unchanged=record.method==='deploy'?state===null:state&&state.revision===record.revision&&(record.method!=='execute'||state.nonce===record.nonce);
+    const unchanged=record.method==='deploy'?state===null:state&&(record.method==='execute'?state.nonce===record.nonce:state.revision===record.revision);
     if(unchanged)return {...record,status:'failed',decisionCode:'EXPIRED_UNEXECUTED',absence:{kind:'expired-'+record.method,height:block.blockHeight,slot,nonce:state?.nonce,revision:state?.revision}};
    }
   }
@@ -84,6 +84,11 @@ export class PolicyLifecycle{
     const slot=await this.journal.read('execute-slot');
     if(slot){const old=await this.journal.read('request-'+slot.id);if(!old)throw Error('Execution journal inconsistency');const reconciled=await this.reconcile(old,policy,owner);await this.journal.write('request-'+slot.id,reconciled);if(!['settled','failed'].includes(reconciled.status))throw Error(`Execution ${slot.id} is uncertain; recover it before a new spend`);await this.journal.clear('execute-slot');}
    }
+   // Per-method owner slots prevent accidental additional deposits/withdrawals.
+   if(['fund','withdraw'].includes(method)){
+    const slot=await this.journal.read('owner-slot-'+method);
+    if(slot){const old=await this.journal.read('request-'+slot.id);if(!old)throw Error('Owner journal inconsistency');const reconciled=await this.reconcile(old,policy,owner);await this.journal.write('request-'+slot.id,reconciled);if(!['settled','failed'].includes(reconciled.status)&&!(reconciled.blockhashExpired===true&&options.additionalOwnerOperation===true))throw Error('Earlier '+method+' is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.');}
+   }
    const prepared=await this.sdk.prepare(policy,owner,method,options),unsignedMessage=Buffer.from(prepared.transaction.serializeMessage());
    const signed=await this.sign(prepared.transaction,method==='execute'?'executor':'owner');
    if(!Buffer.from(signed.serializeMessage()).equals(unsignedMessage)||!signed.verifySignatures())throw Error('Signer changed the prepared transaction or returned invalid signatures');
@@ -91,7 +96,7 @@ export class PolicyLifecycle{
    const record={id,intent:canonical,method,status:'uncertain',signature,signedBytes:raw.toString('base64'),blockhash:prepared.blockhash,lastValidBlockHeight:prepared.lastValidBlockHeight,nonce:prepared.nonce,revision:prepared.revision,transactionUrl:this.sdk.transactionURL(signature)};
    validateRecord(this.sdk,policy,owner,record);
    // Exact signed proof and unresolved slot are durable before any broadcast.
-   await this.journal.write(name,record);if(method==='execute')await this.journal.write('execute-slot',{id});await this.journal.write('last',{id});
+   await this.journal.write(name,record);if(['fund','withdraw'].includes(method))await this.journal.write('owner-slot-'+method,{id});if(method==='execute')await this.journal.write('execute-slot',{id});await this.journal.write('last',{id});
    try{const returned=await this.sdk.connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:0});if(returned!==signature)throw Error('RPC returned a different signature');record.status='submitted';await this.journal.write(name,record);}catch{/* Missing evidence never authorizes a replacement. */}
    return record;
   });

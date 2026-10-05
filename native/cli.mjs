@@ -23,12 +23,13 @@ async function main(){
  if(!command||['help','--help'].includes(command)){console.log(usage);return;}
  if(Number(process.versions.node.split('.')[0])<22)throw Error('Node >=22 is required');
  let context=null;try{context=JSON.parse(await readFile(stateDirectory+'/context.json','utf8'));}catch(e){if(e.code!=='ENOENT')throw Error('Unreadable policy context');}
+if(context){for(const [name,value]of [['ALLOWIT_NETWORK',context.network],['ALLOWIT_MINT',context.mint],['ALLOWIT_EXECUTOR',context.executor]])if(process.env[name]&&process.env[name]!==value)throw Error('Environment '+name+' differs from the imported policy context');}
 sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??'solana:testnet',rpcUrl:process.env.ALLOWIT_RPC_URL??(context?.network==='solana:devnet'?'https://api.devnet.solana.com':'https://api.testnet.solana.com'),mint:process.env.ALLOWIT_MINT??context?.mint,executor:process.env.ALLOWIT_EXECUTOR??context?.executor,deployment:context?.deployment});
 
  if(command==='import'){
   if(clean.length!==1)throw Error('policy import takes one executor.json path');const bundle=JSON.parse(await readFile(clean[0],'utf8'));
   if(bundle.version!==1||!bundle.context)throw Error('Invalid executor bundle');const policy=await validatePolicy(bundle.policy),c=bundle.context;
-  if(c.network!==policy.network||typeof c.owner!=='string')throw Error('Bundle network/owner mismatch');
+  if(c.policyId!==policy.id||c.network!==policy.network||typeof c.owner!=='string')throw Error('Bundle network/owner mismatch');
   const imported=new NativePolicySDK({network:c.network,mint:c.mint,executor:c.executor,deployment:c.deployment});imported.publicBinding(policy,c.owner);
   const canonical=await imported.bundle(policy,c.owner);await journal.locked(async()=>{let present;try{present=await readFile(stateDirectory+'/context.json','utf8');}catch(e){if(e.code!=='ENOENT')throw e;}const text=JSON.stringify(canonical.context,null,2)+'\n';if(present&&present!==text)throw Error('A different public context already exists here; choose a new policy directory');if(!present)await writeFile(stateDirectory+'/context.json',text,{mode:0o600,flag:'wx'});await savePolicy(policy);});
   console.log(json?JSON.stringify({policyId:policy.id,owner:c.owner,imported:true}):`Imported policy ${policy.id}. Configure only ALLOWIT_EXECUTOR_KEYPAIR on the executor device; never the owner key.`);return;
@@ -40,7 +41,8 @@ sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??
  const expected={deploy:0,fund:1,execute:2,status:0,revoke:0,withdraw:1,tune:1};
  if(expected[command]===undefined||clean.length!==expected[command])throw Error(usage);
  const policy=await validatePolicy(JSON.parse(await readFile(policyFile,'utf8')));
- const deploymentFile=process.env.ALLOWIT_DEPLOYMENT_FILE;if(deploymentFile)sdk.config.deployment=JSON.parse(await readFile(deploymentFile,'utf8'));
+ if(context&&context.policyId!==policy.id)throw Error('Saved context belongs to a different policy instance');
+ const deploymentFile=process.env.ALLOWIT_DEPLOYMENT_FILE;if(deploymentFile){const deployment=JSON.parse(await readFile(deploymentFile,'utf8'));if(context&&['network','sourceBundle','policy','policyData','custody'].some(k=>deployment[k]!==context.deployment[k]))throw Error('Deployment differs from the imported policy context');sdk.config.deployment=deployment;}
  if(!sdk.config.deployment)throw Error('Configure ALLOWIT_DEPLOYMENT_FILE or import the executor bundle');
  const ownerRole=!['execute','status'].includes(command);
  const owner=ownerRole?await loadSigner('ALLOWIT_OWNER_KEYPAIR'):null;
@@ -56,6 +58,7 @@ sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??
   if(json)console.log(JSON.stringify(output));else {console.log(`Policy ${policy.id}\n${state?`Vault ${state.vault}\nApproved: ${state.approved}\nBalance: ${decimal(state.balance)}\nSpent today counter: ${decimal(state.spent)}`:'Not deployed'}`);if(operation)console.log(`Last operation: ${operation.status}\n${operation.transactionUrl}`);}return;
  }
  const options=command==='execute'?{recipient:clean[0],amount:clean[1]}:clean.length?{amount:clean[0]}:{};
+ if(['fund','withdraw'].includes(command))options.additionalOwnerOperation=process.env.ALLOWIT_ADDITIONAL_OWNER_OPERATION==='1';
  let result=await lifecycle.submit(policy,ownerAddress,command,options,process.env.ALLOWIT_REQUEST_ID);
  const replayed=result.replayed===true;const until=Date.now()+60_000;
  while(!['settled','failed'].includes(result.status)&&Date.now()<until){await new Promise(r=>setTimeout(r,1000));result=await lifecycle.recover(result.id,policy,ownerAddress);}
@@ -65,6 +68,7 @@ sdk=new NativePolicySDK({network:process.env.ALLOWIT_NETWORK??context?.network??
   const state=await sdk.state(policy,ownerAddress,true);output.skill=sdk.skill(policy,state);await writeFile(stateDirectory+'/SKILL.md',output.skill,{mode:0o600});
  }
  if(json)console.log(JSON.stringify(output));else {console.log(`Policy ${policy.id}\n${command}: ${result.replayed?'replayed ('+result.status+')':result.status}\nRequest: ${result.id}\n${result.transactionUrl}`);if(output.skill)console.log('\n'+output.skill);}
+ if(result.decisionCode==='EXPIRED_UNEXECUTED')console.error('This request expired without execution. For a deliberate retry, set a new ALLOWIT_REQUEST_ID; keep the original journal.');
  if(result.status==='failed')process.exitCode=20;else if(result.status!=='settled')process.exitCode=5;else if(result.replayed)process.exitCode=6;
 }
 function publicResult(r){const {signedBytes,intent,...publicFields}=r;return publicFields;}
