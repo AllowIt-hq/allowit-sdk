@@ -33,3 +33,17 @@ jobs:
         with:
           name: allowit-sdk-wasm
           path: target/wasm32-unknown-unknown/release/allowit_sdk.wasm
+
+  native-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: native
+      - run: npm test
+        working-directory: native

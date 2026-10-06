@@ -5,7 +5,7 @@ AllowIt policies are a restricted, validated subset of Rust. This repository con
 ```rust
 use allowit::prelude::*;
 
-pub async fn evaluate(ctx: &Context) -> PolicyResult {
+pub async fn execute(ctx: &Context) -> PolicyResult {
     set_cap(ctx, "100", "USDC")?;
     cap_per_transaction(ctx, "10", "USDC")?;
     require_merchant(ctx, "research.example")?;
@@ -47,7 +47,7 @@ The prelude is a type-checking facade, not a replacement for the compiler/interp
 
 ## Supported source and execution
 
-Each file contains an optional `use allowit::prelude::*;` and one `pub async fn evaluate(ctx: &Context) -> PolicyResult`. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
+Each file contains an optional `use allowit::prelude::*;` and one `pub async fn execute(ctx: &Context) -> PolicyResult`. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
 
 Every function and every branch is validated, including unreachable code. Unknown syntax, imports, macros, attributes, mutation, shadowing, loops, recursion, arbitrary method calls, I/O, unsafe code and unchecked/discarded function results are rejected. Source is limited to 32 KiB and 1,024 syntax tokens (including opening and closing delimiters), IR to 2,048 nodes and semantic nesting to 48 levels. The total token budget never resets across statements or groups. Before invoking `syn`, a token preflight checks the exact function signature and permits only simple `u64`, `bool`, `&str` or `ConfidenceInterval` local annotations. Type declarations, casts, closures and qualified type expressions are rejected before Rust's recursive type parser runs. An iterative token-tree walk bounds actual delimiter depth to 32 and each statement/header to 256 tokens, 96 punctuation operators and 32 control prefixes, with at most 32 `else` branches in a policy. Only the function body and statement-level `if`/`else` bodies may contain code blocks; conditional expressions and semicolons inside expression groups are unsupported. Flat guard statements have independent budgets. Parentheses and brackets contribute to their enclosing expression budget, so shallow postfix call/index/cast chains cannot hide a deep AST. String contents and comments do not alter structural depth. UTF-8 source must not contain a leading byte-order mark.
 
@@ -86,7 +86,7 @@ Compiler output includes versioned [execution requirements](docs/execution-requi
 Compilation releases its temporary proc-macro source maps after every call so persistent hosts do not retain every edited document. No parser span escapes the SDK. The compiler is intended for standalone native/WASM hosts, not for execution from inside a Rust procedural macro. Hosts must not retain unrelated `proc_macro2::Span` values across compilation calls on the same thread. CLI/JSON error `line` and `column` are one-based Unicode-scalar positions; LSP converts columns to zero-based UTF-16.
 
 ```json
-{"operation":"compile","source":"pub async fn evaluate(ctx: &Context) -> PolicyResult { Ok(()) }"}
+{"operation":"compile","source":"pub async fn execute(ctx: &Context) -> PolicyResult { Ok(()) }"}
 ```
 
 Compilation returns `ok: true` and `policy` with `language: "allowit-rust-v1"`, source/IR SHA-256 digests, registry version, optional limit (empty string when uncapped), token, exact source, workflow blocks, call spans and typed IR. Evaluation accepts `operation: "evaluate"`, `source`, `profile: "oracle" | "contract"` and `context` in the shape of `examples/context.json`. It returns `decision.outcome`, `code` and `reason`, plus `prompt` and `input_key` when suspended. Invalid requests return `ok: false` and a typed `error`.
@@ -168,12 +168,12 @@ The helper lowers to the existing semantic, branch, failure and user-input IR op
 
 ### Versioned compact policies and purchase tiers
 
-New source can use `use allowit::v1::prelude::*;` and `pub async fn exec(ctx: &Context) -> PolicyResult`. The legacy import, `evaluate` function name and six-argument preference form remain accepted. The compact versioned form is:
+New source can use `use allowit::v1::prelude::*;` and `pub async fn execute(ctx: &Context) -> PolicyResult`. The legacy import, `exec` and `evaluate` function names and six-argument preference form remain accepted. The compact versioned form is:
 
 ```rust
 use allowit::v1::prelude::*;
 
-pub async fn exec(ctx: &Context) -> PolicyResult {
+pub async fn execute(ctx: &Context) -> PolicyResult {
     set_cap(ctx, "10", "USDC")?;
     cap_purchase_tiers(ctx, "1", 2, "USDC")?;
     check_preference(ctx,
