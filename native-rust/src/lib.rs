@@ -1,7 +1,9 @@
+pub mod client;
 pub mod crypto;
 pub mod error;
 pub mod journal;
 pub mod policy;
+pub mod rpc;
 use serde::Deserialize;
 use std::{collections::BTreeMap, sync::OnceLock};
 #[derive(Deserialize)]
