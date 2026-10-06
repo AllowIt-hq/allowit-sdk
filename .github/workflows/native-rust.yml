@@ -1,0 +1,22 @@
+name: Native Rust SDK
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  native-rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native-rust -> target
+      - run: cargo fmt --manifest-path native-rust/Cargo.toml --check
+      - run: cargo test --manifest-path native-rust/Cargo.toml --locked
+      - run: cargo clippy --manifest-path native-rust/Cargo.toml --locked --all-targets -- -D warnings
