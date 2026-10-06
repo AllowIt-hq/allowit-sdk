@@ -1,2 +1,0 @@
-   Compiling litesvm v0.17.0 (/private/tmp/allowit-extraction-oct05/litesvm-source/crates/litesvm)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.80s

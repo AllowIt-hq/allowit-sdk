@@ -42,7 +42,7 @@ Jev's output is an external observation. No theorem establishes classification t
 
 `NativeDaily.lean` models the inspected native source hash `eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8` with all inputs/results bounded to `u64`. `success_iff` proves both permission directions and the exact returned spending; a successful exact-limit witness rules out vacuous safety. The other theorems cover parameter bounds, all errors in source order, day regression, zero limit, same-day lowering below spent and fresh-day independence of old spending.
 
-This function returns the next spending value. It does not authenticate its context or persist that value. The model therefore proves no actual transfer, storage update, authority, reservation, migration or settlement property. The [completeness contract](../completeness.md) defines those separate obligations.
+This function returns the next spending value. It does not authenticate its context or persist that value. The model therefore proves no actual transfer, storage update, authority, reservation, migration or settlement property. The [completeness contract](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/completeness.md) defines those separate obligations.
 
 With the two contract checkouts at the paths pinned in `verification/native-source-lock.json`, run from the SDK root:
 
@@ -54,7 +54,7 @@ The script first checks the proofs, verifies both policy/API hashes and each emb
 
 ## Architecture implication
 
-The [October 4 verification plan](../../docs/lean-verification-plan.md) incorporates the divergent customer workspace, owner-review flow and separate fixed-policy Devnet vault. It prioritizes shared-rule semantics and custody/journal transitions, then the actual IR bridge; all production proof milestones remain proposed.
+The [October 4 verification plan](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/docs/lean-verification-plan.md) incorporates the divergent customer workspace, owner-review flow and separate fixed-policy Devnet vault. It prioritizes shared-rule semantics and custody/journal transitions, then the actual IR bridge; all production proof milestones remain proposed.
 
 Lean can own the typed language specification, executable reference evaluator, extension laws and proofs. Rust can continue to own parsing, source-preserving edits, validated IR, deterministic execution and WASM/contract adapters. Go can own transport, lifecycle and capability-aware skill assembly. A verified Lean model plus Rust/Go tests remains a tested correspondence; a production correctness claim needs a proved refinement or a verified/extracted implementation with its trust boundary stated.
 

@@ -1,7 +1,0 @@
-# Single-fault verification review
-
-Claude Code explicitly selected `claude-opus-5-5`; all three retained response modelUsage inventories report only that model and no execution error. Tools were disabled: these are independent supplied-text reviews, not production inspection or runtime reproduction.
-
-The [initial review](2026-10-05-isolation-initial.json) requested generic condition/model links, same-module rebind scope, semantic VM log checks and verified-byte Python loading. The [repair review](2026-10-05-isolation-repair.json) confirmed the formal repairs but identified overbroad import-closure and token-account proof claims. Those claims were narrowed explicitly: transitive imports remain trusted, and four asset statements recheck arithmetic transcriptions of Python-decoded deltas. The [final closure](2026-10-05-isolation-closure.json) found no material findings. Its minor wording note was addressed by removing the unsupported adjective “reviewed” from the dependency-graph trust statement.
-
-The producer separately ran two fresh temporary-directory acceptance executions, reproducing the retained corpus, normalized logs, 28 Lean statements, proof audit, native executable identity and receipt. All 44 verification tests passed. No production adapter refinement, actual cryptographic signatures, readiness, rollback, program build provenance, clients or deployment is established; all 24 release obligations remain open.

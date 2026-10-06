@@ -1,9 +1,0 @@
-# Published contract intake review
-
-October 4, 2026, Toronto. Independent Claude Code review with explicitly selected and returned canonical model `claude-opus-5-5`, session `f220bce7-744a-437a-adc9-c265a7bcbed9`. Codex produced the checker and receipt; the reviewer independently reproduced them without edits. Scope: verification-only intake, not a production contract audit.
-
-Reviewed the published checker/lock/receipt, new tests, handoff document and ledger metadata, using the pinned committed contract source and five local artifacts. Initial findings concerned stale manifest code transitions, insufficient negative guard tests, unavailable old source bytes, and stale wording. Repairs require exact commit identities, ancestry and a narrow metadata-only transition; strict source schemas and physical compiler pinning; retained old sources; and explicit evidence limits. Follow-up found rename detection could hide a removed build input. NUL-delimited `--no-renames` output and real-Git rename/leading-space regressions closed that gap.
-
-Final verdict: no remaining material issue. The reviewer reproduced the finalized receipt byte for byte and all 12 tests. Solana `e0fc5a1` and Stellar `8eb495e` remained the pinned targets. The historical model, original lock and native receipt were unchanged.
-
-The [raw reports](2026-10-04-published-intake-report.json) retain each review round and actual-model metadata. The [handoff](../../verification/published-handoff.md) defines the result: 2,907 finite kernel host comparisons plus five local binary identities. Universal Rust refinement, reproduced build provenance, SBF/Soroban behavior, adapter/ABI/client execution, deployed identity, Testnet reconciliation and new mutation results remain unproved or untested by this check. All 24 release obligations remain open.
