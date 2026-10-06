@@ -1,5 +1,6 @@
 pub mod crypto;
 pub mod error;
+pub mod journal;
 pub mod policy;
 use serde::Deserialize;
 use std::{collections::BTreeMap, sync::OnceLock};
