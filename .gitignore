@@ -3,3 +3,7 @@
 .DS_Store
 
 /dist-native/
+
+# Task evidence belongs to the main project wiki.
+/artifacts/
+/evidence/
