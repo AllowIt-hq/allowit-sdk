@@ -63,12 +63,14 @@ impl<'de> serde::Deserialize<'de> for Key {
 pub struct LocalSigner(ed25519_dalek::SigningKey);
 impl LocalSigner {
     pub fn from_secret(bytes: &[u8]) -> Result<Self> {
-        let pair: [u8; 64] = bytes
+        let mut pair: [u8; 64] = bytes
             .try_into()
             .map_err(|_| Error::config("Invalid signer file"))?;
-        ed25519_dalek::SigningKey::from_keypair_bytes(&pair)
+        let signer = ed25519_dalek::SigningKey::from_keypair_bytes(&pair)
             .map(Self)
-            .map_err(|_| Error::config("Invalid signer file"))
+            .map_err(|_| Error::config("Invalid signer file"));
+        pair.fill(0);
+        signer
     }
     pub fn load(path: &Path) -> Result<Self> {
         let info = std::fs::symlink_metadata(path)
@@ -97,18 +99,36 @@ impl LocalSigner {
         let mut f = options
             .open(path)
             .map_err(|_| Error::config("Cannot read signer key file"))?;
+        let opened = f
+            .metadata()
+            .map_err(|_| Error::config("Cannot read signer key file"))?;
+        if !opened.is_file() {
+            return Err(Error::config(
+                "Signer key file must be a private regular file (0600)",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if opened.permissions().mode() & 0o077 != 0 {
+                return Err(Error::config(
+                    "Signer key file must be a private regular file (0600)",
+                ));
+            }
+        }
         let mut bytes = Vec::new();
         f.by_ref()
             .take(4097)
             .read_to_end(&mut bytes)
             .map_err(|_| Error::config("Cannot read signer key file"))?;
         if bytes.len() > 4096 {
+            bytes.fill(0);
             return Err(Error::config("Invalid signer file"));
         }
-        let mut data: Vec<u8> =
-            serde_json::from_slice(&bytes).map_err(|_| Error::config("Invalid signer file"))?;
-        let signer = Self::from_secret(&data);
+        let parsed = serde_json::from_slice::<Vec<u8>>(&bytes);
         bytes.fill(0);
+        let mut data = parsed.map_err(|_| Error::config("Invalid signer file"))?;
+        let signer = Self::from_secret(&data);
         data.fill(0);
         signer
     }

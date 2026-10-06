@@ -70,14 +70,20 @@ impl FileJournal {
                 ));
             }
         };
-        if !f
+        let info = f
             .metadata()
-            .map_err(|_| Error::config("Unreadable journal; recover it before submitting"))?
-            .is_file()
-        {
+            .map_err(|_| Error::config("Unreadable journal; recover it before submitting"))?;
+        if !info.is_file() {
             return Err(Error::config(
                 "Unreadable journal; recover it before submitting",
             ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if info.permissions().mode() & 0o077 != 0 {
+                return Err(Error::config("Journal entries must be private (0600)"));
+            }
         }
         let mut bytes = Vec::new();
         Read::by_ref(&mut f)
