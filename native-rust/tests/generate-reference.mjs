@@ -4,7 +4,7 @@ import {writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 const {Keypair,PublicKey,Transaction}=createRequire(new URL('../../native/index.mjs',import.meta.url))('@solana/web3.js');
 import {NativePolicySDK,RELEASE,digest,LOADER} from '../../native/index.mjs';
-import {intentFor} from '../../native/lifecycle.mjs';
+import {intentFor,validateRecord} from '../../native/lifecycle.mjs';
 import {getAssociatedTokenAddressSync,createAssociatedTokenAccountIdempotentInstruction} from '../../native/token.mjs';
 const owner=Keypair.fromSeed(new Uint8Array(32).fill(7)),executor=Keypair.fromSeed(new Uint8Array(32).fill(8));
 const key=n=>new PublicKey(new Uint8Array(32).fill(n));
@@ -29,4 +29,5 @@ for(const method of ['deploy','fund','execute','revoke','tune','withdraw']){
  const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let n=BigInt('0x'+signature.toString('hex')),encoded='';while(n){encoded=alphabet[Number(n%58n)]+encoded;n/=58n;}for(const x of signature){if(x)break;encoded='1'+encoded;}
  records.push({id:'reference-'+method,intent:intentFor(sdk,policy,owner.publicKey.toBase58(),method,options),method,status:'uncertain',signature:encoded,signedBytes:tx.serialize().toString('base64'),blockhash:key(9).toBase58(),lastValidBlockHeight:100,nonce:'0',revision:'1',transactionUrl:sdk.transactionURL(encoded)});
 }
+for(const record of records)validateRecord(sdk,policy,owner.publicKey.toBase58(),record);
 await writeFile(new URL('./reference.json',import.meta.url),JSON.stringify({source:'AllowIt-sdk native/index.mjs + lifecycle.mjs at 1f89d6975aca9038de4465601d0d68e7f75c3868; @solana/web3.js 1.98.4',config:{network:'solana:testnet',mint:key(3).toBase58(),executor:executor.publicKey.toBase58(),deployment},owner:owner.publicKey.toBase58(),policy,records},null,2)+'\n');
