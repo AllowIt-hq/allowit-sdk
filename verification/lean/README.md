@@ -1,6 +1,6 @@
 # Lean proof demonstrator
 
-`AllowIt.lean` is an executable, machine-checked model of feature selection and a small policy decision language. It is **not a proof of the Rust SDK, Go assembler or generated Markdown**. The production-to-model connection has not been proved or differentially tested.
+`AllowIt.lean` is an executable, machine-checked model of feature selection and a small policy decision language. Its production-to-model connection has not been proved or differentially tested. `NativeDaily.lean` separately models the new literal native daily policy; [its source-bound check](../check_native.py) compares Lean and the actual Rust source. Neither module proves the Rust SDK, Go assembler, generated Markdown, chain adapters or compiled/deployed contracts.
 
 ## Run
 
@@ -12,7 +12,9 @@ elan toolchain install leanprover/lean4:v4.11.0
 python3 check.py
 ```
 
-With an independently installed official release, `LEAN_BIN=/absolute/path/to/lean python3 verification/lean/check.py` works from the repository root. The script rejects a missing or different checker, rejects proof holes/custom axioms/native proof evaluation, checks the file, and audits every theorem's dependencies. Lean's standard `propext` and `Quot.sound` axioms occur; no application-specific axiom is assumed. The executable example's `#eval` output is a demonstration, separate from its kernel-checked `example_passes` theorem.
+With an independently installed official release, `LEAN_BIN=/absolute/path/to/lean python3 verification/lean/check.py` works from the repository root. The script rejects a missing or different checker, rejects proof holes/custom axioms/native proof evaluation, checks both files, and audits every theorem's dependencies. Lean's standard `propext` and `Quot.sound` axioms occur; no application-specific axiom is assumed. The executable example's `#eval` output is a demonstration, separate from its kernel-checked `example_passes` theorem.
+
+The checker checks both modules separately: 13 bounded policy/feature theorems and 16 native daily-rule theorems. This is an audit of these reviewed files, not a generic verifier for externally supplied or hostile Lean code.
 
 CI can run the same two commands after installing Elan; it must fail if the pinned checker cannot run. There are no Mathlib or other package dependencies. Version 4.11.0 was chosen to keep the standalone checker small; the model does not require newer Lean features. [Official release](https://github.com/leanprover/lean4/releases/tag/v4.11.0).
 
@@ -36,9 +38,23 @@ This policy model omits source parsing, general SDK expressions, `set_cap` prefl
 
 Jev's output is an external observation. No theorem establishes classification truth, personalization correctness, calibration, natural-language intent completeness or execution capability. A Noul point score does not establish a calibrated interval. The interval model specifies how valid bounds would be handled; it does not supply them.
 
+## Native daily rule
+
+`NativeDaily.lean` models the inspected native source hash `eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8` with all inputs/results bounded to `u64`. `success_iff` proves both permission directions and the exact returned spending; a successful exact-limit witness rules out vacuous safety. The other theorems cover parameter bounds, all errors in source order, day regression, zero limit, same-day lowering below spent and fresh-day independence of old spending.
+
+This function returns the next spending value. It does not authenticate its context or persist that value. The model therefore proves no actual transfer, storage update, authority, reservation, migration or settlement property. The [completeness contract](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/completeness.md) defines those separate obligations.
+
+With the two contract checkouts at the paths pinned in `verification/native-source-lock.json`, run from the SDK root:
+
+```sh
+LEAN_BIN=/absolute/path/to/lean python3 verification/check_native.py
+```
+
+The script first checks the proofs, verifies both policy/API hashes and each embedded SOURCE_HASH, snapshots source, compiles host Rust runners, compares exact outcomes with Lean and specification vectors, and detects specified mutations. The corpus includes bucket boundaries, same-day regression, maximum timestamps/spent_day, overflow, and seeded samples near limits and the current day. Nine kernel mutations test caps, counter reset, exact-limit refusal, deny-all, error priority, day comparison/constants and inverted reset. Temporary mutation files never edit the contracts. Missing tools/source, stale hashes, incomplete results or any disagreement fail explicitly. Output reports **tested correspondence**, with production refinement, chain-adapter execution and deployment checks marked false. It does not compile SBF/Soroban or establish universal correspondence. The Lean compiler/runtime, host Rust compiler/runtime and Python specification implementation are trusted for this replay evidence. Pin candidate contract revisions separately when they are delivered; the current lock identifies inspected source bytes, not a release.
+
 ## Architecture implication
 
-The [October 4 verification plan](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/docs/lean-verification-plan.md) incorporates the divergent customer workspace, owner-review flow and separate fixed-policy Devnet vault. It prioritizes shared-rule semantics and custody/journal transitions, then the actual IR bridge; all production proof milestones remain proposed.
+The [October 4 verification plan](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/docs/lean-verification-plan.md) incorporates the divergent customer workspace, owner-review flow and separate fixed-policy Devnet vault. It prioritizes shared-rule semantics and custody/journal transitions, then the actual IR bridge; all production proof milestones remain proposed.
 
 Lean can own the typed language specification, executable reference evaluator, extension laws and proofs. Rust can continue to own parsing, source-preserving edits, validated IR, deterministic execution and WASM/contract adapters. Go can own transport, lifecycle and capability-aware skill assembly. A verified Lean model plus Rust/Go tests remains a tested correspondence; a production correctness claim needs a proved refinement or a verified/extracted implementation with its trust boundary stated.
 
