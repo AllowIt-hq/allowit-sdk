@@ -4,7 +4,9 @@
 
 This is a **model proof**, not Charon/Aeneas extraction or Rust adapter refinement. The separate [kernel refinement](../refinement/README.md) establishes the extracted pure kernel's relation to the same `NativeDaily` specification. `transfer_kernel` connects this new transition specification to `NativeDaily.evaluate`; it does not connect the production custody program to the transition specification. Error ordering, rejected state, panic/rollback behavior and resource bounds are not defined by this successful-transition relation.
 
-The imported `NativeDaily` file is deliberately byte-identical to the historical Lean 4.11 specification, including its old source-digest header. This checker compiles it freshly with pinned Lean 4.31. Current production kernel identities are separately bound through the published intake and conditional extracted refinement; the historical header is not a claim about the current source digest.
+The imported `NativeDaily` file matches the historical Lean 4.11 specification byte for byte, including its old source-digest header. Pinned Lean 4.31 checks this specification. Published intake and extracted refinement bind historical Solana `e0fc5a1` and Stellar `8eb495e` only. They use published `policy.rs` SHA-256 `e07e148b2403a43e3080d043db7fcd49e505cb661adbb8e40c0f2ae4aeb6978b` and `policy_api.rs` SHA-256 `70b783aac1a7d7016ea967cc6d873a91917f6ce3f38b030551f4658923b7793d`. The copied header identifies frozen `policy.rs` SHA-256 `eceb1d4f55c93ef7921f47f3ca0d35bc589c3c6a1b0f29ae63f5fb9f9ff37da8`.
+
+This model does not certify contract `main`, the later `execute` implementation or its revised `policy_api.rs`. The later `policy.rs` SHA-256 starts with `ed974916`. Full historical acceptance still requires the pinned extraction libraries and Rust dependency caches. The retained receipts do not report fresh acceptance of those unavailable identities.
 
 ## Abstraction and integration
 
