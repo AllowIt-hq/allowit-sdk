@@ -167,7 +167,10 @@ impl NativeClient {
         if a.owner != Key::parse(TOKEN_PROGRAM)? || a.data.len() != 82 {
             return Err(Error::config("Expected a classic SPL Token account"));
         }
-        if a.data[44] != 6 || a.data[45] != 1 {
+        if a.data[44] != 6
+            || a.data[45] != 1
+            || u32::from_le_bytes(a.data[46..50].try_into().unwrap()) != 0
+        {
             return Err(Error::config(
                 "Expected an initialized six-decimal test mint",
             ));
