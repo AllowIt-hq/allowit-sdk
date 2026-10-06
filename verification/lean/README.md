@@ -38,7 +38,7 @@ Jev's output is an external observation. No theorem establishes classification t
 
 ## Architecture implication
 
-The [October 4 verification plan](../../docs/lean-verification-plan.md) incorporates the divergent customer workspace, owner-review flow and separate fixed-policy Devnet vault. It prioritizes shared-rule semantics and custody/journal transitions, then the actual IR bridge; all production proof milestones remain proposed.
+The [October 4 verification plan](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/docs/lean-verification-plan.md) incorporates the divergent customer workspace, owner-review flow and separate fixed-policy Devnet vault. It prioritizes shared-rule semantics and custody/journal transitions, then the actual IR bridge; all production proof milestones remain proposed.
 
 Lean can own the typed language specification, executable reference evaluator, extension laws and proofs. Rust can continue to own parsing, source-preserving edits, validated IR, deterministic execution and WASM/contract adapters. Go can own transport, lifecycle and capability-aware skill assembly. A verified Lean model plus Rust/Go tests remains a tested correspondence; a production correctness claim needs a proved refinement or a verified/extracted implementation with its trust boundary stated.
 
