@@ -214,7 +214,7 @@ impl NativeClient {
         }
         if a.data[44] != 6
             || a.data[45] != 1
-            || u32::from_le_bytes(a.data[46..50].try_into().unwrap()) != 0
+            || u32::from_le_bytes(a.data[46..50].try_into().unwrap()) > 1
         {
             return Err(Error::config(
                 "Expected an initialized six-decimal test mint",
@@ -366,6 +366,25 @@ mod tests {
                 .token(Key([5; 32]))
                 .is_err()
         );
+    }
+    #[test]
+    fn mint_accepts_an_optional_freeze_authority() {
+        let program = Key::parse(TOKEN_PROGRAM).unwrap();
+        let mut bytes = vec![0; 82];
+        bytes[44] = 6;
+        bytes[45] = 1;
+        assert!(client(account(&bytes, program, 1))
+            .mint(Key([5; 32]))
+            .is_ok());
+        bytes[46..50].copy_from_slice(&1u32.to_le_bytes());
+        bytes[50..82].fill(7);
+        assert!(client(account(&bytes, program, 1))
+            .mint(Key([5; 32]))
+            .is_ok());
+        bytes[46..50].copy_from_slice(&2u32.to_le_bytes());
+        assert!(client(account(&bytes, program, 1))
+            .mint(Key([5; 32]))
+            .is_err());
     }
     #[test]
     fn public_binding_requires_canonical_program_data() {
