@@ -21,6 +21,12 @@ vault, token account, executor, and authority. `State` adds `authority`,
 `actionLimit`, and the replay-safe `instanceSlot`. ABI-v1 320-byte state is
 rejected; ABI v2 is 352 bytes and uses the `allowit-vault-v2` PDA seed.
 
+The release remains bound to one initialized, six-decimal classic SPL Token
+mint. That mint may retain its issuer freeze authority, but every token account
+used by an operation must be unfrozen. If the issuer freezes a vault or
+destination account, SPL Token blocks payment, withdrawal, or closure until
+the issuer unfreezes it; this does not relax mint, network, or artifact checks.
+
 ## Operations
 
 | Method | Wallet/signers | Result |

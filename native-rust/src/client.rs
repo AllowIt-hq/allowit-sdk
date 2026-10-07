@@ -212,7 +212,8 @@ impl NativeClient {
         if a.owner != Key::parse(TOKEN_PROGRAM)? || a.data.len() != 82 {
             return Err(Error::config("Expected a classic SPL Token account"));
         }
-        if a.data[44] != 6
+        if u32::from_le_bytes(a.data[..4].try_into().unwrap()) > 1
+            || a.data[44] != 6
             || a.data[45] != 1
             || u32::from_le_bytes(a.data[46..50].try_into().unwrap()) > 1
         {
@@ -386,6 +387,13 @@ mod tests {
                 .is_ok()
         );
         bytes[46..50].copy_from_slice(&2u32.to_le_bytes());
+        assert!(
+            client(account(&bytes, program, 1))
+                .mint(Key([5; 32]))
+                .is_err()
+        );
+        bytes[46..50].copy_from_slice(&1u32.to_le_bytes());
+        bytes[..4].copy_from_slice(&2u32.to_le_bytes());
         assert!(
             client(account(&bytes, program, 1))
                 .mint(Key([5; 32]))
