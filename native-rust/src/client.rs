@@ -373,18 +373,24 @@ mod tests {
         let mut bytes = vec![0; 82];
         bytes[44] = 6;
         bytes[45] = 1;
-        assert!(client(account(&bytes, program, 1))
-            .mint(Key([5; 32]))
-            .is_ok());
+        assert!(
+            client(account(&bytes, program, 1))
+                .mint(Key([5; 32]))
+                .is_ok()
+        );
         bytes[46..50].copy_from_slice(&1u32.to_le_bytes());
         bytes[50..82].fill(7);
-        assert!(client(account(&bytes, program, 1))
-            .mint(Key([5; 32]))
-            .is_ok());
+        assert!(
+            client(account(&bytes, program, 1))
+                .mint(Key([5; 32]))
+                .is_ok()
+        );
         bytes[46..50].copy_from_slice(&2u32.to_le_bytes());
-        assert!(client(account(&bytes, program, 1))
-            .mint(Key([5; 32]))
-            .is_err());
+        assert!(
+            client(account(&bytes, program, 1))
+                .mint(Key([5; 32]))
+                .is_err()
+        );
     }
     #[test]
     fn public_binding_requires_canonical_program_data() {
