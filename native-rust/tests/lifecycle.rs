@@ -341,35 +341,34 @@ fn authority_partial_is_validated_completed_and_retried_without_reapproval() {
 
 #[test]
 fn authority_partial_rejects_changed_envelope_message_and_signer_slots() {
-    let cases: Vec<Box<dyn Fn(&Fixture, &mut AuthorizedExecution)>> = vec![
-        Box::new(|_, response| response.request.action = "changed action".into()),
-        Box::new(|_, response| response.message[0] ^= 1),
-        Box::new(|fixture, response| {
-            let parsed = Signed::parse_partial(&response.partial_transaction).unwrap();
-            let transaction = Transaction::new(
-                fixture.executor.public_key(),
-                response.blockhash,
-                parsed.instructions,
-            )
-            .unwrap();
-            response.partial_transaction = transaction
-                .partially_signed(&[(
-                    fixture.executor.public_key(),
-                    fixture.executor.sign(&transaction.message),
-                )])
-                .unwrap();
-            response.message = transaction.message;
-            response.simulation.transaction_bytes = response.partial_transaction.len();
-        }),
-    ];
-    for (index, change) in cases.into_iter().enumerate() {
+    for index in 0..3 {
         let f = Fixture::new();
         let identity = f.identity(
             &format!("rejected-authority-{index:03}"),
             "fetch fixed fixture",
         );
         let mut response = f.authorized(&identity);
-        change(&f, &mut response);
+        match index {
+            0 => response.request.action = "changed action".into(),
+            1 => response.message[0] ^= 1,
+            _ => {
+                let parsed = Signed::parse_partial(&response.partial_transaction).unwrap();
+                let transaction = Transaction::new(
+                    f.executor.public_key(),
+                    response.blockhash,
+                    parsed.instructions,
+                )
+                .unwrap();
+                response.partial_transaction = transaction
+                    .partially_signed(&[(
+                        f.executor.public_key(),
+                        f.executor.sign(&transaction.message),
+                    )])
+                    .unwrap();
+                response.message = transaction.message;
+                response.simulation.transaction_bytes = response.partial_transaction.len();
+            }
+        }
         assert!(
             f.life()
                 .submit_authorized(
