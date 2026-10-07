@@ -6,6 +6,7 @@ use crate::{
     release, rpc,
     transaction::{Instruction, Meta, Transaction},
 };
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub const SYSTEM_PROGRAM: &str = "11111111111111111111111111111111";
@@ -190,10 +191,18 @@ impl ApprovalCommitment {
 }
 pub struct Prepared {
     pub transaction: Transaction,
+    pub simulation: Simulation,
     pub nonce: Option<String>,
     pub revision: Option<String>,
     pub last_valid_block_height: u64,
     pub blockhash: Key,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Simulation {
+    pub context_slot: u64,
+    pub units_consumed: u64,
+    pub transaction_bytes: usize,
 }
 impl NativeClient {
     pub fn state(
@@ -361,12 +370,45 @@ impl NativeClient {
             blockhash,
             instructions,
         )?;
+        let simulation = self.simulate(&transaction)?;
         Ok(Prepared {
             transaction,
+            simulation,
             nonce,
             revision,
             last_valid_block_height,
             blockhash,
+        })
+    }
+    pub fn simulate(&self, transaction: &Transaction) -> Result<Simulation> {
+        let raw = transaction.partially_signed(&[])?;
+        let response = self.rpc.call(
+            "simulateTransaction",
+            json!([
+                base64::engine::general_purpose::STANDARD.encode(&raw),
+                {
+                    "encoding":"base64",
+                    "sigVerify":false,
+                    "replaceRecentBlockhash":false,
+                    "commitment":"finalized"
+                }
+            ]),
+        )?;
+        let value = response["value"]
+            .as_object()
+            .ok_or_else(|| Error::config("Invalid native transaction simulation"))?;
+        if value.get("err") != Some(&Value::Null) {
+            return Err(Error::denied("Native transaction simulation failed"));
+        }
+        let units_consumed = value
+            .get("unitsConsumed")
+            .and_then(Value::as_u64)
+            .filter(|units| *units > 0)
+            .ok_or_else(|| Error::config("Native simulation omitted compute units"))?;
+        Ok(Simulation {
+            context_slot: safe_height(&response["context"]["slot"] )?,
+            units_consumed,
+            transaction_bytes: raw.len(),
         })
     }
     pub fn expected_instructions(
@@ -781,6 +823,7 @@ mod tests {
         crypto::LocalSigner,
         policy::ExecutionBinding,
         rpc::Rpc,
+        transaction::Signed,
     };
     use std::sync::Arc;
 
@@ -788,6 +831,21 @@ mod tests {
     impl Rpc for Offline {
         fn call(&self, _: &str, _: Value) -> Result<Value> {
             panic!("instruction composition is offline")
+        }
+    }
+    struct SimulationRpc(Value);
+    impl Rpc for SimulationRpc {
+        fn call(&self, method: &str, params: Value) -> Result<Value> {
+            assert_eq!(method, "simulateTransaction");
+            assert_eq!(params[1]["encoding"], "base64");
+            assert_eq!(params[1]["sigVerify"], false);
+            assert_eq!(params[1]["replaceRecentBlockhash"], false);
+            assert_eq!(params[1]["commitment"], "finalized");
+            let raw = base64::engine::general_purpose::STANDARD
+                .decode(params[0].as_str().unwrap())
+                .unwrap();
+            Signed::parse_partial(&raw).unwrap();
+            Ok(self.0.clone())
         }
     }
     fn signer(n: u8) -> LocalSigner {
@@ -970,5 +1028,39 @@ mod tests {
         assert_eq!(decoded.binding.authority, state.binding.authority);
         assert_eq!(decoded.instance_slot, state.instance_slot);
         assert_eq!(decoded.action_limit, state.action_limit);
+    }
+
+    #[test]
+    fn simulation_uses_the_exact_unsigned_transaction_and_fails_closed() {
+        let (client, _, state) = fixture();
+        let transaction = Transaction::new(
+            state.binding.owner,
+            Key([10; 32]),
+            compute_budget("deploy").unwrap(),
+        )
+        .unwrap();
+        let expected_bytes = transaction.partially_signed(&[]).unwrap().len();
+        let simulator = NativeClient::new(
+            client.config.clone(),
+            Arc::new(SimulationRpc(json!({
+                "context":{"slot":44},
+                "value":{"err":null,"unitsConsumed":1234}
+            }))),
+        )
+        .unwrap();
+        let simulation = simulator.simulate(&transaction).unwrap();
+        assert_eq!(simulation.context_slot, 44);
+        assert_eq!(simulation.units_consumed, 1234);
+        assert_eq!(simulation.transaction_bytes, expected_bytes);
+
+        let rejected = NativeClient::new(
+            client.config,
+            Arc::new(SimulationRpc(json!({
+                "context":{"slot":44},
+                "value":{"err":{"InstructionError":[2,"Custom"]},"unitsConsumed":1234}
+            }))),
+        )
+        .unwrap();
+        assert!(rejected.simulate(&transaction).is_err());
     }
 }

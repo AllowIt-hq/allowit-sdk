@@ -85,3 +85,11 @@ assessment is objectively correct.
 only partial-proof parser. Transaction validation is byte-for-byte, so wallet
 software may add its signature but may not reorder accounts or rewrite the
 message.
+
+`NativeClient::prepare` also simulates that exact message, with its real
+blockhash, account table, instruction bytes, and Compute Budget instructions,
+before asking for any signature. `Prepared.simulation` reports
+`contextSlot`, `unitsConsumed`, and `transactionBytes`; a missing compute count
+or any simulation error fails preparation. Simulation disables signature
+verification only so the pre-sign message can run, and does not replace the
+recent blockhash.

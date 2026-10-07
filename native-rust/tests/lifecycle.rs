@@ -7,7 +7,7 @@ use allowit_native::{
     lifecycle::{
         NativeOperations, PolicyLifecycle, Record, intent_for, reconcile_record, validate_record,
     },
-    native::{Options, Prepared, State},
+    native::{Options, Prepared, Simulation, State},
     policy::Policy,
     release,
     rpc::Rpc,
@@ -257,6 +257,11 @@ impl NativeOperations for Fixture {
                 blockhash,
                 instructions,
             )?,
+            simulation: Simulation {
+                context_slot: 99,
+                units_consumed: 10_000,
+                transaction_bytes: 500,
+            },
             nonce: Some(d.nonce.clone()),
             revision: Some(d.revision.clone()),
             last_valid_block_height: 100,
