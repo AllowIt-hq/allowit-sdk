@@ -284,8 +284,8 @@ pub fn hex32(value: &str) -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
     use crate::crypto::LocalSigner;
+    use base64::Engine;
     struct FakeRpc(serde_json::Value);
     impl Rpc for FakeRpc {
         fn call(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value> {

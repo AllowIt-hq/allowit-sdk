@@ -406,7 +406,7 @@ impl NativeClient {
             .filter(|units| *units > 0)
             .ok_or_else(|| Error::config("Native simulation omitted compute units"))?;
         Ok(Simulation {
-            context_slot: safe_height(&response["context"]["slot"] )?,
+            context_slot: safe_height(&response["context"]["slot"])?,
             units_consumed,
             transaction_bytes: raw.len(),
         })
@@ -1021,7 +1021,12 @@ mod tests {
         let (_, _, state) = fixture();
         let value = serde_json::to_value(&state).unwrap();
         assert_eq!(
-            value.as_object().unwrap().keys().filter(|key| *key == "authority").count(),
+            value
+                .as_object()
+                .unwrap()
+                .keys()
+                .filter(|key| *key == "authority")
+                .count(),
             1
         );
         let decoded: State = serde_json::from_value(value).unwrap();
