@@ -249,6 +249,8 @@ impl NativeOperations for NativeClient {
 /// signs, broadcasts, replaces a proof, or trusts a status without receipt checks.
 /// Caller-supplied status and `extra` observations are discarded. They are not
 /// signed transaction fields and cannot establish settlement or nonexecution.
+/// Imported validity heights cannot establish expiry. Without a final network
+/// result, imported proofs stay uncertain even when a node lacks their blockhash.
 pub fn reconcile_record(
     sdk: &dyn NativeOperations,
     mut record: Record,
@@ -257,15 +259,16 @@ pub fn reconcile_record(
 ) -> Result<Record> {
     record.status = "uncertain".into();
     record.extra.clear();
-    reconcile_saved_record(sdk, record, policy, owner)
+    reconcile_saved_record(sdk, record, policy, owner, false)
 }
 
-// Only records read from the private local journal may reuse a durable absence observation.
+// Only records read from the private local journal may trust validity heights or absence observations.
 fn reconcile_saved_record(
     sdk: &dyn NativeOperations,
     mut record: Record,
     policy: &Policy,
     owner: Key,
+    trusted_journal: bool,
 ) -> Result<Record> {
     record.extra.remove("error");
     record.extra.remove("replayed");
@@ -283,7 +286,7 @@ fn reconcile_saved_record(
         return Ok(record);
     }
     let mut result = sdk.status(&record.signature)?;
-    if result["status"] == "uncertain" {
+    if trusted_journal && result["status"] == "uncertain" {
         let height = safe_height(
             &sdk.client()
                 .rpc
@@ -403,7 +406,7 @@ impl<'a> PolicyLifecycle<'a> {
         reconcile_record(self.sdk, record, policy, owner)
     }
     fn reconcile_saved(&self, record: Record, policy: &Policy, owner: Key) -> Result<Record> {
-        reconcile_saved_record(self.sdk, record, policy, owner)
+        reconcile_saved_record(self.sdk, record, policy, owner, true)
     }
     pub fn submit(
         &self,
