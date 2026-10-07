@@ -691,10 +691,40 @@ fn server_reconciliation_requires_no_file_journal_or_signing() {
     assert!(!observed.extra.contains_key("absence"));
     f.rpc.data.lock().unwrap().processed_blockhash_valid = Some(false);
     let observed = reconcile_record(&f, low_height, &f.policy, owner).unwrap();
-    assert_eq!(observed.status, "failed");
-    assert_eq!(observed.extra["decisionCode"], "EXPIRED_UNEXECUTED");
+    assert_eq!(observed.status, "uncertain");
+    assert!(!observed.expired());
+    assert!(!observed.extra.contains_key("absence"));
+    assert!(!observed.extra.contains_key("decisionCode"));
     assert!(!f.directory.exists());
     assert!(f.rpc.data.lock().unwrap().sends.is_empty());
+    for method in ["fund", "withdraw"] {
+        let options = Options {
+            amount: Some("1".into()),
+            ..Options::default()
+        };
+        let prepared = f.prepare(&f.policy, owner, method, &options).unwrap();
+        let signature = f.owner.sign(&prepared.transaction.message);
+        let signature_text = bs58::encode(signature).into_string();
+        let imported = Record {
+            id: format!("imported-{method}"),
+            intent: intent_for(&f.sdk, &f.policy, owner, method, &options).unwrap(),
+            method: method.into(),
+            status: "failed".into(),
+            signature: signature_text.clone(),
+            signed_bytes: base64::engine::general_purpose::STANDARD
+                .encode(prepared.transaction.signed(signature).unwrap()),
+            blockhash: prepared.blockhash,
+            last_valid_block_height: 1,
+            nonce: prepared.nonce,
+            revision: prepared.revision,
+            transaction_url: f.sdk.transaction_url(&signature_text).unwrap(),
+            extra: Default::default(),
+        };
+        let observed = reconcile_record(&f, imported, &f.policy, owner).unwrap();
+        assert_eq!(observed.status, "uncertain");
+        assert!(!observed.expired());
+        assert!(!observed.extra.contains_key("absence"));
+    }
     let mut substituted = record;
     substituted.intent = substituted.intent.replace("\"1\"", "\"2\"");
     assert!(reconcile_record(&f, substituted, &f.policy, owner).is_err());
