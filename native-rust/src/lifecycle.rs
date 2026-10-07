@@ -571,8 +571,7 @@ impl<'a> PolicyLifecycle<'a> {
                 || authorized.request.operation_id != id
                 || authorized.request.input_digest != input_digest
                 || authorized.request.vault_policy_id != policy.id
-                || authorized.request.execution_policy_digest
-                    != policy.execution_policy_digest
+                || authorized.request.execution_policy_digest != policy.execution_policy_digest
                 || authorized.request.execution_requirements_digest
                     != policy.execution_requirements_digest
                 || authorized.request.recipient != identity.recipient

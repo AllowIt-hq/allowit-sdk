@@ -180,7 +180,10 @@ impl Fixture {
     }
     fn authorized(&self, identity: &ExecutionRequestIdentity) -> AuthorizedExecution {
         let owner = self.owner.public_key();
-        let state = self.state(&self.policy, owner, false, None).unwrap().unwrap();
+        let state = self
+            .state(&self.policy, owner, false, None)
+            .unwrap()
+            .unwrap();
         let evidence_digest = digest(b"numeric policy evidence");
         let request = ApprovalRequest {
             version: 1,
@@ -289,7 +292,10 @@ fn authority_partial_is_validated_completed_and_retried_without_reapproval() {
     assert_eq!(approvals.load(Ordering::Relaxed), 1);
     assert_eq!(signatures.load(Ordering::Relaxed), 1);
     assert_eq!(result.signatures.len(), 2);
-    assert_eq!(result.extra["executionRequestDigest"], identity.digest().unwrap());
+    assert_eq!(
+        result.extra["executionRequestDigest"],
+        identity.digest().unwrap()
+    );
     let proof = Signed::parse(
         &base64::engine::general_purpose::STANDARD
             .decode(&result.signed_bytes)
@@ -319,7 +325,11 @@ fn authority_partial_is_validated_completed_and_retried_without_reapproval() {
                 &f.policy,
                 f.owner.public_key(),
                 &changed,
-                || Err(Error::config("authorization must not be called on conflict")),
+                || {
+                    Err(Error::config(
+                        "authorization must not be called on conflict",
+                    ))
+                },
                 |_| Err(Error::config("executor must not sign on conflict")),
             )
             .err()

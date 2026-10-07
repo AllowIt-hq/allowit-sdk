@@ -178,9 +178,9 @@ impl ApprovalRequest {
                 return Err(Error::config("Invalid approval request"));
             }
         }
-        Ok(digest(serde_json::to_vec(self).map_err(|_| {
-            Error::config("Invalid approval request")
-        })?))
+        Ok(digest(
+            serde_json::to_vec(self).map_err(|_| Error::config("Invalid approval request"))?,
+        ))
     }
 }
 /// Canonical trusted-server authorization envelope. Its digest is embedded in
