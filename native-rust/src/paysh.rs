@@ -425,7 +425,7 @@ impl PayShClient {
 
     pub fn broadcast_setup(&self, prepared: &PreparedSetup, signed_bytes: &str) -> Result<String> {
         let signature = Self::verify_setup_signature(prepared, signed_bytes)?;
-        self.check_setup_packet(prepared, signed_bytes)?;
+        self.check_setup_packet(prepared, signed_bytes, None)?;
         let result=self.rpc.call("sendTransaction",json!([signed_bytes,{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","maxRetries":0}]))?;
         if result.as_str() != Some(&signature) {
             return Err(Error::uncertain(
@@ -437,7 +437,6 @@ impl PayShClient {
 
     pub fn finalized_setup(&self, prepared: &PreparedSetup, signed_bytes: &str) -> Result<bool> {
         let signature = Self::verify_setup_signature(prepared, signed_bytes)?;
-        self.check_setup_packet(prepared, signed_bytes)?;
         let tx=self.rpc.call("getTransaction",json!([signature,{"encoding":"base64","commitment":"finalized","maxSupportedTransactionVersion":0}]))?;
         if tx.is_null() {
             return Ok(false);
@@ -450,6 +449,7 @@ impl PayShClient {
                 "Finalized setup differs from its saved signed bytes",
             ));
         }
+        self.check_setup_packet(prepared, signed_bytes, Some(&tx["meta"]))?;
         let policy = self.policy(prepared.policy)?;
         let expected = STANDARD
             .decode(&prepared.config_bytes)
@@ -711,7 +711,11 @@ impl PayShClient {
         })
     }
 
-    fn check_execution_packet(&self, prepared: &PreparedExecution) -> Result<()> {
+    fn check_execution_packet(
+        &self,
+        prepared: &PreparedExecution,
+        historical: Option<&serde_json::Value>,
+    ) -> Result<()> {
         let raw = STANDARD
             .decode(&prepared.signed_bytes)
             .map_err(|_| Error::config("Invalid saved packet"))?;
@@ -722,7 +726,9 @@ impl PayShClient {
                 .map_err(|_| Error::config("Invalid saved request"))?,
         )
         .map_err(|_| Error::config("Invalid saved request"))?;
-        self.verify_deployment()?;
+        if historical.is_none() {
+            self.verify_deployment()?;
+        }
         let policy = self.policy(Key(request.policy))?;
         if request.program != self.deployment.program.0
             || request.network != self.deployment.genesis.0
@@ -780,8 +786,7 @@ impl PayShClient {
             accounts: vec![],
             data: limit,
         };
-        let (slot, _) = self.clock()?;
-        let lookup = self.lookup(slot)?;
+        let lookup = self.proof_lookup(&decoded, historical)?;
         let expected = transaction_message(
             prepared.payer,
             decoded.blockhash,
@@ -796,8 +801,15 @@ impl PayShClient {
         Ok(())
     }
 
-    fn check_setup_packet(&self, prepared: &PreparedSetup, signed_bytes: &str) -> Result<()> {
-        self.verify_deployment()?;
+    fn check_setup_packet(
+        &self,
+        prepared: &PreparedSetup,
+        signed_bytes: &str,
+        historical: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        if historical.is_none() {
+            self.verify_deployment()?;
+        }
         let raw = STANDARD
             .decode(signed_bytes)
             .map_err(|_| Error::config("Invalid setup packet"))?;
@@ -840,8 +852,7 @@ impl PayShClient {
             sol_vault,
             self.deployment.compute_limit,
         )?;
-        let (slot, _) = self.clock()?;
-        let lookup = self.lookup(slot)?;
+        let lookup = self.proof_lookup(&decoded, historical)?;
         let expected = transaction_message(
             prepared.owner,
             decoded.blockhash,
@@ -854,6 +865,25 @@ impl PayShClient {
             ));
         }
         Ok(())
+    }
+
+    fn proof_lookup(
+        &self,
+        decoded: &DecodedMessage,
+        historical: Option<&serde_json::Value>,
+    ) -> Result<Option<LookupTable>> {
+        let Some(lookup) = &decoded.lookup else {
+            return Ok(None);
+        };
+        if Some(lookup.key) != self.deployment.lookup_table {
+            return Err(Error::config("Saved packet uses a different lookup table"));
+        }
+        if let Some(meta) = historical {
+            historical_lookup(lookup, &meta["loadedAddresses"]).map(Some)
+        } else {
+            let (slot, _) = self.clock()?;
+            self.lookup(slot)
+        }
     }
 
     fn lookup(&self, current_slot: u64) -> Result<Option<LookupTable>> {
@@ -892,7 +922,7 @@ impl PayShClient {
     /// Call only after the caller durably saved this exact signed packet.
     pub fn broadcast(&self, prepared: &PreparedExecution) -> Result<()> {
         verify_packet(prepared)?;
-        self.check_execution_packet(prepared)?;
+        self.check_execution_packet(prepared, None)?;
         let result = self.rpc.call("sendTransaction", json!([prepared.signed_bytes,{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","maxRetries":0}]))?;
         if result.as_str() != Some(&prepared.signature) {
             return Err(Error::uncertain(
@@ -903,7 +933,6 @@ impl PayShClient {
     }
     pub fn finalized(&self, prepared: &PreparedExecution) -> Result<bool> {
         verify_packet(prepared)?;
-        self.check_execution_packet(prepared)?;
         let statuses = self.rpc.call(
             "getSignatureStatuses",
             json!([[prepared.signature],{"searchTransactionHistory":true}]),
@@ -929,6 +958,7 @@ impl PayShClient {
                 "Finalized PaySH transaction differs from the saved exact packet",
             ));
         }
+        self.check_execution_packet(prepared, Some(&tx["meta"]))?;
         let a = account(&*self.rpc, prepared.receipt, s["slot"].as_u64())?
             .ok_or_else(|| Error::config("Finalized execution has no receipt"))?;
         let r = Receipt::try_from_slice(&a.data)
@@ -1245,6 +1275,12 @@ struct DecodedMessage {
     payer: Key,
     blockhash: Key,
     instructions: Vec<(Key, Vec<u8>)>,
+    lookup: Option<ParsedLookup>,
+}
+struct ParsedLookup {
+    key: Key,
+    writable: Vec<u8>,
+    readonly: Vec<u8>,
 }
 fn packet_message(data: &[u8]) -> Result<DecodedMessage> {
     struct Reader<'a> {
@@ -1324,6 +1360,7 @@ fn packet_message(data: &[u8]) -> Result<DecodedMessage> {
         let len = r.compact()?;
         instructions.push((program, r.bytes(len)?.to_vec()));
     }
+    let mut lookup = None;
     if v0 {
         let n = r.compact()?;
         if n > 1 {
@@ -1332,11 +1369,16 @@ fn packet_message(data: &[u8]) -> Result<DecodedMessage> {
             ));
         }
         for _ in 0..n {
-            r.bytes(32)?;
+            let key = Key(r.bytes(32)?.try_into().unwrap());
             let n = r.compact()?;
-            r.bytes(n)?;
+            let writable = r.bytes(n)?.to_vec();
             let n = r.compact()?;
-            r.bytes(n)?;
+            let readonly = r.bytes(n)?.to_vec();
+            lookup = Some(ParsedLookup {
+                key,
+                writable,
+                readonly,
+            });
         }
     }
     if r.offset != data.len() {
@@ -1346,6 +1388,50 @@ fn packet_message(data: &[u8]) -> Result<DecodedMessage> {
         payer: keys[0],
         blockhash,
         instructions,
+        lookup,
+    })
+}
+
+/// Recover exactly the addresses the finalized transaction used. Current table
+/// availability and later appends cannot change a historical payment proof.
+fn historical_lookup(lookup: &ParsedLookup, loaded: &serde_json::Value) -> Result<LookupTable> {
+    let writable = loaded["writable"]
+        .as_array()
+        .ok_or_else(|| Error::config("Missing finalized lookup addresses"))?;
+    let readonly = loaded["readonly"]
+        .as_array()
+        .ok_or_else(|| Error::config("Missing finalized lookup addresses"))?;
+    if writable.len() != lookup.writable.len() || readonly.len() != lookup.readonly.len() {
+        return Err(Error::config("Finalized lookup address count differs"));
+    }
+    let mut addresses: Vec<Key> = (0u16..256)
+        .map(|i| {
+            let mut h = Sha256::new();
+            h.update(b"unused-paysh-lookup-slot");
+            h.update(i.to_le_bytes());
+            Key(h.finalize().into())
+        })
+        .collect();
+    let mut seen = Vec::new();
+    for (index, value) in lookup
+        .writable
+        .iter()
+        .zip(writable)
+        .chain(lookup.readonly.iter().zip(readonly))
+    {
+        if seen.contains(index) {
+            return Err(Error::config("Duplicate finalized lookup index"));
+        }
+        seen.push(*index);
+        addresses[*index as usize] = Key::parse(
+            value
+                .as_str()
+                .ok_or_else(|| Error::config("Invalid finalized lookup address"))?,
+        )?;
+    }
+    Ok(LookupTable {
+        key: lookup.key,
+        addresses,
     })
 }
 
@@ -1505,6 +1591,142 @@ mod tests {
         assert_eq!(&message[37..69], &program.0);
         assert!(message.len() + 65 < 1232);
     }
+    #[test]
+    fn saved_request_metadata_cannot_replace_a_different_signed_execution() {
+        let signer = |n| {
+            LocalSigner::from_secret(
+                &ed25519_dalek::SigningKey::from_bytes(&[n; 32]).to_keypair_bytes(),
+            )
+            .unwrap()
+        };
+        let sponsor = signer(7);
+        let evaluator = signer(8);
+        let request = Request {
+            network: [1; 32],
+            program: [2; 32],
+            policy: [3; 32],
+            owner: [4; 32],
+            module_digest: [5; 32],
+            operation_id: [6; 32],
+            nonce: [9; 32],
+            challenge_hash: [10; 32],
+            evidence_hash: [11; 32],
+            signing_slot: 1000,
+            signing_timestamp: 3601,
+            expires_slot: 1180,
+            expires_timestamp: 3661,
+            service_fee_lamports: 1000,
+            action: Action::PayUsdc { amount: 1000 },
+        };
+        let receipt = Key::find_program_address(
+            &[RECEIPT_SEED, &request.policy, &request.nonce],
+            Key(request.program),
+        )
+        .unwrap()
+        .0;
+        let instructions = [
+            Instruction {
+                program: Key::parse("ComputeBudget111111111111111111111111111111").unwrap(),
+                accounts: vec![],
+                data: vec![2, 64, 66, 15, 0],
+            },
+            ed25519_instruction(
+                evaluator.public_key(),
+                &request.signed_message(),
+                evaluator.sign(&request.signed_message()),
+            )
+            .unwrap(),
+            Instruction {
+                program: Key(request.program),
+                accounts: vec![],
+                data: borsh::to_vec(&interface::Instruction::Execute(request.clone())).unwrap(),
+            },
+        ];
+        let message =
+            transaction_message(sponsor.public_key(), Key([12; 32]), &instructions, None).unwrap();
+        let signature = sponsor.sign(&message);
+        let mut raw = vec![1];
+        raw.extend(signature);
+        raw.extend(message);
+        let mut proof = PreparedExecution {
+            signature: bs58::encode(signature).into_string(),
+            signed_bytes: STANDARD.encode(raw),
+            request_bytes: STANDARD.encode(borsh::to_vec(&request).unwrap()),
+            request_hash: Sha256::digest(request.signed_message()).into(),
+            receipt,
+            policy: Key(request.policy),
+            payer: sponsor.public_key(),
+            expires_slot: request.expires_slot,
+            expires_timestamp: request.expires_timestamp,
+        };
+        verify_packet(&proof).unwrap();
+        let mut replacement = request;
+        replacement.action = Action::PayUsdc { amount: 999_999 };
+        replacement.challenge_hash = [13; 32];
+        proof.request_bytes = STANDARD.encode(borsh::to_vec(&replacement).unwrap());
+        proof.request_hash = Sha256::digest(replacement.signed_message()).into();
+        assert!(verify_packet(&proof).is_err());
+    }
+
+    #[test]
+    fn finalized_lookup_preserves_original_placement_after_table_append_or_close() {
+        let payer = Key([1; 32]);
+        let program = Key([2; 32]);
+        let addresses: Vec<_> = (3..28).map(|i| Key([i; 32])).collect();
+        let static_account = Key([30; 32]);
+        let ix = Instruction {
+            program,
+            accounts: addresses
+                .iter()
+                .chain(std::iter::once(&static_account))
+                .map(|key| Meta {
+                    key: *key,
+                    writable: true,
+                    signer: false,
+                })
+                .collect(),
+            data: vec![1; 550],
+        };
+        let table = LookupTable {
+            key: Key([29; 32]),
+            addresses,
+        };
+        let original = transaction_message(
+            payer,
+            Key([31; 32]),
+            std::slice::from_ref(&ix),
+            Some(&table),
+        )
+        .unwrap();
+        let parsed = packet_message(&original).unwrap();
+        let lookup = parsed.lookup.unwrap();
+        let meta = json!({"writable":lookup.writable.iter().map(|i|table.addresses[*i as usize].to_string()).collect::<Vec<_>>(),"readonly":[]});
+        let recovered = historical_lookup(&lookup, &meta).unwrap();
+        assert_eq!(
+            original,
+            transaction_message(
+                payer,
+                Key([31; 32]),
+                std::slice::from_ref(&ix),
+                Some(&recovered)
+            )
+            .unwrap()
+        );
+        let mut extended = table;
+        extended.addresses.push(static_account);
+        assert_ne!(
+            original,
+            transaction_message(payer, Key([31; 32]), &[ix], Some(&extended)).unwrap()
+        );
+        let mut bad = meta;
+        bad["writable"][0] = json!(Key([99; 32]).to_string());
+        assert_ne!(
+            recovered.addresses,
+            historical_lookup(&lookup, &bad).unwrap().addresses
+        );
+        assert!(historical_lookup(&lookup, &json!({"writable":[],"readonly":[]})).is_err());
+    }
+
     #[test]
     fn checked_budgets_cannot_wrap() {
         assert!(bounded_sum(u64::MAX, 1, u64::MAX).is_err());
