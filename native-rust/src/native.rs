@@ -36,7 +36,6 @@ pub struct State {
     pub source_bundle: String,
     pub policy_artifact: String,
     pub vault_id: String,
-    pub authority: Key,
     pub daily_limit: String,
     pub action_limit: String,
     pub spent: String,
@@ -112,7 +111,6 @@ impl ApprovalCommitment {
         if state.vault_id != policy.id
             || state.source_bundle != policy.source_bundle
             || state.policy_artifact != policy.policy_artifact
-            || state.authority != state.binding.authority
         {
             return Err(Error::config("Approval policy or vault binding changed"));
         }
@@ -219,7 +217,7 @@ impl NativeClient {
             || s.policy_artifact != policy.policy_artifact
             || number(&s.daily_limit)? > MAX_DAILY_UNITS
             || number(&s.action_limit)? > MAX_DAILY_UNITS
-            || s.authority != expected_authority
+            || s.binding.authority != expected_authority
         {
             return Err(Error::config("Vault identity/limits mismatch"));
         }
@@ -763,7 +761,6 @@ fn decode_state(d: &[u8], b: Binding) -> Result<State> {
         source_bundle: hex(162),
         policy_artifact: hex(194),
         vault_id: hex(226),
-        authority: Key(d[299..331].try_into().unwrap()),
         daily_limit: u(258),
         action_limit: u(331),
         spent: u(266),
@@ -840,7 +837,6 @@ mod tests {
             source_bundle: policy.source_bundle.clone(),
             policy_artifact: policy.policy_artifact.clone(),
             vault_id: policy.id.clone(),
-            authority,
             daily_limit: "5000000".into(),
             action_limit: "1000000".into(),
             spent: "0".into(),
@@ -960,5 +956,19 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn state_json_has_one_authority_and_round_trips() {
+        let (_, _, state) = fixture();
+        let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            value.as_object().unwrap().keys().filter(|key| *key == "authority").count(),
+            1
+        );
+        let decoded: State = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.binding.authority, state.binding.authority);
+        assert_eq!(decoded.instance_slot, state.instance_slot);
+        assert_eq!(decoded.action_limit, state.action_limit);
     }
 }

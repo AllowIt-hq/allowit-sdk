@@ -218,7 +218,6 @@ impl NativeOperations for Fixture {
             source_bundle: policy.source_bundle.clone(),
             policy_artifact: policy.policy_artifact.clone(),
             vault_id: policy.id.clone(),
-            authority: self.authority.public_key(),
             daily_limit: "5000000".into(),
             action_limit: "5000000".into(),
             spent: "0".into(),
