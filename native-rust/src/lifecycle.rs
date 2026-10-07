@@ -201,9 +201,21 @@ impl NativeOperations for NativeClient {
 /// Hosts must persist the exact validated record before any broadcast and commit
 /// this returned observation atomically in their own storage. This function never
 /// signs, broadcasts, replaces a proof, or trusts a status without receipt checks.
-/// Imported records must discard caller-supplied status and `extra` observations;
-/// those fields are trusted host journal metadata, not signed transaction fields.
+/// Caller-supplied status and `extra` observations are discarded. They are not
+/// signed transaction fields and cannot establish settlement or nonexecution.
 pub fn reconcile_record(
+    sdk: &dyn NativeOperations,
+    mut record: Record,
+    policy: &Policy,
+    owner: Key,
+) -> Result<Record> {
+    record.status = "uncertain".into();
+    record.extra.clear();
+    reconcile_saved_record(sdk, record, policy, owner)
+}
+
+// Only records read from the private local journal may reuse a durable absence observation.
+fn reconcile_saved_record(
     sdk: &dyn NativeOperations,
     mut record: Record,
     policy: &Policy,
@@ -341,6 +353,9 @@ impl<'a> PolicyLifecycle<'a> {
     pub fn reconcile(&self, record: Record, policy: &Policy, owner: Key) -> Result<Record> {
         reconcile_record(self.sdk, record, policy, owner)
     }
+    fn reconcile_saved(&self, record: Record, policy: &Policy, owner: Key) -> Result<Record> {
+        reconcile_saved_record(self.sdk, record, policy, owner)
+    }
     pub fn submit(
         &self,
         policy: &Policy,
@@ -361,7 +376,7 @@ impl<'a> PolicyLifecycle<'a> {
             let mut superseded = BTreeMap::<String, Record>::new();
             if let Some(prior)=self.journal.read::<Record>(&name)? {
                 if prior.id!=id||prior.intent!=canonical{return Err(Error::config("Request ID conflict; recover the original request"));}
-                let mut result=self.reconcile(prior,policy,owner)?;self.journal.write(&name,&result)?;
+                let mut result=self.reconcile_saved(prior,policy,owner)?;self.journal.write(&name,&result)?;
                 if result.final_status(){if self.journal.read::<Value>("execute-slot")?.is_some_and(|s|s["id"]==id){self.journal.clear("execute-slot")?;}}
                 else if self.block_height()?<=result.last_valid_block_height{let _=self.broadcast(&result);}
                 result.extra.insert("replayed".into(),json!(true));return Ok(result);
@@ -371,7 +386,7 @@ impl<'a> PolicyLifecycle<'a> {
                     let previous=slot["id"].as_str().ok_or_else(||Error::config("Execution journal inconsistency"))?;valid_id(previous)?;
                     let old=self.journal.read::<Record>(&format!("request-{previous}"))?.ok_or_else(||Error::config("Execution journal inconsistency"))?;
                     if old.id!=previous||old.method!="execute" {return Err(Error::config("Execution journal inconsistency"));}
-                    let reconciled=self.reconcile(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
+                    let reconciled=self.reconcile_saved(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
                     if !reconciled.final_status(){return Err(Error::config(format!("Execution {previous} is uncertain; recover it before a new spend")));}
                     self.journal.clear("execute-slot")?;
                 }
@@ -382,7 +397,7 @@ impl<'a> PolicyLifecycle<'a> {
                     let old=self.journal.read::<Record>(&format!("request-{previous}"))?.ok_or_else(||Error::config("Owner journal inconsistency"))?;
                     if old.id!=previous||old.method!=method{return Err(Error::config("Owner journal inconsistency"));}
                     if !self.superseded_owner(&old,policy,owner)? {
-                        let reconciled=self.reconcile(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
+                        let reconciled=self.reconcile_saved(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
                         if !reconciled.final_status()&&!(reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
                         if !reconciled.final_status(){superseded.insert(previous.into(),reconciled);}
                     }
@@ -393,7 +408,7 @@ impl<'a> PolicyLifecycle<'a> {
                 // proofs from that crash window also block owner operations.
                 for old in self.journal.entries::<Record>()? {
                     if old.method==method&&!old.final_status()&&!self.superseded_owner(&old,policy,owner)? {
-                        let previous=old.id.clone();let reconciled=self.reconcile(old,policy,owner)?;
+                        let previous=old.id.clone();let reconciled=self.reconcile_saved(old,policy,owner)?;
                         self.journal.write(&format!("request-{previous}"),&reconciled)?;
                         if !reconciled.final_status()&&!(reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
                         if !reconciled.final_status(){superseded.insert(previous,reconciled);}
@@ -451,7 +466,7 @@ impl<'a> PolicyLifecycle<'a> {
             if prior.id != id {
                 return Err(Error::config("Operation journal ID mismatch"));
             }
-            let result = self.reconcile(prior, policy, owner)?;
+            let result = self.reconcile_saved(prior, policy, owner)?;
             self.journal.write(&name, &result)?;
             Ok(result)
         })
