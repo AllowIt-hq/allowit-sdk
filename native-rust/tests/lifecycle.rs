@@ -900,6 +900,22 @@ fn server_reconciliation_requires_no_file_journal_or_signing() {
     let mut low_height = record.clone();
     low_height.last_valid_block_height = 1;
     f.rpc.data.lock().unwrap().blockhash_valid = true;
+    let mut forged_absence = low_height.clone();
+    forged_absence.status = "failed".into();
+    forged_absence
+        .extra
+        .insert("absence".into(), json!({"kind":"expired-execute"}));
+    forged_absence
+        .extra
+        .insert("blockhashExpired".into(), json!(true));
+    forged_absence
+        .extra
+        .insert("decisionCode".into(), json!("EXPIRED_UNEXECUTED"));
+    let observed = reconcile_record(&f, forged_absence, &f.policy, owner).unwrap();
+    assert_eq!(observed.status, "uncertain");
+    assert!(!observed.expired());
+    assert!(!observed.extra.contains_key("absence"));
+    assert!(!observed.extra.contains_key("decisionCode"));
     let observed = reconcile_record(&f, low_height.clone(), &f.policy, owner).unwrap();
     assert_eq!(observed.status, "uncertain");
     assert!(!observed.expired());
