@@ -5,10 +5,14 @@ use allowit_native::{
     error::{Error, Result},
     journal::FileJournal,
     lifecycle::{
-        NativeOperations, PolicyLifecycle, Record, intent_for, reconcile_record, validate_record,
+        AuthorizedExecution, NativeOperations, PolicyLifecycle, Record, intent_for,
+        reconcile_record, validate_record,
     },
-    native::{Options, Prepared, Simulation, State},
-    policy::Policy,
+    native::{
+        ApprovalCommitment, ApprovalRequest, ExecutionRequestIdentity, Options, Prepared,
+        Simulation, State,
+    },
+    policy::{Policy, digest, units},
     release,
     rpc::Rpc,
     transaction::{Signed, Transaction},
@@ -162,6 +166,78 @@ impl Fixture {
     fn life(&self) -> PolicyLifecycle<'_> {
         PolicyLifecycle::new(self, &self.journal)
     }
+    fn identity(&self, id: &str, action: &str) -> ExecutionRequestIdentity {
+        ExecutionRequestIdentity::new(
+            &self.policy,
+            id,
+            "1",
+            self.owner.public_key(),
+            action,
+            "fixture merchant",
+            &json!({"invoice":"fixed-1"}),
+        )
+        .unwrap()
+    }
+    fn authorized(&self, identity: &ExecutionRequestIdentity) -> AuthorizedExecution {
+        let owner = self.owner.public_key();
+        let state = self.state(&self.policy, owner, false, None).unwrap().unwrap();
+        let evidence_digest = digest(b"numeric policy evidence");
+        let request = ApprovalRequest {
+            version: 1,
+            operation_id: identity.operation_id.clone(),
+            input_digest: identity.digest().unwrap(),
+            vault_policy_id: self.policy.id.clone(),
+            execution_policy_id: "fixture-numeric-policy".into(),
+            execution_policy_digest: self.policy.execution_policy_digest.clone(),
+            execution_requirements_digest: self.policy.execution_requirements_digest.clone(),
+            execution_policy_revision: 1,
+            recipient: identity.recipient,
+            amount_units: units(&identity.amount).unwrap(),
+            action: identity.action.clone(),
+            merchant: identity.merchant.clone(),
+            context_hash: identity.context_hash.clone(),
+            decision_code: "PASS".into(),
+            evidence_digest,
+        };
+        let approval = ApprovalCommitment::new(
+            &self.policy,
+            &state,
+            &identity.operation_id,
+            identity.recipient,
+            &identity.amount,
+            200,
+            &request.digest().unwrap(),
+            None,
+        )
+        .unwrap();
+        let options = approval.options().unwrap();
+        let prepared = self
+            .prepare(&self.policy, owner, "execute", &options)
+            .unwrap();
+        let partial = prepared
+            .transaction
+            .partially_signed(&[(
+                self.authority.public_key(),
+                self.authority.sign(&prepared.transaction.message),
+            )])
+            .unwrap();
+        AuthorizedExecution {
+            binding: state.binding,
+            request,
+            approval,
+            intent: intent_for(&self.sdk, &self.policy, owner, "execute", &options).unwrap(),
+            message: prepared.transaction.message,
+            partial_transaction: partial.clone(),
+            blockhash: prepared.blockhash,
+            last_valid_block_height: prepared.last_valid_block_height,
+            nonce: prepared.nonce.unwrap(),
+            revision: prepared.revision.unwrap(),
+            simulation: Simulation {
+                transaction_bytes: partial.len(),
+                ..prepared.simulation
+            },
+        }
+    }
     fn submit(
         &self,
         method: &str,
@@ -184,6 +260,118 @@ impl Fixture {
                 })
             },
         )
+    }
+}
+
+#[test]
+fn authority_partial_is_validated_completed_and_retried_without_reapproval() {
+    let f = Fixture::new();
+    let identity = f.identity("authorized-request-001", "fetch fixed fixture");
+    let approvals = AtomicUsize::new(0);
+    let signatures = AtomicUsize::new(0);
+    let result = f
+        .life()
+        .submit_authorized(
+            &f.policy,
+            f.owner.public_key(),
+            &identity,
+            || {
+                approvals.fetch_add(1, Ordering::Relaxed);
+                Ok(f.authorized(&identity))
+            },
+            |transaction| {
+                signatures.fetch_add(1, Ordering::Relaxed);
+                Ok(f.executor.sign(&transaction.message))
+            },
+        )
+        .unwrap();
+    assert_eq!(result.status, "uncertain");
+    assert_eq!(approvals.load(Ordering::Relaxed), 1);
+    assert_eq!(signatures.load(Ordering::Relaxed), 1);
+    assert_eq!(result.signatures.len(), 2);
+    assert_eq!(result.extra["executionRequestDigest"], identity.digest().unwrap());
+    let proof = Signed::parse(
+        &base64::engine::general_purpose::STANDARD
+            .decode(&result.signed_bytes)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(proof.signature(f.executor.public_key()).is_some());
+    assert!(proof.signature(f.authority.public_key()).is_some());
+
+    let replay = f
+        .life()
+        .submit_authorized(
+            &f.policy,
+            f.owner.public_key(),
+            &identity,
+            || Err(Error::config("authorization must not be called on retry")),
+            |_| Err(Error::config("executor must not resign on retry")),
+        )
+        .unwrap();
+    assert_eq!(replay.extra["replayed"], true);
+    assert_eq!(replay.signed_bytes, result.signed_bytes);
+
+    let changed = f.identity("authorized-request-001", "different action");
+    assert!(
+        f.life()
+            .submit_authorized(
+                &f.policy,
+                f.owner.public_key(),
+                &changed,
+                || Err(Error::config("authorization must not be called on conflict")),
+                |_| Err(Error::config("executor must not sign on conflict")),
+            )
+            .err()
+            .unwrap()
+            .message
+            .contains("conflict")
+    );
+}
+
+#[test]
+fn authority_partial_rejects_changed_envelope_message_and_signer_slots() {
+    let cases: Vec<Box<dyn Fn(&Fixture, &mut AuthorizedExecution)>> = vec![
+        Box::new(|_, response| response.request.action = "changed action".into()),
+        Box::new(|_, response| response.message[0] ^= 1),
+        Box::new(|fixture, response| {
+            let parsed = Signed::parse_partial(&response.partial_transaction).unwrap();
+            let transaction = Transaction::new(
+                fixture.executor.public_key(),
+                response.blockhash,
+                parsed.instructions,
+            )
+            .unwrap();
+            response.partial_transaction = transaction
+                .partially_signed(&[(
+                    fixture.executor.public_key(),
+                    fixture.executor.sign(&transaction.message),
+                )])
+                .unwrap();
+            response.message = transaction.message;
+            response.simulation.transaction_bytes = response.partial_transaction.len();
+        }),
+    ];
+    for (index, change) in cases.into_iter().enumerate() {
+        let f = Fixture::new();
+        let identity = f.identity(
+            &format!("rejected-authority-{index:03}"),
+            "fetch fixed fixture",
+        );
+        let mut response = f.authorized(&identity);
+        change(&f, &mut response);
+        assert!(
+            f.life()
+                .submit_authorized(
+                    &f.policy,
+                    f.owner.public_key(),
+                    &identity,
+                    || Ok(response.clone()),
+                    |transaction| Ok(f.executor.sign(&transaction.message)),
+                )
+                .is_err()
+        );
+        assert!(f.journal.entries::<Record>().unwrap().is_empty());
     }
 }
 impl NativeOperations for Fixture {

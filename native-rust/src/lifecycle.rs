@@ -5,7 +5,10 @@ use crate::{
     crypto::Key,
     error::{Error, Result},
     journal::FileJournal,
-    native::{Options, number, safe_height},
+    native::{
+        ApprovalCommitment, ApprovalRequest, ExecutionRequestIdentity, Options, Simulation, number,
+        safe_height,
+    },
     policy::{Policy, decimal, digest, units},
     transaction::{Signed, Transaction},
 };
@@ -53,6 +56,23 @@ pub struct Record {
     pub transaction_url: String,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+/// A trusted server's exact authorization response. The lifecycle validates
+/// every field against local policy, state, and instruction reconstruction
+/// before it accepts the authority signature.
+#[derive(Clone)]
+pub struct AuthorizedExecution {
+    pub binding: Binding,
+    pub request: ApprovalRequest,
+    pub approval: ApprovalCommitment,
+    pub intent: String,
+    pub message: Vec<u8>,
+    pub partial_transaction: Vec<u8>,
+    pub blockhash: Key,
+    pub last_valid_block_height: u64,
+    pub nonce: String,
+    pub revision: String,
+    pub simulation: Simulation,
 }
 impl Record {
     pub fn public(&self) -> Value {
@@ -452,6 +472,221 @@ impl<'a> PolicyLifecycle<'a> {
             if method=="execute"{self.journal.write("execute-slot",&json!({"id":id}))?;}
             self.journal.write("last",&json!({"id":id}))?;
             if self.broadcast(&record).is_ok(){record.status="submitted".into();self.journal.write(&name,&record)?;}
+            Ok(record)
+        })
+    }
+    /// Complete a server-authorized execution without accepting caller-supplied
+    /// transaction instructions. The authorization callback is lazy: a retry
+    /// with an existing durable request reconciles and rebroadcasts the original
+    /// proof without asking the server for another decision or signature.
+    pub fn submit_authorized(
+        &self,
+        policy: &Policy,
+        owner: Key,
+        identity: &ExecutionRequestIdentity,
+        mut authorize: impl FnMut() -> Result<AuthorizedExecution>,
+        mut sign_executor: impl FnMut(&Transaction) -> Result<[u8; 64]>,
+    ) -> Result<Record> {
+        policy.validate()?;
+        let id = identity.operation_id.clone();
+        valid_id(&id)?;
+        let input_digest = identity.digest()?;
+        if identity.vault_policy_id != policy.id {
+            return Err(Error::config("Execution request policy changed"));
+        }
+        self.journal.locked(|| {
+            let name = format!("request-{id}");
+            if let Some(prior) = self.journal.read::<Record>(&name)? {
+                if prior.id != id
+                    || prior.method != "execute"
+                    || prior
+                        .extra
+                        .get("executionRequestDigest")
+                        .and_then(Value::as_str)
+                        != Some(input_digest.as_str())
+                {
+                    return Err(Error::config(
+                        "Request ID conflict; recover the original request",
+                    ));
+                }
+                let mut result = self.reconcile(prior, policy, owner)?;
+                self.journal.write(&name, &result)?;
+                if result.final_status()
+                    && self
+                        .journal
+                        .read::<Value>("execute-slot")?
+                        .is_some_and(|slot| slot["id"] == id)
+                {
+                    self.journal.clear("execute-slot")?;
+                } else if !result.final_status()
+                    && self.block_height()? <= result.last_valid_block_height
+                {
+                    let _ = self.broadcast(&result);
+                }
+                result.extra.insert("replayed".into(), json!(true));
+                return Ok(result);
+            }
+            if let Some(slot) = self.journal.read::<Value>("execute-slot")? {
+                let previous = slot["id"]
+                    .as_str()
+                    .ok_or_else(|| Error::config("Execution journal inconsistency"))?;
+                valid_id(previous)?;
+                let old = self
+                    .journal
+                    .read::<Record>(&format!("request-{previous}"))?
+                    .ok_or_else(|| Error::config("Execution journal inconsistency"))?;
+                if old.id != previous || old.method != "execute" {
+                    return Err(Error::config("Execution journal inconsistency"));
+                }
+                let reconciled = self.reconcile(old, policy, owner)?;
+                self.journal
+                    .write(&format!("request-{previous}"), &reconciled)?;
+                if !reconciled.final_status() {
+                    return Err(Error::config(format!(
+                        "Execution {previous} is uncertain; recover it before a new spend"
+                    )));
+                }
+                self.journal.clear("execute-slot")?;
+            }
+            // A crash between writing a proof and reserving execute-slot must
+            // not permit a second payment after restart.
+            for old in self.journal.entries::<Record>()? {
+                if old.method == "execute" && !old.final_status() {
+                    let previous = old.id.clone();
+                    let reconciled = self.reconcile(old, policy, owner)?;
+                    self.journal
+                        .write(&format!("request-{previous}"), &reconciled)?;
+                    if !reconciled.final_status() {
+                        return Err(Error::config(format!(
+                            "Execution {previous} is uncertain; recover it before a new spend"
+                        )));
+                    }
+                }
+            }
+
+            let authorized = authorize()?;
+            let binding = self.sdk.client().public_binding(policy, owner)?;
+            let amount_units = units(&identity.amount)?;
+            if authorized.binding != binding
+                || authorized.request.operation_id != id
+                || authorized.request.input_digest != input_digest
+                || authorized.request.vault_policy_id != policy.id
+                || authorized.request.execution_policy_digest
+                    != policy.execution_policy_digest
+                || authorized.request.execution_requirements_digest
+                    != policy.execution_requirements_digest
+                || authorized.request.recipient != identity.recipient
+                || authorized.request.amount_units != amount_units
+                || authorized.request.action != identity.action
+                || authorized.request.merchant != identity.merchant
+                || authorized.request.context_hash != identity.context_hash
+                || authorized.request.digest()? != authorized.approval.request_digest
+                || authorized.approval.assessment_digest.as_deref()
+                    != policy
+                        .semantic_required
+                        .then_some(authorized.request.evidence_digest.as_str())
+            {
+                return Err(Error::config(
+                    "Server approval differs from the execution request",
+                ));
+            }
+            let state = self
+                .sdk
+                .state(policy, owner, false, None)?
+                .ok_or_else(|| Error::config("Deploy the native policy first"))?;
+            let expected_approval = ApprovalCommitment::new(
+                policy,
+                &state,
+                &id,
+                identity.recipient,
+                &identity.amount,
+                authorized.approval.expires_at,
+                &authorized.approval.request_digest,
+                authorized.approval.assessment_digest.as_deref(),
+            )?;
+            if authorized.approval != expected_approval
+                || authorized.nonce != state.nonce
+                || authorized.revision != state.revision
+            {
+                return Err(Error::config("Server approval or vault state changed"));
+            }
+            let options = authorized.approval.options()?;
+            let intent = intent_for(self.sdk.client(), policy, owner, "execute", &options)?;
+            if authorized.intent != intent {
+                return Err(Error::config("Server execution intent changed"));
+            }
+            let transaction = Transaction::new(
+                binding.executor,
+                authorized.blockhash,
+                self.sdk.client().expected_instructions(
+                    policy,
+                    &binding,
+                    "execute",
+                    &options,
+                    Some(&authorized.nonce),
+                    Some(&authorized.revision),
+                )?,
+            )?;
+            if transaction.signers != [binding.executor, binding.authority]
+                || authorized.message != transaction.message
+                || authorized.simulation.units_consumed == 0
+                || authorized.simulation.transaction_bytes != authorized.partial_transaction.len()
+            {
+                return Err(Error::config("Server prepared transaction changed"));
+            }
+            let partial = Signed::parse_partial(&authorized.partial_transaction)?;
+            partial.matches(&transaction)?;
+            if partial.signature(binding.authority).is_none()
+                || partial.signature(binding.executor).is_some()
+            {
+                return Err(Error::config(
+                    "Server response must contain only its authority signature",
+                ));
+            }
+            let raw = transaction.add_signature(
+                &authorized.partial_transaction,
+                binding.executor,
+                sign_executor(&transaction)?,
+            )?;
+            let proof = Signed::parse(&raw)?;
+            proof.matches(&transaction)?;
+            let signatures: Vec<_> = proof
+                .signatures
+                .iter()
+                .map(|signature| bs58::encode(signature).into_string())
+                .collect();
+            let signature = bs58::encode(proof.primary_signature()?).into_string();
+            let mut extra = BTreeMap::new();
+            extra.insert("executionRequestDigest".into(), json!(input_digest));
+            extra.insert("approvalRequest".into(), json!(authorized.request));
+            extra.insert("approval".into(), json!(authorized.approval));
+            extra.insert("simulation".into(), json!(authorized.simulation));
+            let mut record = Record {
+                id: id.clone(),
+                intent,
+                method: "execute".into(),
+                status: "uncertain".into(),
+                transaction_url: self.sdk.client().transaction_url(&signature)?,
+                signature,
+                signatures,
+                signed_bytes: base64::engine::general_purpose::STANDARD.encode(raw),
+                blockhash: authorized.blockhash,
+                last_valid_block_height: authorized.last_valid_block_height,
+                nonce: Some(authorized.nonce),
+                revision: Some(authorized.revision),
+                expires_at: options.expires_at,
+                commitment: options.commitment.clone(),
+                instance_slot: options.instance_slot.map(|slot| slot.to_string()),
+                extra,
+            };
+            validate_record(self.sdk.client(), policy, owner, &record)?;
+            self.journal.write(&name, &record)?;
+            self.journal.write("execute-slot", &json!({"id":id}))?;
+            self.journal.write("last", &json!({"id":id}))?;
+            if self.broadcast(&record).is_ok() {
+                record.status = "submitted".into();
+                self.journal.write(&name, &record)?;
+            }
             Ok(record)
         })
     }

@@ -47,6 +47,142 @@ pub struct State {
     pub approved: bool,
     pub balance: String,
 }
+/// Caller-controlled fields that define one logical execution request. The
+/// digest is stable across authorization retries and excludes server decisions.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionRequestIdentity {
+    pub version: u8,
+    pub operation_id: String,
+    pub vault_policy_id: String,
+    pub amount: String,
+    pub recipient: Key,
+    pub action: String,
+    pub merchant: String,
+    pub context_hash: String,
+}
+impl ExecutionRequestIdentity {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        policy: &Policy,
+        operation_id: &str,
+        amount: &str,
+        recipient: Key,
+        action: &str,
+        merchant: &str,
+        context: &Value,
+    ) -> Result<Self> {
+        let amount = decimal(units(amount)?);
+        let encoded = serde_json::to_string(context)
+            .map_err(|_| Error::config("Invalid execution context"))?;
+        if !context.is_object() || encoded.len() > 16_384 {
+            return Err(Error::config("Execution context must be a JSON object"));
+        }
+        let context_hash = digest(go_compact_json(&encoded));
+        let identity = Self {
+            version: 1,
+            operation_id: operation_id.into(),
+            vault_policy_id: policy.id.clone(),
+            amount,
+            recipient,
+            action: action.into(),
+            merchant: merchant.into(),
+            context_hash,
+        };
+        identity.validate()?;
+        Ok(identity)
+    }
+    pub fn digest(&self) -> Result<String> {
+        self.validate()?;
+        Ok(digest(serde_json::to_vec(self).map_err(|_| {
+            Error::config("Invalid execution request identity")
+        })?))
+    }
+    fn validate(&self) -> Result<()> {
+        let amount = units(&self.amount)?;
+        if self.version != 1
+            || !(8..=100).contains(&self.operation_id.len())
+            || !self
+                .operation_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+            || hex32(&self.vault_policy_id)? == [0; 32]
+            || amount == 0
+            || decimal(amount) != self.amount
+            || self.action.trim() != self.action
+            || self.action.is_empty()
+            || self.action.len() > 100
+            || self.action.chars().any(char::is_control)
+            || self.merchant.trim() != self.merchant
+            || self.merchant.len() > 200
+            || self.merchant.chars().any(char::is_control)
+            || hex32(&self.context_hash)? == [0; 32]
+        {
+            return Err(Error::config("Invalid execution request identity"));
+        }
+        Ok(())
+    }
+}
+/// Server decision inputs whose digest is committed into the transfer. This
+/// exposes policy/evidence identity without placing those documents on chain.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalRequest {
+    pub version: u8,
+    pub operation_id: String,
+    pub input_digest: String,
+    pub vault_policy_id: String,
+    pub execution_policy_id: String,
+    pub execution_policy_digest: String,
+    pub execution_requirements_digest: String,
+    pub execution_policy_revision: i64,
+    pub recipient: Key,
+    pub amount_units: u64,
+    pub action: String,
+    pub merchant: String,
+    pub context_hash: String,
+    pub decision_code: String,
+    pub evidence_digest: String,
+}
+impl ApprovalRequest {
+    pub fn digest(&self) -> Result<String> {
+        if self.version != 1
+            || !(8..=100).contains(&self.operation_id.len())
+            || !self
+                .operation_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+            || self.execution_policy_id.is_empty()
+            || self.execution_policy_revision < 0
+            || self.amount_units == 0
+            || self.action.trim() != self.action
+            || self.action.is_empty()
+            || self.action.len() > 100
+            || self.action.chars().any(char::is_control)
+            || self.merchant.trim() != self.merchant
+            || self.merchant.len() > 200
+            || self.merchant.chars().any(char::is_control)
+            || self.decision_code != "PASS"
+        {
+            return Err(Error::config("Invalid approval request"));
+        }
+        for value in [
+            self.input_digest.as_str(),
+            self.vault_policy_id.as_str(),
+            self.execution_policy_digest.as_str(),
+            self.execution_requirements_digest.as_str(),
+            self.context_hash.as_str(),
+            self.evidence_digest.as_str(),
+        ] {
+            if hex32(value)? == [0; 32] {
+                return Err(Error::config("Invalid approval request"));
+            }
+        }
+        Ok(digest(serde_json::to_vec(self).map_err(|_| {
+            Error::config("Invalid approval request")
+        })?))
+    }
+}
 /// Canonical trusted-server authorization envelope. Its digest is embedded in
 /// the transfer instruction and therefore signed by both executor and authority.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -188,6 +324,36 @@ impl ApprovalCommitment {
             additional_owner_operation: false,
         })
     }
+}
+
+// Match the server's encoding/json compaction for a raw context carried in an
+// HTTP request. serde_json has already validated the string and escape syntax.
+fn go_compact_json(raw: &str) -> String {
+    let mut result = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in raw.chars() {
+        if in_string {
+            match c {
+                '<' => result.push_str("\\u003c"),
+                '>' => result.push_str("\\u003e"),
+                '&' => result.push_str("\\u0026"),
+                '\u{2028}' => result.push_str("\\u2028"),
+                '\u{2029}' => result.push_str("\\u2029"),
+                _ => result.push(c),
+            }
+            if c == '"' && !escaped {
+                in_string = false;
+            }
+            escaped = c == '\\' && !escaped;
+        } else if c == '"' {
+            in_string = true;
+            result.push(c);
+        } else if !c.is_ascii_whitespace() {
+            result.push(c);
+        }
+    }
+    result
 }
 pub struct Prepared {
     pub transaction: Transaction,
