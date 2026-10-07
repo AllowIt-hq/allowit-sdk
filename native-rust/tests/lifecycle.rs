@@ -29,6 +29,7 @@ struct Network {
     status: String,
     refreshed_status: Option<String>,
     blockhash_valid: bool,
+    processed_blockhash_valid: Option<bool>,
 }
 struct FakeRpc {
     data: Mutex<Network>,
@@ -40,8 +41,14 @@ impl Rpc for FakeRpc {
         Ok(match method {
             "getBlockHeight" => json!(d.height),
             "isBlockhashValid" => {
-                assert_eq!(params[1]["commitment"], "finalized");
-                json!({"value": d.blockhash_valid})
+                let valid = if params[1]["commitment"] == "processed" {
+                    assert_eq!(params[1]["minContextSlot"], 99);
+                    d.processed_blockhash_valid.unwrap_or(d.blockhash_valid)
+                } else {
+                    assert_eq!(params[1]["commitment"], "finalized");
+                    d.blockhash_valid
+                };
+                json!({"value":valid,"context":{"slot":99}})
             }
             "getSlot" => json!(99),
             "getBlock" => {
@@ -102,6 +109,7 @@ impl Fixture {
                 status: "uncertain".into(),
                 refreshed_status: None,
                 blockhash_valid: false,
+                processed_blockhash_valid: None,
             }),
             journal: directory.clone(),
         });
@@ -660,6 +668,12 @@ fn server_reconciliation_requires_no_file_journal_or_signing() {
     assert!(!observed.expired());
     assert!(!observed.extra.contains_key("absence"));
     f.rpc.data.lock().unwrap().blockhash_valid = false;
+    f.rpc.data.lock().unwrap().processed_blockhash_valid = Some(true);
+    let observed = reconcile_record(&f, low_height.clone(), &f.policy, owner).unwrap();
+    assert_eq!(observed.status, "uncertain");
+    assert!(!observed.expired());
+    assert!(!observed.extra.contains_key("absence"));
+    f.rpc.data.lock().unwrap().processed_blockhash_valid = Some(false);
     let observed = reconcile_record(&f, low_height, &f.policy, owner).unwrap();
     assert_eq!(observed.status, "failed");
     assert_eq!(observed.extra["decisionCode"], "EXPIRED_UNEXECUTED");

@@ -247,6 +247,24 @@ pub fn reconcile_record(
                     .rpc
                     .call("getSlot", json!([{"commitment":"finalized"}]))?,
             )?;
+            // A newer processed blockhash is absent from finalized state too.
+            // Confirm it is also invalid on a node at least this finalized slot.
+            let processed = sdk.client().rpc.call(
+                "isBlockhashValid",
+                json!([record.blockhash,{"commitment":"processed","minContextSlot":slot}]),
+            )?;
+            if safe_height(&processed["context"]["slot"])? < slot {
+                return Err(Error::config(
+                    "Blockhash validity observation is behind finalized state",
+                ));
+            }
+            let valid = processed["value"]
+                .as_bool()
+                .ok_or_else(|| Error::config("Invalid blockhash validity observation"))?;
+            if valid {
+                record.update(result);
+                return Ok(record);
+            }
             let block = sdk.client().rpc.call(
                 "getBlock",
                 json!([slot,{"commitment":"finalized","transactionDetails":"none","rewards":false,"maxSupportedTransactionVersion":0}]),
