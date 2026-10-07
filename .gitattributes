@@ -1,0 +1,3 @@
+# Preserve primary publisher license and copyright text byte-for-byte.
+licenses/dependencies/texts/** -whitespace -text
+licenses/dependencies/Rust-1.98.0-COPYRIGHT-library.html -whitespace -text
