@@ -5,7 +5,7 @@ use crate::{
     crypto::Key,
     error::{Error, Result},
     journal::FileJournal,
-    native::{Options, safe_height},
+    native::{Options, number, safe_height},
     policy::{Policy, decimal, digest, units},
     transaction::{Signed, Transaction},
 };
@@ -22,6 +22,9 @@ struct Intent {
     method: String,
     amount: Option<String>,
     recipient: Option<Key>,
+    expires_at: Option<u64>,
+    commitment: Option<String>,
+    instance_slot: Option<u64>,
     binding: Binding,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -32,6 +35,8 @@ pub struct Record {
     pub method: String,
     pub status: String,
     pub signature: String,
+    #[serde(default)]
+    pub signatures: Vec<String>,
     pub signed_bytes: String,
     pub blockhash: Key,
     pub last_valid_block_height: u64,
@@ -39,6 +44,12 @@ pub struct Record {
     pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commitment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_slot: Option<String>,
     pub transaction_url: String,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -90,6 +101,9 @@ pub fn intent_for(
             .transpose()?
             .map(decimal),
         recipient: options.recipient,
+        expires_at: options.expires_at,
+        commitment: options.commitment.clone(),
+        instance_slot: options.instance_slot,
         binding,
     };
     serde_json::to_string(&intent).map_err(|_| Error::config("Invalid operation intent"))
@@ -109,6 +123,9 @@ pub fn validate_record(
     let options = Options {
         amount: intent.amount,
         recipient: intent.recipient,
+        expires_at: intent.expires_at,
+        commitment: intent.commitment,
+        instance_slot: intent.instance_slot,
         ..Options::default()
     };
     if intent_for(sdk, policy, owner, &record.method, &options)? != record.intent
@@ -138,7 +155,16 @@ pub fn validate_record(
         .map_err(|_| Error::config("Invalid operation journal"))?;
     let proof = Signed::parse(&raw)?;
     proof.matches(&expected)?;
-    if bs58::encode(proof.signature).into_string() != record.signature
+    let signatures: Vec<_> = proof
+        .signatures
+        .iter()
+        .map(|signature| bs58::encode(signature).into_string())
+        .collect();
+    if bs58::encode(proof.primary_signature()?).into_string() != record.signature
+        || signatures != record.signatures
+        || record.expires_at != options.expires_at
+        || record.commitment != options.commitment
+        || record.instance_slot.as_deref().map(number).transpose()? != options.instance_slot
         || sdk.transaction_url(&record.signature)? != record.transaction_url
     {
         return Err(Error::config(
@@ -212,7 +238,10 @@ pub fn reconcile_record(
     record.extra.remove("error");
     record.extra.remove("replayed");
     let proof = validate_record(sdk.client(), policy, owner, &record)?;
-    sdk.verify_release(matches!(record.method.as_str(), "revoke" | "withdraw"))?;
+    sdk.verify_release(matches!(
+        record.method.as_str(),
+        "revoke" | "withdraw" | "close"
+    ))?;
     if record
         .extra
         .get("absence")
@@ -276,7 +305,7 @@ pub fn reconcile_record(
                 .transpose()?;
             if let Some(height) = finalized.filter(|h| *h > record.last_valid_block_height) {
                 let state = sdk.state(policy, owner, true, Some(slot))?;
-                if matches!(record.method.as_str(), "fund" | "withdraw") {
+                if matches!(record.method.as_str(), "fund" | "withdraw" | "close") {
                     // Reobserve status after the coherent expiry boundary;
                     // a lagging initial RPC node cannot authorize addition.
                     result = sdk.status(&record.signature)?;
@@ -286,7 +315,7 @@ pub fn reconcile_record(
                         return Ok(record);
                     }
                 }
-                let unchanged = if matches!(record.method.as_str(), "fund" | "withdraw") {
+                let unchanged = if matches!(record.method.as_str(), "fund" | "withdraw" | "close") {
                     false
                 } else if record.method == "deploy" {
                     state.is_none()
@@ -312,7 +341,7 @@ pub fn reconcile_record(
                     record.extra.insert("absence".into(), absence);
                     return Ok(record);
                 }
-                if !matches!(record.method.as_str(), "fund" | "withdraw") {
+                if !matches!(record.method.as_str(), "fund" | "withdraw" | "close") {
                     record.extra.insert("blockhashExpired".into(), json!(true));
                 }
             }
@@ -348,7 +377,7 @@ impl<'a> PolicyLifecycle<'a> {
         method: &str,
         options: &Options,
         request_id: Option<&str>,
-        sign: impl FnOnce(&Transaction, &str) -> Result<[u8; 64]>,
+        mut sign: impl FnMut(&Transaction, &str) -> Result<[u8; 64]>,
     ) -> Result<Record> {
         policy.validate()?;
         let canonical = intent_for(self.sdk.client(), policy, owner, method, options)?;
@@ -376,34 +405,41 @@ impl<'a> PolicyLifecycle<'a> {
                     self.journal.clear("execute-slot")?;
                 }
             }
-            if matches!(method,"fund"|"withdraw") {
+            if matches!(method,"fund"|"withdraw"|"close") {
                 if let Some(slot)=self.journal.read::<Value>(&format!("owner-slot-{method}"))? {
                     let previous=slot["id"].as_str().ok_or_else(||Error::config("Owner journal inconsistency"))?;valid_id(previous)?;
                     let old=self.journal.read::<Record>(&format!("request-{previous}"))?.ok_or_else(||Error::config("Owner journal inconsistency"))?;
                     if old.id!=previous||old.method!=method{return Err(Error::config("Owner journal inconsistency"));}
                     if !self.superseded_owner(&old,policy,owner)? {
                         let reconciled=self.reconcile(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
-                        if !reconciled.final_status()&&!(reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
+                        if !(reconciled.final_status()||reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
                         if !reconciled.final_status(){superseded.insert(previous.into(),reconciled);}
                     }
                 }
             }
-            if matches!(method,"fund"|"withdraw") {
+            if matches!(method,"fund"|"withdraw"|"close") {
                 // Request persistence precedes the slot write. Orphaned signed
                 // proofs from that crash window also block owner operations.
                 for old in self.journal.entries::<Record>()? {
                     if old.method==method&&!old.final_status()&&!self.superseded_owner(&old,policy,owner)? {
                         let previous=old.id.clone();let reconciled=self.reconcile(old,policy,owner)?;
                         self.journal.write(&format!("request-{previous}"),&reconciled)?;
-                        if !reconciled.final_status()&&!(reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
+                        if !(reconciled.final_status()||reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
                         if !reconciled.final_status(){superseded.insert(previous,reconciled);}
                     }
                 }
             }
             let prepared=self.sdk.prepare(policy,owner,method,options)?;
-            let signature=sign(&prepared.transaction,if method=="execute"{"executor"}else{"owner"})?;
-            let raw=prepared.transaction.signed(signature)?;let signature=bs58::encode(signature).into_string();
-            let mut record=Record{id:id.clone(),intent:canonical,method:method.into(),status:"uncertain".into(),transaction_url:self.sdk.client().transaction_url(&signature)?,signature,signed_bytes:base64::engine::general_purpose::STANDARD.encode(raw),blockhash:prepared.blockhash,last_valid_block_height:prepared.last_valid_block_height,nonce:prepared.nonce,revision:prepared.revision,extra:BTreeMap::new()};
+            let binding=self.sdk.client().public_binding(policy,owner)?;
+            let mut supplied=Vec::new();
+            for signer in &prepared.transaction.signers {
+                let role=if *signer==binding.owner{"owner"}else if *signer==binding.executor{"executor"}else if *signer==binding.authority{"authority"}else{return Err(Error::config("Unexpected native transaction signer"));};
+                supplied.push((*signer,sign(&prepared.transaction,role)?));
+            }
+            let raw=prepared.transaction.signed_by(&supplied)?;
+            let signatures:Vec<_>=supplied.iter().map(|(_,signature)|bs58::encode(signature).into_string()).collect();
+            let signature=signatures.first().cloned().ok_or_else(||Error::config("Missing native transaction payer signature"))?;
+            let mut record=Record{id:id.clone(),intent:canonical,method:method.into(),status:"uncertain".into(),transaction_url:self.sdk.client().transaction_url(&signature)?,signature,signatures,signed_bytes:base64::engine::general_purpose::STANDARD.encode(raw),blockhash:prepared.blockhash,last_valid_block_height:prepared.last_valid_block_height,nonce:prepared.nonce,revision:prepared.revision,expires_at:options.expires_at,commitment:options.commitment.clone(),instance_slot:options.instance_slot.map(|slot|slot.to_string()),extra:BTreeMap::new()};
             validate_record(self.sdk.client(),policy,owner,&record)?;
             self.journal.write(&name,&record)?;
             // Only a durable, validated successor proof can supersede an old
@@ -412,7 +448,7 @@ impl<'a> PolicyLifecycle<'a> {
                 old.extra.insert("supersededBy".into(),json!(id));
                 self.journal.write(&format!("request-{previous}"),&old)?;
             }
-            if matches!(method,"fund"|"withdraw"){self.journal.write(&format!("owner-slot-{method}"),&json!({"id":id}))?;}
+            if matches!(method,"fund"|"withdraw"|"close"){self.journal.write(&format!("owner-slot-{method}"),&json!({"id":id}))?;}
             if method=="execute"{self.journal.write("execute-slot",&json!({"id":id}))?;}
             self.journal.write("last",&json!({"id":id}))?;
             if self.broadcast(&record).is_ok(){record.status="submitted".into();self.journal.write(&name,&record)?;}
@@ -504,7 +540,7 @@ fn verify_receipt(
     if receipt["meta"].is_null()
         || !receipt["meta"]["err"].is_null()
         || chain.message != proof.message
-        || chain.signature != proof.signature
+        || chain.signatures != proof.signatures
     {
         return Err(Error::config(
             "Chain receipt does not match saved native transaction",

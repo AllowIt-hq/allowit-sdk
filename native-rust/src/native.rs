@@ -2,13 +2,15 @@ use crate::{
     client::{ATA_PROGRAM, Binding, NativeClient, TOKEN_PROGRAM, associated_token_address, hex32},
     crypto::Key,
     error::{Error, Result},
-    policy::{MAX_DAILY_UNITS, Policy, decimal, units},
+    policy::{MAX_DAILY_UNITS, Policy, decimal, digest, units},
     release, rpc,
     transaction::{Instruction, Meta, Transaction},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub const SYSTEM_PROGRAM: &str = "11111111111111111111111111111111";
+pub const COMPUTE_BUDGET_PROGRAM: &str = "ComputeBudget111111111111111111111111111111";
+pub const MAX_APPROVAL_SECONDS: u64 = 300;
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Options {
@@ -16,6 +18,12 @@ pub struct Options {
     pub amount: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipient: Option<Key>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commitment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_slot: Option<u64>,
     #[serde(default)]
     pub additional_owner_operation: bool,
 }
@@ -28,13 +36,159 @@ pub struct State {
     pub source_bundle: String,
     pub policy_artifact: String,
     pub vault_id: String,
+    pub authority: Key,
     pub daily_limit: String,
+    pub action_limit: String,
     pub spent: String,
     pub spent_day: String,
     pub nonce: String,
     pub revision: String,
+    pub instance_slot: String,
     pub approved: bool,
     pub balance: String,
+}
+/// Canonical trusted-server authorization envelope. Its digest is embedded in
+/// the transfer instruction and therefore signed by both executor and authority.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalCommitment {
+    pub version: u32,
+    pub operation_id: String,
+    pub operation: String,
+    pub policy_id: String,
+    pub policy_revision: String,
+    pub instance_slot: String,
+    pub network: String,
+    pub custody_program: Key,
+    pub vault: Key,
+    pub mint: Key,
+    pub recipient: Key,
+    pub executor: Key,
+    pub authority: Key,
+    pub amount_units: String,
+    pub nonce: String,
+    pub expires_at: u64,
+    pub execution_policy_digest: String,
+    pub execution_requirements_digest: String,
+    pub semantic_required: bool,
+    pub request_digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assessment_digest: Option<String>,
+    pub decision: String,
+}
+impl ApprovalCommitment {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        policy: &Policy,
+        state: &State,
+        operation_id: &str,
+        recipient: Key,
+        amount: &str,
+        expires_at: u64,
+        request_digest: &str,
+        assessment_digest: Option<&str>,
+    ) -> Result<Self> {
+        if !(8..=100).contains(&operation_id.len())
+            || !operation_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+        {
+            return Err(Error::config("Invalid approval operation ID"));
+        }
+        let validate_digest = |value: &str| -> Result<String> {
+            let bytes = hex32(value)?;
+            if bytes == [0; 32] {
+                return Err(Error::config("Approval digest must be nonzero"));
+            }
+            Ok(value.to_owned())
+        };
+        let request_digest = validate_digest(request_digest)?;
+        let assessment_digest = assessment_digest.map(validate_digest).transpose()?;
+        if policy.semantic_required != assessment_digest.is_some() {
+            return Err(Error::config(
+                "Semantic assessment presence differs from policy requirements",
+            ));
+        }
+        if state.vault_id != policy.id
+            || state.source_bundle != policy.source_bundle
+            || state.policy_artifact != policy.policy_artifact
+            || state.authority != state.binding.authority
+        {
+            return Err(Error::config("Approval policy or vault binding changed"));
+        }
+        Ok(Self {
+            version: 1,
+            operation_id: operation_id.into(),
+            operation: "transfer".into(),
+            policy_id: policy.id.clone(),
+            policy_revision: state.revision.clone(),
+            instance_slot: state.instance_slot.clone(),
+            network: policy.network.clone(),
+            custody_program: state.binding.custody,
+            vault: state.binding.vault,
+            mint: state.binding.mint,
+            recipient,
+            executor: state.binding.executor,
+            authority: state.binding.authority,
+            amount_units: units(amount)?.to_string(),
+            nonce: state.nonce.clone(),
+            expires_at,
+            execution_policy_digest: policy.execution_policy_digest.clone(),
+            execution_requirements_digest: policy.execution_requirements_digest.clone(),
+            semantic_required: policy.semantic_required,
+            request_digest,
+            assessment_digest,
+            decision: "allow".into(),
+        })
+    }
+    pub fn digest(&self) -> Result<String> {
+        if self.version != 1
+            || self.operation != "transfer"
+            || self.decision != "allow"
+            || self.semantic_required != self.assessment_digest.is_some()
+            || !(8..=100).contains(&self.operation_id.len())
+            || !self
+                .operation_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+        {
+            return Err(Error::config("Invalid approval commitment"));
+        }
+        for value in [
+            self.policy_id.as_str(),
+            self.execution_policy_digest.as_str(),
+            self.execution_requirements_digest.as_str(),
+            self.request_digest.as_str(),
+        ]
+        .into_iter()
+        .chain(self.assessment_digest.as_deref())
+        {
+            if hex32(value)? == [0; 32] {
+                return Err(Error::config("Approval digest must be nonzero"));
+            }
+        }
+        for value in [
+            &self.policy_revision,
+            &self.instance_slot,
+            &self.amount_units,
+            &self.nonce,
+        ] {
+            number(value)?;
+        }
+        Ok(digest(serde_json::to_vec(self).map_err(|_| {
+            Error::config("Invalid approval commitment")
+        })?))
+    }
+    pub fn options(&self) -> Result<Options> {
+        Ok(Options {
+            amount: Some(decimal(number(&self.amount_units)?)),
+            recipient: Some(self.recipient),
+            expires_at: Some(self.expires_at),
+            commitment: Some(self.digest()?),
+            instance_slot: Some(number(&self.instance_slot)?),
+            additional_owner_operation: false,
+        })
+    }
 }
 pub struct Prepared {
     pub transaction: Transaction,
@@ -58,11 +212,14 @@ impl NativeClient {
         if info.owner != b.custody {
             return Err(Error::config("Wrong vault account owner"));
         }
+        let expected_authority = b.authority;
         let s = decode_state(&info.data, b)?;
         if s.vault_id != policy.id
             || s.source_bundle != policy.source_bundle
             || s.policy_artifact != policy.policy_artifact
             || number(&s.daily_limit)? > MAX_DAILY_UNITS
+            || number(&s.action_limit)? > MAX_DAILY_UNITS
+            || s.authority != expected_authority
         {
             return Err(Error::config("Vault identity/limits mismatch"));
         }
@@ -86,14 +243,18 @@ impl NativeClient {
         method: &str,
         options: &Options,
     ) -> Result<Prepared> {
-        let recovery = matches!(method, "revoke" | "withdraw");
+        let recovery = matches!(method, "revoke" | "withdraw" | "close");
         let b = self.binding(policy, owner, recovery)?;
         let s = self.state(policy, owner, recovery, None)?;
         let amount = options.amount.as_deref().map(units).transpose()?;
-        if matches!(method, "fund" | "execute" | "withdraw" | "tune") && amount.is_none() {
+        if matches!(
+            method,
+            "deploy" | "fund" | "execute" | "withdraw" | "tune" | "tune_action"
+        ) && amount.is_none()
+        {
             return Err(Error::config("Specify the amount"));
         }
-        if amount == Some(0) && method != "tune" {
+        if amount == Some(0) && !matches!(method, "tune" | "tune_action") {
             return Err(Error::denied("Amount must be positive"));
         }
         let nonce = s.as_ref().map(|s| s.nonce.clone());
@@ -103,6 +264,11 @@ impl NativeClient {
                 return Err(Error::config(
                     "Vault already exists; recover its status instead of redeploying",
                 ));
+            }
+            let source = associated_token_address(b.mint, owner, false)?;
+            let a = self.token(source)?;
+            if a.owner != owner || a.amount < amount.unwrap() {
+                return Err(Error::denied("Insufficient owner test-token balance"));
             }
         } else {
             let state = s
@@ -129,6 +295,9 @@ impl NativeClient {
                     if amount.unwrap() > number(&state.daily_limit)?.saturating_sub(spent) {
                         return Err(Error::denied("Daily limit exceeded"));
                     }
+                    if amount.unwrap() > number(&state.action_limit)? {
+                        return Err(Error::denied("Per-action limit exceeded"));
+                    }
                     if amount.unwrap() > number(&state.balance)? {
                         return Err(Error::denied("Insufficient vault balance"));
                     }
@@ -140,11 +309,31 @@ impl NativeClient {
                     if a.mint != b.mint || a.owner == b.vault {
                         return Err(Error::config("Invalid destination token account"));
                     }
+                    let now = self.chain_time()?;
+                    let expires_at = options
+                        .expires_at
+                        .ok_or_else(|| Error::config("Specify the approval expiry"))?;
+                    if expires_at < now || expires_at > now.saturating_add(MAX_APPROVAL_SECONDS) {
+                        return Err(Error::denied("Execution approval has invalid expiry"));
+                    }
+                    let commitment = options
+                        .commitment
+                        .as_deref()
+                        .ok_or_else(|| Error::config("Specify the approval commitment"))?;
+                    if hex32(commitment)? == [0; 32] {
+                        return Err(Error::config("Approval commitment must be nonzero"));
+                    }
+                    if options.instance_slot != Some(number(&state.instance_slot)?) {
+                        return Err(Error::config("Vault instance identity changed"));
+                    }
                 }
-                "tune" if amount.unwrap() > MAX_DAILY_UNITS => {
+                "tune" | "tune_action" if amount.unwrap() > MAX_DAILY_UNITS => {
                     return Err(Error::denied("Daily limit exceeds compiled ceiling"));
                 }
-                "tune" | "revoke" | "withdraw" => (),
+                "close" if options.instance_slot != Some(number(&state.instance_slot)?) => {
+                    return Err(Error::config("Vault instance identity changed"));
+                }
+                "tune" | "tune_action" | "revoke" | "withdraw" | "close" => (),
                 _ => return Err(Error::config("Unsupported policy command")),
             }
         }
@@ -216,12 +405,15 @@ impl NativeClient {
         let w = |key| meta(key, true, false);
         let s = |key| meta(key, false, true);
         let owner_ata = || associated_token_address(b.mint, b.owner, false);
-        Ok(match method {
+        let mut operation = match method {
             "deploy" => {
                 let mut fields = hex32(&policy.id)?.to_vec();
                 fields.extend(hex32(&release().source_bundle)?);
                 fields.extend(hex32(&release().artifacts[0].sha256)?);
                 fields.extend(units(&policy.daily_limit)?.to_le_bytes());
+                fields.extend(units(&policy.action_limit)?.to_le_bytes());
+                let funding = required()?;
+                let source = owner_ata()?;
                 let approve = {
                     let mut data = vec![1];
                     data.extend(0u64.to_le_bytes());
@@ -241,6 +433,19 @@ impl NativeClient {
                             ro(b.executor),
                             ro(Key::parse(SYSTEM_PROGRAM)?),
                             ro(b.policy_data),
+                            ro(b.authority),
+                        ],
+                    ),
+                    instruction(
+                        1,
+                        funding.to_le_bytes().to_vec(),
+                        vec![
+                            w(b.vault),
+                            s(b.owner),
+                            w(source),
+                            w(b.token_account),
+                            ro(b.mint),
+                            ro(Key::parse(TOKEN_PROGRAM)?),
                         ],
                     ),
                     instruction(
@@ -271,6 +476,24 @@ impl NativeClient {
                         .to_le_bytes(),
                 );
                 data.extend(revision()?.to_le_bytes());
+                data.extend(
+                    options
+                        .expires_at
+                        .ok_or_else(|| Error::config("Specify the approval expiry"))?
+                        .to_le_bytes(),
+                );
+                data.extend(hex32(
+                    options
+                        .commitment
+                        .as_deref()
+                        .ok_or_else(|| Error::config("Specify the approval commitment"))?,
+                )?);
+                data.extend(
+                    options
+                        .instance_slot
+                        .ok_or_else(|| Error::config("Specify the vault instance slot"))?
+                        .to_le_bytes(),
+                );
                 vec![instruction(
                     4,
                     data,
@@ -285,6 +508,7 @@ impl NativeClient {
                         ro(Key::parse(TOKEN_PROGRAM)?),
                         ro(b.policy),
                         ro(b.policy_data),
+                        s(b.authority),
                     ],
                 )]
             }
@@ -306,6 +530,11 @@ impl NativeClient {
                     vec![w(b.vault), s(b.owner), ro(b.policy), ro(b.policy_data)],
                 )]
             }
+            "tune_action" => {
+                let mut data = required()?.to_le_bytes().to_vec();
+                data.extend(revision()?.to_le_bytes());
+                vec![instruction(8, data, vec![w(b.vault), s(b.owner)])]
+            }
             "withdraw" => {
                 let destination = owner_ata()?;
                 vec![
@@ -324,8 +553,36 @@ impl NativeClient {
                     ),
                 ]
             }
+            "close" => {
+                let destination = owner_ata()?;
+                let mut data = revision()?.to_le_bytes().to_vec();
+                data.extend(
+                    options
+                        .instance_slot
+                        .ok_or_else(|| Error::config("Specify the vault instance slot"))?
+                        .to_le_bytes(),
+                );
+                vec![
+                    ata(b.owner, destination, b.owner, b.mint)?,
+                    instruction(
+                        9,
+                        data,
+                        vec![
+                            w(b.vault),
+                            meta(b.owner, true, true),
+                            w(b.token_account),
+                            w(destination),
+                            ro(b.mint),
+                            ro(Key::parse(TOKEN_PROGRAM)?),
+                        ],
+                    ),
+                ]
+            }
             _ => return Err(Error::config("Unsupported persisted operation")),
-        })
+        };
+        let mut instructions = compute_budget(method)?;
+        instructions.append(&mut operation);
+        Ok(instructions)
     }
     pub fn chain_time(&self) -> Result<u64> {
         let slot = self
@@ -371,7 +628,7 @@ impl NativeClient {
         policy.validate()?;
         let b = self.public_binding(policy, owner)?;
         Ok(
-            json!({"version":1,"policy":policy,"context":{"policyId":policy.id,"owner":owner,"network":policy.network,"mint":b.mint,"executor":b.executor,"deployment":self.config.deployment}}),
+            json!({"version":2,"policy":policy,"context":{"policyId":policy.id,"owner":owner,"network":policy.network,"mint":b.mint,"executor":b.executor,"authority":b.authority,"deployment":self.config.deployment}}),
         )
     }
     pub fn skill(&self, policy: &Policy, state: &State) -> Result<String> {
@@ -385,17 +642,22 @@ impl NativeClient {
         }
         let b = &state.binding;
         let mut text = format!(
-            "---\nname: allowit-policy-{}\ndescription: Execute transfers governed by this AllowIt native Solana policy.\n---\n\nPolicy {}; {}; mint {}.\nOwner {}; executor {}; vault {}; custody {}.\nEnforced: standing approval and up to {} test tokens per UTC day.\nTask: {}. Purpose and recipient restrictions are not enforced by this native artifact.\n\nImport the issued executor.json with `allowit policy import executor.json` on the executor device. Configure only the designated ALLOWIT_EXECUTOR_KEYPAIR there; never provide the owner secret key. Run `allowit policy status` before acting. For each new operation, choose one ALLOWIT_REQUEST_ID and run `allowit policy execute RECIPIENT_TOKEN_ACCOUNT AMOUNT`. Keep that ID and exact intent for retries. Exit 6 means replay of the earlier receipt, not another payment. The configured executor signs; this skill contains no keys. After an uncertain result, recover the saved operation with `allowit policy status`; never submit a replacement. A settled transfer does not prove delivery of a purchased service.",
+            "---\nname: allowit-policy-{}\ndescription: Execute transfers governed by this AllowIt native Solana policy.\n---\n\nPolicy {}; {}; mint {}.\nOwner {}; executor {}; trusted authority {}; vault {}; custody {}.\nOn chain: standing approval, up to {} test tokens per action, and up to {} per UTC day.\nTask: {}. Server gate digest {}; requirements digest {}; semantic checks required: {}. The server must evaluate the bound policy before cosigning; the native artifact itself enforces only the stated numeric and signer rules.\n\nImport the issued executor.json with `allowit policy import executor.json` on the executor device. Configure only the designated ALLOWIT_EXECUTOR_KEYPAIR there; never provide the owner or authority secret key. Run `allowit policy status` before acting. For each new operation, choose one ALLOWIT_REQUEST_ID and run `allowit policy execute RECIPIENT_TOKEN_ACCOUNT AMOUNT`. Keep that ID and exact intent for retries. Exit 6 means replay of the earlier receipt, not another payment. The executor and trusted server authority sign the exact transaction; this skill contains no keys. After an uncertain result, recover the saved operation with `allowit policy status`; never submit a replacement. A settled transfer does not prove delivery of a purchased service.",
             &policy.id[..16],
             policy.id,
             policy.network,
             b.mint,
             b.owner,
             b.executor,
+            b.authority,
             b.vault,
             b.custody,
+            decimal(number(&state.action_limit)?),
             decimal(number(&state.daily_limit)?),
-            serde_json::to_string(&policy.prompt).unwrap()
+            serde_json::to_string(&policy.prompt).unwrap(),
+            policy.execution_policy_digest,
+            policy.execution_requirements_digest,
+            policy.semantic_required,
         );
         if policy.pay_discovery {
             text.push_str("\n\nFor paid APIs, discover providers through PaySH: https://pay.sh/docs/using-pay/skills. Payment execution through PaySH is unavailable in this profile. Do not pay using another wallet or Pay payment tools as a fallback. Report unsupported payment execution.");
@@ -403,6 +665,30 @@ impl NativeClient {
         text.push('\n');
         Ok(text)
     }
+}
+fn compute_budget(method: &str) -> Result<Vec<Instruction>> {
+    let program = Key::parse(COMPUTE_BUDGET_PROGRAM)?;
+    let limit = match method {
+        "deploy" => 400_000u32,
+        "execute" => 300_000u32,
+        _ => 200_000u32,
+    };
+    let mut units = vec![2];
+    units.extend(limit.to_le_bytes());
+    let mut price = vec![3];
+    price.extend(1u64.to_le_bytes());
+    Ok(vec![
+        Instruction {
+            program,
+            accounts: Vec::new(),
+            data: units,
+        },
+        Instruction {
+            program,
+            accounts: Vec::new(),
+            data: price,
+        },
+    ])
 }
 fn ata(payer: Key, address: Key, owner: Key, mint: Key) -> Result<Instruction> {
     let meta = |key, writable, signer| Meta {
@@ -441,7 +727,7 @@ pub fn safe_height(value: &Value) -> Result<u64> {
         .ok_or_else(|| Error::config("Invalid finalized height or slot"))
 }
 fn decode_state(d: &[u8], b: Binding) -> Result<State> {
-    if d.len() != 320 || d[0] != 1 || d[298] > 1 || d[299..].iter().any(|n| *n != 0) {
+    if d.len() != 352 || d[0] != 2 || d[298] > 1 || d[347..].iter().any(|n| *n != 0) {
         return Err(Error::config("Invalid native vault state"));
     }
     for (i, (name, k)) in [
@@ -461,6 +747,9 @@ fn decode_state(d: &[u8], b: Binding) -> Result<State> {
     if d[1] != b.bump {
         return Err(Error::config("Vault bump mismatch"));
     }
+    if d[299..331] != b.authority.0 {
+        return Err(Error::config("Vault authority mismatch"));
+    }
     let hex = |offset| {
         d[offset..offset + 32]
             .iter()
@@ -470,16 +759,206 @@ fn decode_state(d: &[u8], b: Binding) -> Result<State> {
     let u = |offset| u64::from_le_bytes(d[offset..offset + 8].try_into().unwrap()).to_string();
     Ok(State {
         binding: b,
-        abi: 1,
+        abi: 2,
         source_bundle: hex(162),
         policy_artifact: hex(194),
         vault_id: hex(226),
+        authority: Key(d[299..331].try_into().unwrap()),
         daily_limit: u(258),
+        action_limit: u(331),
         spent: u(266),
         spent_day: u(274),
         nonce: u(282),
         revision: u(290),
+        instance_slot: u(339),
         approved: d[298] == 1,
         balance: "0".into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        client::{Config, Deployment},
+        crypto::LocalSigner,
+        policy::ExecutionBinding,
+        rpc::Rpc,
+    };
+    use std::sync::Arc;
+
+    struct Offline;
+    impl Rpc for Offline {
+        fn call(&self, _: &str, _: Value) -> Result<Value> {
+            panic!("instruction composition is offline")
+        }
+    }
+    fn signer(n: u8) -> LocalSigner {
+        LocalSigner::from_secret(
+            &ed25519_dalek::SigningKey::from_bytes(&[n; 32]).to_keypair_bytes(),
+        )
+        .unwrap()
+    }
+    fn fixture() -> (NativeClient, Policy, State) {
+        let owner = signer(1).public_key();
+        let executor = signer(2).public_key();
+        let authority = signer(3).public_key();
+        let policy =
+            Policy::generate("solana:testnet", "Spend up to 5 test tokens per day").unwrap();
+        let binding = Binding {
+            owner,
+            executor,
+            authority,
+            mint: Key([4; 32]),
+            vault: Key([5; 32]),
+            token_account: Key([6; 32]),
+            policy: Key([7; 32]),
+            policy_data: Key([8; 32]),
+            custody: Key([9; 32]),
+            bump: 254,
+        };
+        let client = NativeClient::new(
+            Config {
+                network: policy.network.clone(),
+                mint: Some(binding.mint),
+                executor: Some(executor),
+                authority: Some(authority),
+                deployment: Some(Deployment {
+                    network: policy.network.clone(),
+                    source_bundle: policy.source_bundle.clone(),
+                    policy: binding.policy,
+                    policy_data: binding.policy_data,
+                    custody: binding.custody,
+                }),
+            },
+            Arc::new(Offline),
+        )
+        .unwrap();
+        let state = State {
+            binding,
+            abi: 2,
+            source_bundle: policy.source_bundle.clone(),
+            policy_artifact: policy.policy_artifact.clone(),
+            vault_id: policy.id.clone(),
+            authority,
+            daily_limit: "5000000".into(),
+            action_limit: "1000000".into(),
+            spent: "0".into(),
+            spent_day: "0".into(),
+            nonce: "4".into(),
+            revision: "7".into(),
+            instance_slot: "19".into(),
+            approved: true,
+            balance: "5000000".into(),
+        };
+        (client, policy, state)
+    }
+
+    #[test]
+    fn atomic_setup_and_cosigned_execution_are_packet_sized() {
+        let (client, policy, state) = fixture();
+        let setup = client
+            .expected_instructions(
+                &policy,
+                &state.binding,
+                "deploy",
+                &Options {
+                    amount: Some("0.1".into()),
+                    ..Options::default()
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(setup.len(), 6);
+        assert_eq!(setup[3].data[0], 0);
+        assert_eq!(setup[4].data[0], 1);
+        assert_eq!(setup[5].data[0], 2);
+        let setup_tx = Transaction::new(state.binding.owner, Key([10; 32]), setup).unwrap();
+        assert_eq!(setup_tx.signers, vec![state.binding.owner]);
+        assert!(setup_tx.message.len() + 65 <= 1232);
+
+        let commitment = ApprovalCommitment::new(
+            &policy,
+            &state,
+            "payment-0001",
+            Key([11; 32]),
+            "0.5",
+            100,
+            &"12".repeat(32),
+            None,
+        )
+        .unwrap();
+        let execute = client
+            .expected_instructions(
+                &policy,
+                &state.binding,
+                "execute",
+                &commitment.options().unwrap(),
+                Some(&state.nonce),
+                Some(&state.revision),
+            )
+            .unwrap();
+        let tx = Transaction::new(state.binding.executor, Key([10; 32]), execute).unwrap();
+        assert_eq!(
+            tx.signers,
+            vec![state.binding.executor, state.binding.authority]
+        );
+        assert!(tx.message.len() + 129 <= 1232);
+    }
+
+    #[test]
+    fn commitment_binds_semantic_assessment_and_exact_payment() {
+        let (_, policy, state) = fixture();
+        let numeric = ApprovalCommitment::new(
+            &policy,
+            &state,
+            "payment-0001",
+            Key([11; 32]),
+            "0.5",
+            100,
+            &"12".repeat(32),
+            None,
+        )
+        .unwrap();
+        let mut altered = numeric.clone();
+        altered.amount_units = "500001".into();
+        assert_ne!(numeric.digest().unwrap(), altered.digest().unwrap());
+        let semantic = policy
+            .clone()
+            .with_execution_binding(ExecutionBinding {
+                policy_digest: "21".repeat(32),
+                requirements_digest: "22".repeat(32),
+                semantic_required: true,
+            })
+            .unwrap();
+        let mut semantic_state = state.clone();
+        semantic_state.vault_id = semantic.id.clone();
+        assert!(
+            ApprovalCommitment::new(
+                &semantic,
+                &semantic_state,
+                "payment-0002",
+                Key([11; 32]),
+                "0.5",
+                100,
+                &"12".repeat(32),
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            ApprovalCommitment::new(
+                &semantic,
+                &semantic_state,
+                "payment-0002",
+                Key([11; 32]),
+                "0.5",
+                100,
+                &"12".repeat(32),
+                Some(&"23".repeat(32)),
+            )
+            .is_ok()
+        );
+    }
 }

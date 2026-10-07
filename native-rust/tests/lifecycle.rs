@@ -76,6 +76,7 @@ struct Fixture {
     rpc: Arc<FakeRpc>,
     owner: LocalSigner,
     executor: LocalSigner,
+    authority: LocalSigner,
     policy: Policy,
     journal: FileJournal,
     directory: std::path::PathBuf,
@@ -95,6 +96,7 @@ impl Fixture {
         };
         let owner = signer(7);
         let executor = signer(8);
+        let authority = signer(9);
         let directory =
             std::env::temp_dir().join(format!("allowit-native-life-{}", uuid::Uuid::new_v4()));
         let journal = FileJournal::new(&directory);
@@ -124,6 +126,7 @@ impl Fixture {
                 network: policy.network.clone(),
                 mint: Some(Key([3; 32])),
                 executor: Some(executor.public_key()),
+                authority: Some(authority.public_key()),
                 deployment: Some(Deployment {
                     network: policy.network.clone(),
                     source_bundle: release().source_bundle.clone(),
@@ -140,6 +143,7 @@ impl Fixture {
             rpc,
             owner,
             executor,
+            authority,
             policy,
             journal,
             directory,
@@ -149,6 +153,9 @@ impl Fixture {
         Options {
             amount: Some(amount.into()),
             recipient: Some(self.owner.public_key()),
+            expires_at: Some(200),
+            commitment: Some("11".repeat(32)),
+            instance_slot: Some(77),
             ..Options::default()
         }
     }
@@ -170,10 +177,10 @@ impl Fixture {
             Some(id),
             |tx, role| {
                 count.fetch_add(1, Ordering::Relaxed);
-                Ok(if role == "executor" {
-                    self.executor.sign(&tx.message)
-                } else {
-                    self.owner.sign(&tx.message)
+                Ok(match role {
+                    "executor" => self.executor.sign(&tx.message),
+                    "authority" => self.authority.sign(&tx.message),
+                    _ => self.owner.sign(&tx.message),
                 })
             },
         )
@@ -207,15 +214,18 @@ impl NativeOperations for Fixture {
         let d = self.rpc.data.lock().unwrap();
         Ok(Some(State {
             binding: self.sdk.public_binding(policy, owner)?,
-            abi: 1,
+            abi: 2,
             source_bundle: policy.source_bundle.clone(),
             policy_artifact: policy.policy_artifact.clone(),
             vault_id: policy.id.clone(),
+            authority: self.authority.public_key(),
             daily_limit: "5000000".into(),
+            action_limit: "5000000".into(),
             spent: "0".into(),
             spent_day: "0".into(),
             nonce: d.nonce.clone(),
             revision: d.revision.clone(),
+            instance_slot: "77".into(),
             approved: true,
             balance: "10000000".into(),
         }))
@@ -292,7 +302,7 @@ fn lost_response_keeps_exact_proof_blocks_new_spend_and_never_resigns() {
         .submit("execute", &f.options("1.0"), "same-request-001", &count)
         .unwrap();
     assert_eq!(retry.extra["replayed"], true);
-    assert_eq!(count.load(Ordering::Relaxed), 1);
+    assert_eq!(count.load(Ordering::Relaxed), 2);
     {
         let d = f.rpc.data.lock().unwrap();
         assert_eq!(d.sends.len(), 2);
@@ -527,10 +537,20 @@ fn saved_proof_cannot_change_amount_signature_or_context() {
     )
     .unwrap();
     let sig = f.executor.sign(&tx.message);
+    let authority_sig = f.authority.sign(&tx.message);
     let mut changed = record.clone();
-    changed.signed_bytes =
-        base64::engine::general_purpose::STANDARD.encode(tx.signed(sig).unwrap());
+    changed.signed_bytes = base64::engine::general_purpose::STANDARD.encode(
+        tx.signed_by(&[
+            (f.executor.public_key(), sig),
+            (f.authority.public_key(), authority_sig),
+        ])
+        .unwrap(),
+    );
     changed.signature = bs58::encode(sig).into_string();
+    changed.signatures = vec![
+        changed.signature.clone(),
+        bs58::encode(authority_sig).into_string(),
+    ];
     changed.transaction_url = f.sdk.transaction_url(&changed.signature).unwrap();
     assert!(validate_record(&f.sdk, &f.policy, f.owner.public_key(), &changed).is_err());
     let mut config = f.sdk.config.clone();
@@ -635,19 +655,35 @@ fn server_reconciliation_requires_no_file_journal_or_signing() {
     let owner = f.owner.public_key();
     let prepared = f.prepare(&f.policy, owner, "execute", &options).unwrap();
     let signature = f.executor.sign(&prepared.transaction.message);
+    let authority_signature = f.authority.sign(&prepared.transaction.message);
     let signature_text = bs58::encode(signature).into_string();
+    let signatures = vec![
+        signature_text.clone(),
+        bs58::encode(authority_signature).into_string(),
+    ];
     let record = Record {
         id: "server-proof-0001".into(),
         intent: intent_for(&f.sdk, &f.policy, owner, "execute", &options).unwrap(),
         method: "execute".into(),
         status: "uncertain".into(),
         signature: signature_text.clone(),
-        signed_bytes: base64::engine::general_purpose::STANDARD
-            .encode(prepared.transaction.signed(signature).unwrap()),
+        signatures,
+        signed_bytes: base64::engine::general_purpose::STANDARD.encode(
+            prepared
+                .transaction
+                .signed_by(&[
+                    (f.executor.public_key(), signature),
+                    (f.authority.public_key(), authority_signature),
+                ])
+                .unwrap(),
+        ),
         blockhash: prepared.blockhash,
         last_valid_block_height: prepared.last_valid_block_height,
         nonce: prepared.nonce,
         revision: prepared.revision,
+        expires_at: options.expires_at,
+        commitment: options.commitment.clone(),
+        instance_slot: options.instance_slot.map(|slot| slot.to_string()),
         transaction_url: f.sdk.transaction_url(&signature_text).unwrap(),
         extra: Default::default(),
     };

@@ -25,6 +25,7 @@ pub struct Config {
     pub network: String,
     pub mint: Option<Key>,
     pub executor: Option<Key>,
+    pub authority: Option<Key>,
     pub deployment: Option<Deployment>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub struct Config {
 pub struct Binding {
     pub owner: Key,
     pub executor: Key,
+    pub authority: Key,
     pub mint: Key,
     pub vault: Key,
     pub token_account: Key,
@@ -81,7 +83,7 @@ impl NativeClient {
         }
         let id = hex32(&policy.id)?;
         let (vault, bump) =
-            Key::find_program_address(&[b"allowit-vault-v1", &owner.0, &id], d.custody)?;
+            Key::find_program_address(&[b"allowit-vault-v2", &owner.0, &id], d.custody)?;
         let mint = self
             .config
             .mint
@@ -90,10 +92,26 @@ impl NativeClient {
             .config
             .executor
             .ok_or_else(|| Error::config("Invalid native executor"))?;
+        let authority = self
+            .config
+            .authority
+            .ok_or_else(|| Error::config("Invalid native authority"))?;
+        if authority == executor
+            || authority == owner
+            || executor == owner
+            || !owner.on_curve()
+            || !executor.on_curve()
+            || !authority.on_curve()
+        {
+            return Err(Error::config(
+                "Native authority, executor, and owner must be distinct",
+            ));
+        }
         let token_account = associated_token_address(mint, vault, true)?;
         Ok(Binding {
             owner,
             executor,
+            authority,
             mint,
             vault,
             token_account,
@@ -279,6 +297,7 @@ mod tests {
                 network: "solana:testnet".into(),
                 mint: None,
                 executor: None,
+                authority: None,
                 deployment: None,
             },
             Arc::new(FakeRpc(response)),
@@ -301,6 +320,7 @@ mod tests {
                     network: "solana:mainnet".into(),
                     mint: None,
                     executor: None,
+                    authority: None,
                     deployment: None
                 },
                 Arc::new(FakeRpc(json!(null)))
@@ -356,6 +376,7 @@ mod tests {
         let mut c = client(json!(null));
         c.config.mint = Some(Key([3; 32]));
         c.config.executor = Some(Key([4; 32]));
+        c.config.authority = Some(Key([7; 32]));
         c.config.deployment = Some(Deployment {
             network: p.network.clone(),
             source_bundle: release().source_bundle.clone(),
@@ -377,6 +398,7 @@ mod tests {
             .0;
         c.config.mint = Some(Key([3; 32]));
         c.config.executor = Some(Key([4; 32]));
+        c.config.authority = Some(Key([7; 32]));
         c.config.deployment = Some(Deployment {
             network: c.config.network.clone(),
             source_bundle: release().source_bundle.clone(),
