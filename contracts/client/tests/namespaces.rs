@@ -71,3 +71,30 @@ fn paysh_inspection_rejects_invalid_action_and_expiry() {
     request.action = Action::PayUsdc { amount: 0 };
     assert!(dispatch(&json!({"operation":"paysh::inspect_request", "requestBase64":STANDARD.encode(borsh::to_vec(&request).unwrap())})).is_err());
 }
+
+#[test]
+fn concrete_swap_inspection_preserves_integer_width_and_signing_message() {
+    let mut request = request();
+    request.action = Action::SwapSolToUsdc {
+        amount_in_lamports: 9_007_199_254_740_993,
+        min_out_usdc: u64::MAX,
+        sqrt_price_limit: u128::MAX,
+        tick_arrays: [[10; 32], [11; 32], [12; 32]],
+    };
+    let input = json!({"operation":"paysh::inspect_request", "requestBase64":STANDARD.encode(borsh::to_vec(&request).unwrap())});
+    let result = dispatch(&input).unwrap();
+    assert_eq!(result["action"]["operation"], "paysh::swap_sol_to_usdc");
+    assert_eq!(result["action"]["amountInLamports"], "9007199254740993");
+    assert_eq!(result["action"]["minOutUsdc"], u64::MAX.to_string());
+    assert_eq!(result["action"]["sqrtPriceLimit"], u128::MAX.to_string());
+    assert_eq!(
+        result["signedMessageBase64"],
+        STANDARD.encode(request.signed_message())
+    );
+    assert!(
+        dispatch(
+            &json!({"operation":"stripe::inspect_request", "requestBase64":input["requestBase64"]})
+        )
+        .is_err()
+    );
+}

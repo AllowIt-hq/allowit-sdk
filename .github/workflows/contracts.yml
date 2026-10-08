@@ -39,9 +39,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p contracts/dist
-          for rail in common solana stellar sbf-tests; do
+          for rail in common solana stellar sbf-tests client; do
             cargo fmt --manifest-path "contracts/$rail/Cargo.toml" --check
           done
+          cargo test --locked --manifest-path contracts/client/Cargo.toml 2>&1 | tee contracts/dist/client-tests.log
           cargo test --locked --manifest-path contracts/common/Cargo.toml 2>&1 | tee contracts/dist/common-tests.log
           cargo test --locked --manifest-path contracts/common/Cargo.toml --features stellar 2>&1 | tee contracts/dist/stellar-codec-tests.log
           cargo test --locked --manifest-path contracts/solana/Cargo.toml 2>&1 | tee contracts/dist/solana-native-tests.log

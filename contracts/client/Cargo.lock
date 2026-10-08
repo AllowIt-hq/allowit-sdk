@@ -19,6 +19,7 @@ name = "allowit-contract-client"
 version = "0.1.0"
 dependencies = [
  "allowit-contract-core",
+ "allowit-paysh-interface",
  "allowit-sdk",
  "allowit-solana",
  "base64 0.22.1",
@@ -36,6 +37,14 @@ dependencies = [
  "borsh 1.6.0",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "allowit-paysh-interface"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.6.0",
+ "sha2 0.10.9",
 ]
 
 [[package]]
