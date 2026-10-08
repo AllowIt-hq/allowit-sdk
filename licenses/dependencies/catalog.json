@@ -6865,6 +6865,46 @@
       ]
     },
     {
+      "name": "orca_whirlpools_core",
+      "version": "2.1.1",
+      "crateSha256": "7fa5a2318d63ef4c7241234b3aa53690bf76b7bd797c90b90ec38f494d847cc6",
+      "crateUrl": "https://static.crates.io/crates/orca_whirlpools_core/orca_whirlpools_core-2.1.1.crate",
+      "declaredLicense": null,
+      "declaredLicenseFile": "LICENSE",
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/8f54a2e7a06244dfb6a780885ef12ab6c96bb66c3482b35137143c4f0eadc489.txt",
+          "sha256": "8f54a2e7a06244dfb6a780885ef12ab6c96bb66c3482b35137143c4f0eadc489",
+          "source": "https://static.crates.io/crates/orca_whirlpools_core/orca_whirlpools_core-2.1.1.crate",
+          "originalPath": "LICENSE"
+        }
+      ]
+    },
+    {
+      "name": "orca_whirlpools_macros",
+      "version": "1.0.5",
+      "crateSha256": "b093a9e60ca608c1dff40fcd841a2d5680b96f877080b6279044c159ebd50b78",
+      "crateUrl": "https://static.crates.io/crates/orca_whirlpools_macros/orca_whirlpools_macros-1.0.5.crate",
+      "declaredLicense": null,
+      "declaredLicenseFile": "LICENSE",
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/ab5facc90fe4f35f0dd07e2ed2ccce9c84b0d5019b782f74c6ce6356624fcffc.txt",
+          "sha256": "ab5facc90fe4f35f0dd07e2ed2ccce9c84b0d5019b782f74c6ce6356624fcffc",
+          "source": "https://static.crates.io/crates/orca_whirlpools_macros/orca_whirlpools_macros-1.0.5.crate",
+          "originalPath": "LICENSE"
+        }
+      ]
+    },
+    {
       "name": "p256",
       "version": "0.13.2",
       "crateSha256": "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b",
