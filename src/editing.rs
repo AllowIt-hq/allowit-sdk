@@ -8,7 +8,7 @@ fn bad(message: &str) -> CompileError {
     CompileError::new("INVALID_EDIT", message)
 }
 fn path(expr: &Expr, name: &str) -> bool {
-    matches!(unparen(expr), Expr::Path(p) if p.path.is_ident(name))
+    matches!(unparen(expr), Expr::Path(p) if p.qself.is_none() && (p.path.is_ident(name) || crate::compiler::registered_path(&p.path).as_deref() == Some(name)))
 }
 fn unparen(expr: &Expr) -> &Expr {
     match expr {

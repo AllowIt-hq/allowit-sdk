@@ -561,3 +561,16 @@ fn unsupported_reads_of_another_assessment_do_not_disable_the_selected_one() {
         original.replace("selected.lower_bps < 9000", "selected.lower_bps < 9500")
     );
 }
+
+#[test]
+fn qualified_preference_edits_preserve_namespaces_and_comments() {
+    let original = source(
+        "jev::check_preference(ctx, \"Research?\", /* deny */ 0.40, /* approve */ 0.85).await?; Ok(())",
+    );
+    let id = step_id(&original, "check_preference", 0);
+    let response = preference(&original, settings(&id));
+    let next = edited(&response);
+    assert!(next.contains("jev::check_preference"));
+    assert!(next.contains("/* deny */ 0.3000"));
+    assert!(next.contains("/* approve */ 0.9000"));
+}
