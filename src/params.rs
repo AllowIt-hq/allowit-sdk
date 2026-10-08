@@ -49,6 +49,9 @@ fn fields(tokens: TokenStream) -> Result<Vec<(String, Vec<TokenTree>)>, CompileE
             return Err(invalid());
         }
         syn::parse_str::<syn::Ident>(&name.to_string()).map_err(|_| invalid())?;
+        if name.to_string().starts_with("r#") {
+            return Err(invalid());
+        }
         result.push((name.to_string(), rest.to_vec()));
     }
     if result.len() > 32 {
@@ -87,7 +90,8 @@ fn literal(tokens: &[TokenTree], kind: Kind) -> Result<Expr, CompileError> {
             if exact(
                 &[a.clone(), c1.clone(), c2.clone(), f.clone()],
                 &["allowit", ":", ":", "owner_limit"],
-            ) && args.delimiter() == Delimiter::Parenthesis =>
+            ) && matches!(c1,TokenTree::Punct(p) if p.spacing()==proc_macro2::Spacing::Joint)
+                && args.delimiter() == Delimiter::Parenthesis =>
         {
             let args: Vec<_> = args.stream().into_iter().collect();
             let [key, comma, amount] = args.as_slice() else {

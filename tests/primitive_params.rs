@@ -379,3 +379,42 @@ mod native_storage_rust_build {
         let _future = _execute(&ctx, &config);
     }
 }
+
+#[test]
+fn optional_storage_preserves_legacy_context_serialization() {
+    let ctx = context();
+    let wire = serde_json::to_value(&ctx).unwrap();
+    assert!(wire.get("native_policy_storage").is_none());
+    let decoded: Context = serde_json::from_value(wire).unwrap();
+    assert!(decoded.native_policy_storage.is_none());
+}
+#[test]
+fn storage_declarations_preserve_rust_token_validity() {
+    let source = include_str!("fixtures/native-storage-policy.rs");
+    assert!(compile(&source.replace("allowit::owner_limit", "allowit : : owner_limit")).is_err());
+    let source = include_str!("fixtures/constructor-policy.rs");
+    assert!(
+        compile(
+            &source
+                .replace("enabled: bool,", "r#enabled: bool, enabled: bool,")
+                .replace("enabled: true,", "r#enabled: true, enabled: true,")
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn new_source_requires_namespaces_and_borrowed_string_reads() {
+    for body in [
+        "if !is_one_of(\"a\", &[\"a\"])? {return allowit::fail(\"no\");} Ok(())",
+        "if !allowit::is_one_of((ctx.recipient), &[\"a\"])? {return allowit::fail(\"no\");} Ok(())",
+        "if !allowit::is_one_of((ctx).recipient, &[\"a\"])? {return allowit::fail(\"no\");} Ok(())",
+        "let recipient=ctx.recipient; if !allowit::is_one_of(recipient, &[\"a\"])? {return allowit::fail(\"no\");} Ok(())",
+        "let alias=(ctx); let recipient=alias.recipient; Ok(())",
+        "return fail(\"no\");",
+        "let limit=usdc(\"2\")?; Ok(())",
+    ] {
+        assert!(compile(&source(body)).is_err(), "accepted {body}");
+    }
+    assert!(compile(&source("let recipient=&ctx.recipient; if !allowit::is_one_of(recipient, &[\"a\"])? {return allowit::fail(\"no\");} Ok(())")).is_ok());
+}

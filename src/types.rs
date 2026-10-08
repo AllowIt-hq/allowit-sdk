@@ -271,7 +271,7 @@ pub struct NativePolicyStorage {
 #[serde(deny_unknown_fields)]
 pub struct Context {
     /// Trusted current native account state. Adapters must overwrite caller-supplied values.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_policy_storage: Option<NativePolicyStorage>,
     pub amount_units: u64,
     pub allocation_units: u64,

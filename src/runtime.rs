@@ -137,6 +137,7 @@ impl Evaluator<'_> {
             Expr::Variable { name } => env.get(name).cloned().ok_or_else(invalid)?,
             Expr::Field { object, name } => match self.expr(object, env)? {
                 Value::Context => match name.as_str() {
+                    #[cfg(feature = "std")]
                     "native_daily_limit" | "native_action_limit" => {
                         let storage =
                             self.context.native_policy_storage.as_ref().ok_or_else(|| {
@@ -591,6 +592,7 @@ fn run_inner(
     if let Err(error) = validate_program(ir) {
         return Decision::fail("INVALID_POLICY", error.message);
     }
+    #[cfg(feature = "std")]
     if crate::validation::native_storage_required(ir) {
         if profile == Profile::Contract {
             return Decision::fail(

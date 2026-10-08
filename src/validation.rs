@@ -109,7 +109,12 @@ impl Validator {
                     let ty = self.expr(value, env, depth + 1, false)?;
                     if !matches!(
                         ty,
-                        Type::String | Type::Integer | Type::Boolean | Type::Interval
+                        Type::String
+                            | Type::ContextString
+                            | Type::Strings
+                            | Type::Integer
+                            | Type::Boolean
+                            | Type::Interval
                     ) {
                         return Err(bad(
                             "A variable must contain an immutable string, integer, boolean or confidence interval.",
@@ -199,12 +204,9 @@ impl Validator {
                 .ok_or_else(|| bad(format!("Unknown variable: {name}")))?,
             Expr::Field { object, name } => match self.expr(object, env, depth + 1, false)? {
                 Type::Context => match name.as_str() {
-                    "amount_units"
-                    | "allocation_units"
-                    | "spent_units"
-                    | "now"
-                    | "native_daily_limit"
-                    | "native_action_limit" => Type::Integer,
+                    "amount_units" | "allocation_units" | "spent_units" | "now" => Type::Integer,
+                    #[cfg(feature = "std")]
+                    "native_daily_limit" | "native_action_limit" => Type::Integer,
                     "action" | "merchant" | "recipient" | "token" | "network" => {
                         Type::ContextString
                     }
@@ -416,6 +418,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
 }
 
 /// Detect native storage reads in every branch, including unreachable statements.
+#[cfg(feature = "std")]
 pub(crate) fn native_storage_required(program: &Program) -> bool {
     let mut statements: Vec<&Statement> = program.statements.iter().collect();
     let mut expressions = Vec::new();

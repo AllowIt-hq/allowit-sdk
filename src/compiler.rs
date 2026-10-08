@@ -43,6 +43,16 @@ pub(crate) fn registered_path(path: &syn::Path) -> Option<String> {
     crate::registry::canonical_function(&name)
 }
 
+fn unparen(expr: &SynExpr) -> &SynExpr {
+    match expr {
+        SynExpr::Paren(p) => unparen(&p.expr),
+        _ => expr,
+    }
+}
+fn bare_context_string(expr: &SynExpr) -> bool {
+    matches!(unparen(expr),SynExpr::Field(f) if matches!(unparen(&f.base),SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx")) && matches!(&f.member,syn::Member::Named(n) if ["action","merchant","recipient","token","network"].contains(&n.to_string().as_str())))
+}
+
 fn simple_path(path: &syn::Path, name: &str) -> bool {
     path.leading_colon.is_none()
         && path.segments.len() == 1
@@ -449,6 +459,12 @@ impl Parser {
         let SynExpr::Path(path) = &*call.func else {
             return Ok(None);
         };
+        if self.params.is_some() && path.path.segments.len() != 2 {
+            return Err(error(
+                path.span(),
+                "Use the exact namespaced system function.",
+            ));
+        }
         if path.qself.is_none() && registered_path(&path.path).as_deref() == Some("stored_limit") {
             if self.params.is_none()
                 || path.path.segments.len() != 2
@@ -488,8 +504,7 @@ impl Parser {
             if call.args.len() != 2 || !call.attrs.is_empty() || !path.attrs.is_empty() {
                 return Err(error(call.span(), "Use is_one_of(value, &[\"allowed\"])?."));
             }
-            if matches!(&call.args[0],SynExpr::Field(f) if matches!(&*f.base,SynExpr::Path(p) if simple_path(&p.path,"ctx")))
-            {
+            if bare_context_string(&call.args[0]) {
                 return Err(error(
                     call.args[0].span(),
                     "Borrow the authenticated string field.",
@@ -703,6 +718,15 @@ impl Parser {
                     .ok_or_else(|| error(local.span(), "Variables require an initial value."))?;
                 if init.diverge.is_some() {
                     return Err(error(local.span(), "let-else is not supported."));
+                }
+                if self.params.is_some()
+                    && (bare_context_string(&init.expr)
+                        || matches!(unparen(&init.expr),SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx")))
+                {
+                    return Err(error(
+                        init.expr.span(),
+                        "Borrow a string field instead of moving it or copying the context.",
+                    ));
                 }
                 Statement::Let {
                     name: ident.ident.to_string(),
@@ -930,6 +954,9 @@ impl Parser {
                 } else {
                     return Err(error(p.span(), "Qualified type calls are not supported."));
                 };
+                if self.params.is_some() && name != "Ok" && p.path.segments.len() != 2 {
+                    return Err(error(p.span(), "Use the exact namespaced system function."));
+                }
                 Expr::Call {
                     name,
                     args: c
