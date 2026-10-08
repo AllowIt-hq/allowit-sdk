@@ -6,10 +6,10 @@ AllowIt policies are a restricted, validated subset of Rust. This repository con
 use allowit::prelude::*;
 
 pub async fn execute(ctx: &Context) -> PolicyResult {
-    set_cap(ctx, "100", "USDC")?;
-    cap_per_transaction(ctx, "10", "USDC")?;
-    require_merchant(ctx, "research.example")?;
-    check_preference(ctx, "Does this purchase count as research under the user's stated purpose and definitions?", true, "85", true, "40").await?;
+    allowit::set_cap(ctx, "100", "USDC")?;
+    allowit::cap_per_transaction(ctx, "10", "USDC")?;
+    allowit::require_merchant(ctx, "research.example")?;
+    jev::check_preference(ctx, "Does this purchase count as research under the user's stated purpose and definitions?", true, "85", true, "40").await?;
     Ok(())
 }
 ```
@@ -46,6 +46,14 @@ allowit = { package = "allowit-sdk", path = "../AllowIt-sdk" }
 The prelude is a type-checking facade, not a replacement for the compiler/interpreter. In particular, the restricted runtime uses checked arithmetic, enforces the allocation outside user code, and identifies input calls by their source location. Executing policy source directly with Rust's default arithmetic settings would not enforce this contract. The facade's user-input function fails closed. Tests compile all three example policies against the facade.
 
 ## Supported source and execution
+
+Each registered policy function accepts an explicit `allowit::` prefix. `jev::semantic` and `jev::check_preference` select the existing preference checks. Unqualified calls remain supported. The compiler resolves exact registered names and lowers them to the same bounded operations. The registry exposes each accepted spelling with its signature and effect. Wrong prefixes, unknown operations, deeper paths and generic calls fail compilation.
+
+Source registry `1.1.0` advertises these aliases. Canonical IR remains version `1.0.0`. The evaluator accepts artifacts from both registries and rejects unknown registry versions.
+
+Namespaces identify policy checks. A core check such as `allowit::allow_actions` compares exact labels. It does not execute or classify a vendor operation. PaySH and other vendor prefixes require concrete operations with their own bounded implementation and execution bindings. The restricted compiler rejects `paysh::pay`, `paysh::swap` and other unregistered vendor calls. The native PaySH `Pay` and `Swap` transport remains a separate execution interface.
+
+Qualified calls preserve the current interpreter, contract opcodes and execution requirements. Source spans and source hashes still bind the exact policy text. Changing the spelling therefore requires a new compiled artifact and the corresponding mandate binding. Solana and Stellar adapters consume that artifact through the shared contract core. A Near adapter requires its own host, asset, authorization and settlement integration.
 
 Each file contains an optional `use allowit::prelude::*;` and one `pub async fn execute(ctx: &Context) -> PolicyResult`. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
 
@@ -206,3 +214,7 @@ Builds without `oracle-ledger` reject purchase-tier IR during validation with `L
 ## License
 
 AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.
+
+## Native Devnet demo
+
+The [native Rust demo codec](contracts/client/README.md) compiles namespaced policies and prepares bounded rail requests. Concrete PaySH request inspection uses the current signed Borsh interface. Live submission and recovery use the native lifecycle through the engine and action CLI.

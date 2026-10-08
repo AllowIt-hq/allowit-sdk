@@ -1,5 +1,5 @@
 use crate::{
-    CallSite, CompileError, CompiledPolicy, Expr, LANGUAGE, MAX_SOURCE_BYTES, Program,
+    CallSite, CompileError, CompiledPolicy, Expr, IR_VERSION, LANGUAGE, MAX_SOURCE_BYTES, Program,
     REGISTRY_VERSION, SourceSpan, Statement, WorkflowBlock, canonical_ir_hash, digest,
     registry::function, validate_program,
 };
@@ -23,6 +23,26 @@ fn range(span: Span) -> SourceSpan {
         end: r.end,
     }
 }
+// Namespace paths are bounded and resolved against the exact registry spelling.
+pub(crate) fn registered_path(path: &syn::Path) -> Option<String> {
+    if path.leading_colon.is_some()
+        || path.segments.len() > 2
+        || path
+            .segments
+            .iter()
+            .any(|segment| !segment.arguments.is_empty())
+    {
+        return None;
+    }
+    let name = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::");
+    crate::registry::canonical_function(&name)
+}
+
 fn simple_path(path: &syn::Path, name: &str) -> bool {
     path.leading_colon.is_none()
         && path.segments.len() == 1
@@ -108,7 +128,7 @@ impl Parser {
         let SynExpr::Path(p) = &*c.func else {
             return Ok(None);
         };
-        if p.qself.is_some() || !simple_path(&p.path, "check_preference") {
+        if p.qself.is_some() || registered_path(&p.path).as_deref() != Some("check_preference") {
             return Ok(None);
         }
         self.tick(stmt.span(), depth)?;
@@ -263,7 +283,7 @@ impl Parser {
             "within_percentage_points",
         ]
         .into_iter()
-        .find(|name| path.qself.is_none() && simple_path(&path.path, name)) else {
+        .find(|name| path.qself.is_none() && registered_path(&path.path).as_deref() == Some(*name)) else {
             return Ok(None);
         };
         self.tick(call.span(), depth)?;
@@ -594,18 +614,17 @@ impl Parser {
                         "Only direct predefined function calls are supported.",
                     ));
                 };
-                if p.qself.is_some()
-                    || p.path.leading_colon.is_some()
-                    || p.path.segments.len() != 1
-                    || !p.path.segments[0].arguments.is_empty()
-                {
-                    return Err(error(
-                        p.span(),
-                        "Only direct predefined function calls are supported.",
-                    ));
-                }
+                let name = if p.qself.is_none() && simple_path(&p.path, "Ok") {
+                    "Ok".into()
+                } else if p.qself.is_none() {
+                    registered_path(&p.path).ok_or_else(|| {
+                        error(p.span(), "Use an exact registered policy function name.")
+                    })?
+                } else {
+                    return Err(error(p.span(), "Qualified type calls are not supported."));
+                };
                 Expr::Call {
-                    name: p.path.segments[0].ident.to_string(),
+                    name,
                     args: c
                         .args
                         .iter()
@@ -810,7 +829,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         preference_steps: vec![],
     };
     let ir = Program {
-        version: REGISTRY_VERSION.into(),
+        version: IR_VERSION.into(),
         statements: parser.block(&f.block, 0)?,
     };
     validate_program(&ir)?;
@@ -1160,6 +1179,8 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                         || ident == "if"
                         || ident == "return"
                         || ident == "Ok"
+                        || ident == "allowit"
+                        || ident == "jev"
                         || crate::registry::function(&ident.to_string()).is_some() =>
                 {
                     current.after_if_body = false;
@@ -1221,6 +1242,30 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                 stack.push(frame(group.stream(), scope, depth));
             }
             TokenTree::Ident(ident) => {
+                if current.scope != Scope::File && (ident == "allowit" || ident == "jev") {
+                    let mut lookahead = current.iter.clone();
+                    if matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':' && p.spacing() == proc_macro2::Spacing::Joint)
+                        && matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':')
+                    {
+                        let Some(TokenTree::Ident(operation)) = lookahead.next() else {
+                            return Err(error(
+                                ident.span(),
+                                "Use an exact registered policy function name.",
+                            ));
+                        };
+                        let name = format!("{ident}::{operation}");
+                        if crate::registry::canonical_function(&name).is_none()
+                            || !matches!(lookahead.clone().next(), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Parenthesis)
+                        {
+                            return Err(error(
+                                ident.span(),
+                                "Use an exact registered policy function call.",
+                            ));
+                        }
+                        current.iter = lookahead;
+                    }
+                }
+
                 if current.scope != Scope::File
                     && [
                         "as", "type", "fn", "impl", "dyn", "const", "static", "struct", "enum",
@@ -1337,8 +1382,8 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
 }
 
 // Consume only the simple let header, leaving its initializer to the expression validator.
-// All other colons are rejected before syn, so recursive types cannot enter through a local
-// annotation, closure parameter, label, cast, turbofish or qualified path.
+// Other colons are rejected before syn, except exact registered function paths.
+// Recursive types cannot enter through annotations, closures, casts or turbofish.
 fn validate_let_header(iter: &mut proc_macro2::token_stream::IntoIter) -> Result<(), CompileError> {
     use proc_macro2::TokenTree;
     let invalid = || {

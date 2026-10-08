@@ -29,6 +29,14 @@ mod validation;
 pub use compiler::compile;
 pub use protocol::{process_json, process_value};
 pub use registry::{FunctionInfo, registry};
+// The crate name is the core namespace. Do not import an `allowit` module through
+// the prelude: it would conflict with `use allowit::prelude::*` in Rust source.
+pub use prelude::{
+    allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, check_preference,
+    confidence, context_u64, fail, percent, require_merchant, require_recipient,
+    require_user_input, semantic, set_cap, usdc, within_percentage_points,
+};
+
 #[cfg(feature = "compiler")]
 pub use runtime::evaluate;
 pub use runtime::evaluate_ir;

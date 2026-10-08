@@ -4,7 +4,7 @@ extern crate alloc;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use allowit_sdk::{
-    Context, Decision, Profile, Program, REGISTRY_VERSION, canonical_ir_hash, evaluate_ir,
+    Context, Decision, Profile, Program, canonical_ir_hash, evaluate_ir, supported_registry_version,
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -259,7 +259,7 @@ pub fn validate_mandate(m: &Mandate) -> Result<(), Error> {
     .contains(&[0; 32])
         || !bounded(&m.compiler_key_id, 64)
         || !bounded(&m.compiler_version, 32)
-        || m.registry_version != REGISTRY_VERSION
+        || !supported_registry_version(&m.registry_version)
         || m.core_version != CORE_VERSION
         || !bounded(&m.network, 96)
         || !(6..=7).contains(&m.asset_decimals)

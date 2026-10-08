@@ -1,8 +1,8 @@
-use allowit_sdk::{Expr, Program, REGISTRY_VERSION, SourceSpan, Statement, validate_program};
+use allowit_sdk::{Expr, IR_VERSION, Program, SourceSpan, Statement, validate_program};
 #[test]
 fn purchase_tiers_require_the_ledger_feature_before_evaluation() {
     let program = Program {
-        version: REGISTRY_VERSION.into(),
+        version: IR_VERSION.into(),
         statements: vec![
             Statement::Expression {
                 span: SourceSpan::default(),

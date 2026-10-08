@@ -267,3 +267,45 @@ fn semantic_evidence_binds_original_intent_and_complete_runtime_context() {
         Err(Error::PolicyDenied)
     );
 }
+
+#[test]
+fn qualified_functions_keep_chain_artifact_and_request_bindings() {
+    let named = SIMPLE
+        .replace("set_cap(", "allowit::set_cap(")
+        .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
+        .replace("allow_actions(", "allowit::allow_actions(");
+    let state = fixture(&named);
+    allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact).unwrap();
+    for (amount, pass) in [(10_000_000, true), (10_000_001, false)] {
+        assert_eq!(
+            prepare_execution(&state, &request(&state, amount), 1000).is_ok(),
+            pass
+        );
+    }
+    let original = fixture(SIMPLE);
+    assert_ne!(state.mandate.source_hash, original.mandate.source_hash);
+    assert_eq!(
+        prepare_execution(&state, &request(&original, 1_000_000), 1000),
+        Err(Error::BindingMismatch)
+    );
+}
+
+#[test]
+fn source_registry_minor_version_retains_existing_artifact_acceptance() {
+    let mut state = fixture(SIMPLE);
+    let mut artifact: allowit_contract_core::Artifact =
+        serde_json::from_slice(&state.artifact).unwrap();
+    assert_eq!(artifact.registry_version, "1.1.0");
+    assert_eq!(artifact.ir.version, "1.0.0");
+    artifact.registry_version = "1.0.0".into();
+    state.mandate.registry_version = "1.0.0".into();
+    state.artifact = serde_json::to_vec(&artifact).unwrap();
+    state.mandate.artifact_hash = allowit_sdk::digest(&state.artifact);
+    allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact).unwrap();
+    assert!(prepare_execution(&state, &request(&state, 1_000_000), 1000).is_ok());
+    state.mandate.registry_version = "1.2.0".into();
+    assert_eq!(
+        allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact),
+        Err(Error::InvalidMandate)
+    );
+}
