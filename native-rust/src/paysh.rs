@@ -29,6 +29,9 @@ pub struct Deployment {
     pub module_digest: [u8; 32],
     pub program_artifact: [u8; 32],
     pub upgrade_authority: Option<Key>,
+    pub pool_program: Key,
+    pub pool_program_artifact: [u8; 32],
+    pub pool_upgrade_authority: Option<Key>,
     pub lookup_table: Option<Key>,
     pub compute_limit: u32,
 }
@@ -96,8 +99,26 @@ impl PayShClient {
                 "PaySH RPC network differs from the approved deployment",
             ));
         }
+        self.verify_program(
+            self.deployment.program,
+            self.deployment.program_artifact,
+            self.deployment.upgrade_authority,
+        )?;
+        self.verify_program(
+            self.deployment.pool_program,
+            self.deployment.pool_program_artifact,
+            self.deployment.pool_upgrade_authority,
+        )
+    }
+
+    fn verify_program(
+        &self,
+        program: Key,
+        artifact: [u8; 32],
+        expected_authority: Option<Key>,
+    ) -> Result<()> {
         let loader = Key::parse("BPFLoaderUpgradeab1e11111111111111111111111")?;
-        let p = account(&*self.rpc, self.deployment.program, None)?
+        let p = account(&*self.rpc, program, None)?
             .ok_or_else(|| Error::config("PaySH program is not deployed"))?;
         if !p.executable
             || p.owner != loader
@@ -107,7 +128,7 @@ impl PayShClient {
             return Err(Error::config("Invalid PaySH program account"));
         }
         let linked = Key(p.data[4..36].try_into().unwrap());
-        let canonical = Key::find_program_address(&[&self.deployment.program.0], loader)?.0;
+        let canonical = Key::find_program_address(&[&program.0], loader)?.0;
         if linked != canonical {
             return Err(Error::config("Invalid PaySH program data binding"));
         }
@@ -125,12 +146,11 @@ impl PayShClient {
             1 => Some(Key(data.data[13..45].try_into().unwrap())),
             _ => return Err(Error::config("Invalid program upgrade authority")),
         };
-        if authority != self.deployment.upgrade_authority
-            || <[u8; 32]>::from(Sha256::digest(&data.data[45..]))
-                != self.deployment.program_artifact
+        if authority != expected_authority
+            || <[u8; 32]>::from(Sha256::digest(&data.data[45..])) != artifact
         {
             return Err(Error::config(
-                "PaySH executable or upgrade authority changed",
+                "Approved executable or upgrade authority changed",
             ));
         }
         Ok(())
@@ -361,6 +381,7 @@ impl PayShClient {
             || expected.0 != address
             || p.config.network != self.deployment.genesis.0
             || p.config.module_digest != self.deployment.module_digest
+            || p.config.pool.program != self.deployment.pool_program.0
         {
             return Err(Error::config(
                 "PaySH policy differs from its approved binding",
@@ -381,6 +402,7 @@ impl PayShClient {
         if !owner.on_curve()
             || config.network != self.deployment.genesis.0
             || config.module_digest != self.deployment.module_digest
+            || config.pool.program != self.deployment.pool_program.0
             || allocation_lamports == 0
             || allocation_lamports > config.allocation_lamports
             || config.period_seconds == 0
@@ -850,6 +872,7 @@ impl PayShClient {
             || prepared.sol_vault != sol_vault
             || config.network != self.deployment.genesis.0
             || config.module_digest != self.deployment.module_digest
+            || config.pool.program != self.deployment.pool_program.0
             || prepared.allocation_lamports == 0
             || prepared.allocation_lamports > config.allocation_lamports
         {
@@ -954,13 +977,13 @@ impl PayShClient {
     pub fn broadcast(&self, prepared: &PreparedExecution) -> Result<()> {
         verify_packet(prepared)?;
         self.check_execution_packet(prepared, None)?;
-        let simulation = self.rpc.call("simulateTransaction", json!([prepared.signed_bytes,{"encoding":"base64","sigVerify":true,"commitment":"finalized"}]))?;
+        let simulation = self.rpc.call("simulateTransaction", json!([prepared.signed_bytes,{"encoding":"base64","sigVerify":true,"commitment":"finalized"}])).map_err(|_| Error::uncertain("Simulation RPC failed after receiving the saved approval; reconcile its nonce"))?;
         if simulation.get("value").is_none() || !simulation["value"]["err"].is_null() {
             return Err(Error::uncertain(
                 "Native simulation rejected the saved approval. Reconcile its nonce before any replacement.",
             ));
         }
-        let result = self.rpc.call("sendTransaction", json!([prepared.signed_bytes,{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","maxRetries":0}]))?;
+        let result = self.rpc.call("sendTransaction", json!([prepared.signed_bytes,{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","maxRetries":0}])).map_err(|_| Error::uncertain("Broadcast RPC failed after receiving the saved approval; reconcile its nonce"))?;
         if result.as_str() != Some(&prepared.signature) {
             return Err(Error::uncertain(
                 "RPC returned a different signature; reconcile the saved packet",
@@ -1030,7 +1053,7 @@ impl PayShClient {
         for page in 0..=4 {
             for signature in candidates.drain(..) {
                 let tx = self.rpc.call("getTransaction", json!([signature,{"encoding":"json","commitment":"finalized","maxSupportedTransactionVersion":0}]))?;
-                if tx.is_null() || !tx["meta"]["err"].is_null() {
+                if tx.is_null() || tx["meta"].get("err").is_none() || !tx["meta"]["err"].is_null() {
                     continue;
                 }
                 if let Some(settled) =
@@ -1061,7 +1084,7 @@ impl PayShClient {
                 .and_then(|v| v["signature"].as_str())
                 .map(str::to_owned);
             for entry in history {
-                if entry["err"].is_null() {
+                if entry.get("err").is_some() && entry["err"].is_null() {
                     candidates.push(
                         entry["signature"]
                             .as_str()
@@ -1119,6 +1142,9 @@ fn settlement_transaction(
     program: Key,
     expected: &[u8],
 ) -> Result<Option<Settlement>> {
+    if tx["meta"].get("err").is_none() || !tx["meta"]["err"].is_null() {
+        return Ok(None);
+    }
     if tx["transaction"]["signatures"][0] != signature {
         return Err(Error::config("Settlement signature differs"));
     }
@@ -1150,10 +1176,11 @@ fn settlement_transaction(
         .iter()
         .enumerate()
     {
-        let program_index = instruction["programIdIndex"]
+        let program_index: usize = instruction["programIdIndex"]
             .as_u64()
             .ok_or_else(|| Error::config("Invalid settlement program index"))?
-            as usize;
+            .try_into()
+            .map_err(|_| Error::config("Invalid settlement program index"))?;
         if keys.get(program_index) != Some(&program) {
             continue;
         }
@@ -1926,6 +1953,54 @@ mod tests {
             historical_lookup(&lookup, &bad).unwrap().addresses
         );
         assert!(historical_lookup(&lookup, &json!({"writable":[],"readonly":[]})).is_err());
+    }
+
+    #[test]
+    fn settlement_identifies_the_actual_relayer_and_loaded_program() {
+        let program = Key([2; 32]);
+        let data = vec![1, 2, 3];
+        let tx = json!({"slot":42,"meta":{"err":null,"loadedAddresses":{"writable":[],"readonly":[program.to_string()]}},
+            "transaction":{"signatures":["winning-relayer"],"message":{"accountKeys":[Key([1;32]).to_string()],
+            "instructions":[{"programIdIndex":0,"data":""},{"programIdIndex":1,"data":bs58::encode(&data).into_string()}]}}});
+        assert_eq!(
+            settlement_transaction(&tx, "winning-relayer", program, &data).unwrap(),
+            Some(Settlement {
+                signature: "winning-relayer".into(),
+                finalized_slot: 42,
+                invocation_index: 1
+            })
+        );
+        assert!(settlement_transaction(&tx, "original-sponsor", program, &data).is_err());
+        assert_eq!(
+            settlement_transaction(&tx, "winning-relayer", program, &[9]).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn settlement_requires_success_metadata_and_one_exact_execution() {
+        let program = Key([2; 32]);
+        let ix = json!({"programIdIndex":0,"data":bs58::encode([1,2,3]).into_string()});
+        let mut tx = json!({"slot":42,"meta":{"err":null},"transaction":{"signatures":["relayer"],
+            "message":{"accountKeys":[program.to_string()],"instructions":[ix.clone()]}}});
+        assert!(
+            settlement_transaction(&tx, "relayer", program, &[1, 2, 3])
+                .unwrap()
+                .is_some()
+        );
+        tx["meta"] = json!({});
+        assert_eq!(
+            settlement_transaction(&tx, "relayer", program, &[1, 2, 3]).unwrap(),
+            None
+        );
+        tx["meta"] = json!({"err":{"InstructionError":[0,"Custom"]}});
+        assert_eq!(
+            settlement_transaction(&tx, "relayer", program, &[1, 2, 3]).unwrap(),
+            None
+        );
+        tx["meta"] = json!({"err":null});
+        tx["transaction"]["message"]["instructions"] = json!([ix.clone(), ix]);
+        assert!(settlement_transaction(&tx, "relayer", program, &[1, 2, 3]).is_err());
     }
 
     #[test]
