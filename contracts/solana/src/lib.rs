@@ -17,6 +17,8 @@ use solana_program::{
 };
 use spl_token::state::{Account as TokenAccount, Mint};
 
+pub mod vault;
+
 pub const STATE_BYTES: usize = 24_576;
 pub const HEAD_BYTES: usize = 48;
 pub const REQUIRED_HEAP_BYTES: u32 = 256 * 1024;
@@ -205,6 +207,9 @@ pub fn process_instruction(
 ) -> ProgramResult {
     if data.len() > 1024 {
         return Err(ProgramError::InvalidInstructionData);
+    }
+    if data.first() == Some(&vault::PREFIX) {
+        return vault::process(program, accounts, &data[1..]);
     }
     let instruction: Instruction =
         borsh::from_slice(data).map_err(|_| ProgramError::InvalidInstructionData)?;

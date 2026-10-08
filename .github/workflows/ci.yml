@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: wasm32-unknown-unknown
@@ -29,7 +32,25 @@ jobs:
           cargo test --locked --no-default-features --test feature_profiles
       - run: cargo rustc --locked --release --lib --target wasm32-unknown-unknown --crate-type cdylib
       - run: node scripts/test-wasm.mjs
+      - run: |
+          mkdir -p target/sdk-distribution
+          cp target/wasm32-unknown-unknown/release/allowit_sdk.wasm target/sdk-distribution/
+          python3 scripts/package-licenses.py target/sdk-distribution
       - uses: actions/upload-artifact@v4
         with:
           name: allowit-sdk-wasm
-          path: target/wasm32-unknown-unknown/release/allowit_sdk.wasm
+          path: target/sdk-distribution/
+
+  native-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: native
+      - run: npm test
+        working-directory: native

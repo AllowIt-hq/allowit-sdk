@@ -137,3 +137,9 @@ fn helpers_keep_exact_source_and_hover_spans_without_new_contract_opcodes() {
         assert!(compile(&source(body)).is_err(), "{body}");
     }
 }
+
+#[test]
+fn execute_is_the_entrypoint_and_standard_helpers_stay_in_the_library() {
+    let source = "use allowit::v1::prelude::*; pub async fn execute(ctx: &Context) -> PolicyResult { cap_per_transaction(ctx, \"5\", \"USDC\")?; Ok(()) }";
+    assert!(compile(source).is_ok());
+}

@@ -23,6 +23,26 @@ fn range(span: Span) -> SourceSpan {
         end: r.end,
     }
 }
+// Namespace paths are bounded and resolved against the exact registry spelling.
+pub(crate) fn registered_path(path: &syn::Path) -> Option<String> {
+    if path.leading_colon.is_some()
+        || path.segments.len() > 2
+        || path
+            .segments
+            .iter()
+            .any(|segment| !segment.arguments.is_empty())
+    {
+        return None;
+    }
+    let name = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::");
+    crate::registry::canonical_function(&name)
+}
+
 fn simple_path(path: &syn::Path, name: &str) -> bool {
     path.leading_colon.is_none()
         && path.segments.len() == 1
@@ -108,7 +128,7 @@ impl Parser {
         let SynExpr::Path(p) = &*c.func else {
             return Ok(None);
         };
-        if p.qself.is_some() || !simple_path(&p.path, "check_preference") {
+        if p.qself.is_some() || registered_path(&p.path).as_deref() != Some("check_preference") {
             return Ok(None);
         }
         self.tick(stmt.span(), depth)?;
@@ -263,7 +283,7 @@ impl Parser {
             "within_percentage_points",
         ]
         .into_iter()
-        .find(|name| path.qself.is_none() && simple_path(&path.path, name)) else {
+        .find(|name| path.qself.is_none() && registered_path(&path.path).as_deref() == Some(*name)) else {
             return Ok(None);
         };
         self.tick(call.span(), depth)?;
@@ -594,18 +614,17 @@ impl Parser {
                         "Only direct predefined function calls are supported.",
                     ));
                 };
-                if p.qself.is_some()
-                    || p.path.leading_colon.is_some()
-                    || p.path.segments.len() != 1
-                    || !p.path.segments[0].arguments.is_empty()
-                {
-                    return Err(error(
-                        p.span(),
-                        "Only direct predefined function calls are supported.",
-                    ));
-                }
+                let name = if p.qself.is_none() && simple_path(&p.path, "Ok") {
+                    "Ok".into()
+                } else if p.qself.is_none() {
+                    registered_path(&p.path).ok_or_else(|| {
+                        error(p.span(), "Use an exact registered policy function name.")
+                    })?
+                } else {
+                    return Err(error(p.span(), "Qualified type calls are not supported."));
+                };
                 Expr::Call {
-                    name: p.path.segments[0].ident.to_string(),
+                    name,
                     args: c
                         .args
                         .iter()
@@ -767,7 +786,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
             _ => {
                 return Err(error(
                     item.span(),
-                    "A policy contains only an optional allowit::prelude import and the evaluate function.",
+                    "A policy contains only an optional allowit::prelude import and the execute function.",
                 ));
             }
         }
@@ -775,12 +794,12 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     let f = policy_fn.ok_or_else(|| {
         CompileError::new(
             "INVALID_POLICY",
-            "Define pub async fn evaluate(ctx: &Context) -> PolicyResult.",
+            "Define pub async fn execute(ctx: &Context) -> PolicyResult.",
         )
     })?;
     let sig = &f.sig;
     if !f.attrs.is_empty()
-        || (sig.ident != "evaluate" && sig.ident != "exec")
+        || (sig.ident != "execute" && sig.ident != "evaluate" && sig.ident != "exec")
         || sig.asyncness.is_none()
         || sig.constness.is_some()
         || sig.unsafety.is_some()
@@ -793,7 +812,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     {
         return Err(error(
             sig.span(),
-            "Use pub async fn evaluate(ctx: &Context) -> PolicyResult.",
+            "Use pub async fn execute(ctx: &Context) -> PolicyResult.",
         ));
     }
     let valid_arg = matches!(&sig.inputs[0],FnArg::Typed(arg) if arg.attrs.is_empty()&&matches!(&*arg.pat,Pat::Ident(p) if p.ident=="ctx"&&p.mutability.is_none()&&p.by_ref.is_none()&&p.subpat.is_none())&&matches!(&*arg.ty,Type::Reference(r) if r.mutability.is_none()&&r.lifetime.is_none()&&matches!(&*r.elem,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"Context"))));
@@ -801,7 +820,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     if !valid_arg || !valid_return {
         return Err(error(
             sig.span(),
-            "Use pub async fn evaluate(ctx: &Context) -> PolicyResult.",
+            "Use pub async fn execute(ctx: &Context) -> PolicyResult.",
         ));
     }
     let mut parser = Parser {
@@ -832,6 +851,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
                     label: info.title,
                     description: info.description,
                     arguments: arguments.clone(),
+                    score_thresholds: vec![],
                     source: source_slice(source, span),
                     start: offset(source, span.start),
                     end: offset(source, span.end),
@@ -899,11 +919,13 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
             label,
             description,
             arguments,
+            score_thresholds: vec![],
             source: source_slice(source, span),
             start: offset(source, span.start),
             end: offset(source, span.end),
         });
     }
+    crate::editing::annotate(source, f, &mut workflow);
     let mut found = parser.helper_calls;
     walk_block(&ir.statements, &mut found);
     found.sort_by_key(|(_, s)| s.start);
@@ -922,6 +944,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         source_hash,
         ir_hash,
         registry_version: REGISTRY_VERSION.into(),
+        execution_requirements: crate::requirements::extract(&ir)?,
         limit,
         token: "USDC".into(),
         source: source.into(),
@@ -939,7 +962,7 @@ fn validate_signature(tokens: &proc_macro2::TokenStream) -> Result<(), CompileEr
     fn invalid() -> CompileError {
         CompileError::new(
             "INVALID_POLICY",
-            "Use an optional allowit::prelude import and exactly pub async fn evaluate(ctx: &Context) -> PolicyResult { ... }.",
+            "Use an optional allowit::prelude import and exactly pub async fn execute(ctx: &Context) -> PolicyResult { ... }.",
         )
     }
     fn matches(token: Option<TokenTree>, expected: &str) -> bool {
@@ -978,7 +1001,10 @@ fn validate_signature(tokens: &proc_macro2::TokenStream) -> Result<(), CompileEr
     }
     expect(&mut iter, &["async", "fn"])?;
     let name = iter.next();
-    if !matches(name.clone(), "exec") && !matches(name, "evaluate") {
+    if !matches(name.clone(), "execute")
+        && !matches(name.clone(), "exec")
+        && !matches(name, "evaluate")
+    {
         return Err(invalid());
     }
     let Some(TokenTree::Group(params)) = iter.next() else {
@@ -1153,6 +1179,8 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                         || ident == "if"
                         || ident == "return"
                         || ident == "Ok"
+                        || ident == "allowit"
+                        || ident == "jev"
                         || crate::registry::function(&ident.to_string()).is_some() =>
                 {
                     current.after_if_body = false;
@@ -1192,13 +1220,13 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                         if file_bodies > 1 {
                             return Err(error(
                                 group.span(),
-                                "A policy contains one evaluate function.",
+                                "A policy contains one execute function.",
                             ));
                         }
                     } else if current.scope != Scope::Body || !current.expects_body {
                         return Err(error(
                             group.span(),
-                            "Only the evaluate body and if/else bodies may contain code blocks.",
+                            "Only the execute body and if/else bodies may contain code blocks.",
                         ));
                     }
                     current.expects_body = false;
@@ -1214,6 +1242,30 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                 stack.push(frame(group.stream(), scope, depth));
             }
             TokenTree::Ident(ident) => {
+                if current.scope != Scope::File && (ident == "allowit" || ident == "jev") {
+                    let mut lookahead = current.iter.clone();
+                    if matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':' && p.spacing() == proc_macro2::Spacing::Joint)
+                        && matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':')
+                    {
+                        let Some(TokenTree::Ident(operation)) = lookahead.next() else {
+                            return Err(error(
+                                ident.span(),
+                                "Use an exact registered policy function name.",
+                            ));
+                        };
+                        let name = format!("{ident}::{operation}");
+                        if crate::registry::canonical_function(&name).is_none()
+                            || !matches!(lookahead.clone().next(), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Parenthesis)
+                        {
+                            return Err(error(
+                                ident.span(),
+                                "Use an exact registered policy function call.",
+                            ));
+                        }
+                        current.iter = lookahead;
+                    }
+                }
+
                 if current.scope != Scope::File
                     && [
                         "as", "type", "fn", "impl", "dyn", "const", "static", "struct", "enum",
@@ -1330,8 +1382,8 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
 }
 
 // Consume only the simple let header, leaving its initializer to the expression validator.
-// All other colons are rejected before syn, so recursive types cannot enter through a local
-// annotation, closure parameter, label, cast, turbofish or qualified path.
+// Other colons are rejected before syn, except exact registered function paths.
+// Recursive types cannot enter through annotations, closures, casts or turbofish.
 fn validate_let_header(iter: &mut proc_macro2::token_stream::IntoIter) -> Result<(), CompileError> {
     use proc_macro2::TokenTree;
     let invalid = || {

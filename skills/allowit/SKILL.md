@@ -5,7 +5,7 @@ description: Compile, inspect and evaluate AllowIt Rust policies with structured
 
 # AllowIt policies
 
-This is the Rust SDK developer skill. Use this repository's `cargo run --locked --` commands. The separate Go `allowit` action client uses `show/eval/exec/status`; generated consumer skills target that client. Compile the exact policy source before evaluating it. A valid compilation does not approve a transaction.
+This is the Rust SDK developer skill. Use this repository's `cargo run --locked --` commands. The separate native Rust `allowit` action client uses `show/eval/exec/status`; generated consumer skills target that client. Compile the exact policy source before evaluating it. A valid compilation does not approve a transaction.
 
 1. Read the original owner instructions and the immutable policy source. Preserve the original instructions across revisions and forks; never replace them with your own summary.
 2. Put the complete available request context in a JSON file. Supply `amount_units`, `allocation_units`, `spent_units`, `action`, `merchant`, `recipient`, `token`, `network`, `now`, `original_intent` and `runtime_context`. Amounts use exact integer micro-USDC. Runtime context is an object, at most 16 KiB/depth8/128 entries. Original intent is at most 16 KiB. Include source/provenance information for claims.
@@ -43,7 +43,9 @@ Caller-provided facts are claims until authenticated by the host. Do not invent 
 
 ## Preferences and numeric rules
 
-`semantic(ctx, "exact question")?` requests an assessment of a preference. Missing evidence fails with `SEMANTIC_EVIDENCE_REQUIRED`, `question` and `evidence_key`; the key is lowercase SHA-256 of the exact UTF-8 question. The trusted engine may ask Jev by TypeSafe with the question, original owner instructions and complete bound runtime context, authenticate and persist the response, then reevaluate. This is a host operation; the policy and SDK make no network calls. Never turn that missing-evidence failure into a pass yourself or send context to an arbitrary provider.
+Use a separate configurable `check_preference` for each classification, including research purpose, wallet/merchant roles and customer-specific categories. Judge the supplied evidence against the user's definitions and exceptions. `allow_actions` is only caller-field string equality; it does not verify a category. Exact user-specified identifiers and numeric limits remain deterministic checks.
+
+`check_preference` lowers to the `semantic` evidence operation. Missing evidence fails with `SEMANTIC_EVIDENCE_REQUIRED`, `question` and `evidence_key`; the key is lowercase SHA-256 of the exact UTF-8 question. A configured trusted engine asks Jev with that question, original instructions and complete bound runtime context, authenticates and persists the response, then reevaluates. The policy and SDK make no network calls. Missing provider capability leaves the assessment unresolved.
 
 The question hash names a slot within one evaluation, not reusable approval. The trusted engine must bind evidence to the exact source/IR digests, revision, owner, action, amount, recipient, network, token, original intent, complete runtime-context digest and expiry. Never copy a score to another request or retrieve it by question hash alone. Changed context requires fresh applicable evidence. If the authorized provider path is unavailable, report the unresolved failure to the owner and stop that transaction.
 
@@ -82,10 +84,7 @@ These helpers do not create an allowance. Use `set_cap` for the total allocation
 if !amount_at_most(ctx, "25.50")? {
     require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
 }
-let fit = semantic(ctx, "Is there primary evidence supporting this purchase?")?;
-if fit.lower_bps < percent("85")? {
-    return fail("The evidence does not meet your threshold");
-}
+check_preference(ctx, "Is there primary evidence supporting this purchase?", true, "85", true, "40").await?;
 ```
 
 Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.
@@ -99,15 +98,19 @@ Use `check_preference(ctx, "Exact preference question", true, "85", true, "40").
 
 ### Versioned compact policies and purchase tiers
 
-New source can use `use allowit::v1::prelude::*;` and `pub async fn exec(ctx: &Context) -> PolicyResult`. The legacy import, `evaluate` function name and six-argument preference form remain accepted. The compact versioned form is:
+New source can use `use allowit::v1::prelude::*;` and `pub async fn execute(ctx: &Context) -> PolicyResult`. The legacy import, `exec` and `evaluate` function names and six-argument preference form remain accepted. The compact versioned form is:
 
 ```rust
 use allowit::v1::prelude::*;
 
-pub async fn exec(ctx: &Context) -> PolicyResult {
+pub async fn execute(ctx: &Context) -> PolicyResult {
     set_cap(ctx, "10", "USDC")?;
     cap_purchase_tiers(ctx, "1", 2, "USDC")?;
-    allow_actions(ctx, &["research"])?;
+    check_preference(ctx,
+        "Does this purchase count as research under the user's stated purpose and definitions?",
+        0.40,
+        0.85,
+    ).await?;
     check_preference(ctx,
         "Is this primary evidence for the research task?",
         0.40, // deny at or below
@@ -124,3 +127,21 @@ Thresholds are exact source decimals in 0..1 with at most four decimal places. `
 The trusted oracle host supplies `purchase_counts`, exactly 40 unsigned counts derived from its durable ledger, including pending reservations. Callers must not supply authoritative counts through runtime context. Reservation and final evaluation must recheck counts atomically. Missing counts fail with `LEDGER_REQUIRED`. The current contract adapters reject tier policies at activation because they do not store this ledger; the contract evaluator also fails closed. A compiled tier badge describes oracle enforcement, not an on-chain certificate.
 
 Consumers need a build containing this helper; older evaluators fail closed on the new registry call. Wire registry version remains unchanged, so use the SDK commit and artifact digest for compatibility. Context continues to enter the CLI or SDK as JSON; user-supplied runtime evidence is separate from authoritative ledger fields.
+
+Generate a single `execute` entrypoint and call standard system functions for standard enforcement. Do not duplicate standard checks in generated helper functions. The native Solana profile exposes its compiled `policy_api.rs` separately from the policy source; its daily ceiling and UTC rollover are system enforcement, not custom generated logic.
+
+
+## PaySH agent execution
+
+Use the owner-issued policy ID, backend URL and scoped capability from the generated consumer skill. Discover enabled services with `allowit paysh services`. The backend catalog describes available services and prices; it does not provide popularity or reputation unless the provider includes those fields.
+
+```sh
+allowit paysh call POLICY_ID OPERATION_ID SERVICE_ID INPUT_JSON
+allowit paysh status POLICY_ID OPERATION_ID
+```
+
+Set `ALLOWIT_URL` and `ALLOWIT_PAYSH_TOKEN` from the owner handoff in a private environment. Keep the capability out of logs and tracked files. Do not load the owner's wallet key or the backend evaluator or sponsor keys. The backend authenticates the provider challenge, reads native balances and bounded direct-pool quotes, evaluates the original task with Jev, and prepares scoped signed `execute(request)` transactions. A unique operation ID identifies the request; it does not authorize it.
+
+The policy wallet pays the approved service fee first within each successful execution. A separate backend sponsor pays network fees and account rent. A swap may require one execution before the payment execution. Direct-pool swaps still pay the pool's liquidity fee. Testnet uses a custom test token, not mainnet USDC.
+
+Keep the same operation ID after an uncertain response and read `status`; do not create a replacement purchase or assume payment means delivery. Exit 0 means the API response was delivered. Exit 12 means pending, 5 means unknown, and 20 means failed. Missing semantic evidence, provider compatibility or native enforcement fails closed.

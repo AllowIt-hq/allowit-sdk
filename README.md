@@ -5,16 +5,16 @@ AllowIt policies are a restricted, validated subset of Rust. This repository con
 ```rust
 use allowit::prelude::*;
 
-pub async fn evaluate(ctx: &Context) -> PolicyResult {
-    set_cap(ctx, "100", "USDC")?;
-    cap_per_transaction(ctx, "10", "USDC")?;
-    allow_actions(ctx, &["research"])?;
-    require_merchant(ctx, "research.example")?;
+pub async fn execute(ctx: &Context) -> PolicyResult {
+    allowit::set_cap(ctx, "100", "USDC")?;
+    allowit::cap_per_transaction(ctx, "10", "USDC")?;
+    allowit::require_merchant(ctx, "research.example")?;
+    jev::check_preference(ctx, "Does this purchase count as research under the user's stated purpose and definitions?", true, "85", true, "40").await?;
     Ok(())
 }
 ```
 
-The Go [action CLI](https://github.com/ackrate/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. Go also serves HTTP and controls the hosted microVM agent. Restricted Rust remains the policy source and enforcement language.
+The Go [action CLI](https://github.com/AllowIt-hq/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. The app server owns HTTP transport. Hosted-agent control and runtime are optional, outside the MVP; they are not SDK responsibilities. Restricted Rust remains the policy source and enforcement language.
 
 ## Run
 
@@ -35,6 +35,8 @@ cargo run --locked -- lsp
 
 CLI output is JSON. A failed compile or malformed request exits unsuccessfully. A completed evaluation prints its `pass`, `fail` or non-terminal `awaiting_input` decision; callers must inspect that decision before authorizing an action.
 
+The research and green examples require semantic evidence; their supplied contexts intentionally contain no classification scores, so local evaluation returns `SEMANTIC_EVIDENCE_REQUIRED`.
+
 For normal Rust type-checking, depend on this package with the name `allowit`:
 
 ```toml
@@ -45,7 +47,13 @@ The prelude is a type-checking facade, not a replacement for the compiler/interp
 
 ## Supported source and execution
 
-Each file contains an optional `use allowit::prelude::*;` and one `pub async fn evaluate(ctx: &Context) -> PolicyResult`. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
+Each registered policy function accepts an explicit `allowit::` prefix. `jev::semantic` and `jev::check_preference` select the existing preference checks. Unqualified calls remain supported. The compiler resolves exact registered names and lowers them to the same bounded operations. The registry exposes each accepted spelling with its signature and effect. Wrong prefixes, unknown operations, deeper paths and generic calls fail compilation.
+
+Namespaces identify policy checks. A core check such as `allowit::allow_actions` compares exact labels. It does not execute or classify a vendor operation. PaySH and other vendor prefixes require concrete operations with their own bounded implementation and execution bindings. The restricted compiler rejects `paysh::pay`, `paysh::swap` and other unregistered vendor calls. The native PaySH `Pay` and `Swap` transport remains a separate execution interface.
+
+Qualified calls preserve the current interpreter, contract opcodes and execution requirements. Source spans and source hashes still bind the exact policy text. Changing the spelling therefore requires a new compiled artifact and the corresponding mandate binding. Solana and Stellar adapters consume that artifact through the shared contract core. A Near adapter requires its own host, asset, authorization and settlement integration.
+
+Each file contains an optional `use allowit::prelude::*;` and one `pub async fn execute(ctx: &Context) -> PolicyResult`. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
 
 Every function and every branch is validated, including unreachable code. Unknown syntax, imports, macros, attributes, mutation, shadowing, loops, recursion, arbitrary method calls, I/O, unsafe code and unchecked/discarded function results are rejected. Source is limited to 32 KiB and 1,024 syntax tokens (including opening and closing delimiters), IR to 2,048 nodes and semantic nesting to 48 levels. The total token budget never resets across statements or groups. Before invoking `syn`, a token preflight checks the exact function signature and permits only simple `u64`, `bool`, `&str` or `ConfidenceInterval` local annotations. Type declarations, casts, closures and qualified type expressions are rejected before Rust's recursive type parser runs. An iterative token-tree walk bounds actual delimiter depth to 32 and each statement/header to 256 tokens, 96 punctuation operators and 32 control prefixes, with at most 32 `else` branches in a policy. Only the function body and statement-level `if`/`else` bodies may contain code blocks; conditional expressions and semicolons inside expression groups are unsupported. Flat guard statements have independent budgets. Parentheses and brackets contribute to their enclosing expression budget, so shallow postfix call/index/cast chains cannot hide a deep AST. String contents and comments do not alter structural depth. UTF-8 source must not contain a leading byte-order mark.
 
@@ -54,6 +62,8 @@ All monetary values in the portable core are micro-USDC (six decimal places). De
 `set_cap` is a configuration declaration: it may occur at most once, at the top level, with literal amount and token. It is enforced before user control flow, including when placed after an early return. The host allocation and spent amount are always enforced independently. Policies can restrict this budget but cannot increase it.
 
 The predefined registry contains `set_cap`, `cap_per_transaction`, `allow_actions`, `require_merchant`, `require_recipient`, `confidence`, `semantic`, `context_u64`, `require_user_input` and `fail`. Help, signatures and workflow labels come from that registry.
+
+Classifications such as research purpose, wallet role, or a customer's investment category belong in configurable `check_preference` questions evaluated by Jev. `allow_actions` only compares caller-supplied strings; it does not verify membership in a semantic category. Exact user-specified addresses, merchant identifiers and numeric restrictions remain deterministic checks. A matching address does not establish its purpose or ownership.
 
 Pass and fail are the only terminal outcomes. In the oracle profile, reaching `require_user_input(...).await?` returns a non-authorizing `awaiting_input` decision with an input key and prompt. The engine must authenticate the owner, bind the exact policy/action/evidence snapshot, persist the suspension and answers, reject replay, enforce expiry/revocation and recheck fresh budgets before executing. The SDK does not authenticate a plain `answers` map. Each key binds the policy source digest, call location and prompt; distinct calls cannot share an approval by merely repeating the prompt.
 
@@ -77,13 +87,24 @@ The [agent skill](skills/allowit/SKILL.md) includes JSON-context instructions, s
 
 Native callers use `process_value(serde_json::Value) -> serde_json::Value` or `process_json(&str) -> String`. The JSON API always compiles source before evaluation and rejects externally supplied executable IR.
 
+Compiler output includes versioned [execution requirements](docs/execution-requirements.md), a conservative inventory of policy dependencies used by host skill assemblers. It does not grant permissions or assert that a dependency is reachable.
+
 Compilation releases its temporary proc-macro source maps after every call so persistent hosts do not retain every edited document. No parser span escapes the SDK. The compiler is intended for standalone native/WASM hosts, not for execution from inside a Rust procedural macro. Hosts must not retain unrelated `proc_macro2::Span` values across compilation calls on the same thread. CLI/JSON error `line` and `column` are one-based Unicode-scalar positions; LSP converts columns to zero-based UTF-16.
 
 ```json
-{"operation":"compile","source":"pub async fn evaluate(ctx: &Context) -> PolicyResult { Ok(()) }"}
+{"operation":"compile","source":"pub async fn execute(ctx: &Context) -> PolicyResult { Ok(()) }"}
 ```
 
 Compilation returns `ok: true` and `policy` with `language: "allowit-rust-v1"`, source/IR SHA-256 digests, registry version, optional limit (empty string when uncapped), token, exact source, workflow blocks, call spans and typed IR. Evaluation accepts `operation: "evaluate"`, `source`, `profile: "oracle" | "contract"` and `context` in the shape of `examples/context.json`. It returns `decision.outcome`, `code` and `reason`, plus `prompt` and `input_key` when suspended. Invalid requests return `ok: false` and a typed `error`.
+
+Parameter edits use the same JSON API and never regenerate the policy:
+
+- `edit_preference`: `source` and `settings: {step_id, auto_approve, approve_percent, auto_deny, deny_percent}`. The ID is from the current compiled `check_preference` workflow block; percentages are strings. Both supported helper signatures are preserved.
+- `edit_score_thresholds`: `source`, `step_id`, and `values: [9000, ...]`. Top-level semantic bindings expose `score_thresholds: [{field, operator, value_bps}]` for direct comparisons of `lower_bps`/`upper_bps` against integer or `percent` literals. Supply all displayed values in order, as integers in 0–10000. Operators and branch bodies stay unchanged; computed bounds and other unsupported expressions are not editable through this operation.
+
+Both operations return `{ok: true, source, policy}` after recompilation, or a typed error. Only changed AST-selected argument/literal spans are replaced; comments, unrelated statements and unchanged values retain their exact bytes. IDs from another source revision fail. Hosts must independently authenticate edits and enforce draft/revision rules. These operations adjust decision thresholds, not the statistical validity of evidence.
+
+Raw comparison editing is offered only when every use of that semantic binding is a supported direct literal comparison. Aliases, computed bounds, reversed comparisons or other uses omit the controls and reject this operation; a partial list is never treated as complete. In the four-argument helper, `None` stores no numeric threshold; enabling that outcome requires an explicit value. Changed literals use canonical decimal notation; unchanged literals keep their original spelling.
 
 Workflow and call spans are **UTF-16 code-unit offsets** for browser strings and LSP. Internal IR spans use UTF-8 bytes. Predefined top-level calls with literal arguments become function blocks; contiguous custom statements remain exact Custom code, including their internal comments. Nested calls stay inside their custom block and retain individual help spans. The full source is retained byte-for-byte. The visual projection does not execute independently.
 
@@ -114,6 +135,8 @@ The artifact is `target/wasm32-unknown-unknown/release/allowit_sdk.wasm`. It imp
 
 ## Verification boundaries
 
+The [Lean demonstrator](verification/lean/README.md) supplies a pinned, checked model of compositional policy decisions and instruction-feature coverage. Its theorems do not establish Rust/Go implementation equivalence, complete natural-language intent coverage or classifier accuracy.
+
 Tests cover exact limits, cap bypass attempts, arithmetic overflow, syntax rejection, forged IR, deterministic oracle/contract decisions, source spans, workflow retention, confidence failures, approval continuation keys, contract input failure, facade type-checking, LSP behavior and a seeded bounded mutation corpus. `contracts/` contains native rail adapters and their own build/test instructions. Compilation or a local contract test is not evidence that a program has been deployed or that funds moved on a public network.
 
 ## Readable amounts and comparisons
@@ -135,10 +158,7 @@ These helpers do not create an allowance. Use `set_cap` for the total allocation
 if !amount_at_most(ctx, "25.50")? {
     require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
 }
-let fit = semantic(ctx, "Is there primary evidence supporting this purchase?")?;
-if fit.lower_bps < percent("85")? {
-    return fail("The evidence does not meet your threshold");
-}
+check_preference(ctx, "Is there primary evidence supporting this purchase?", true, "85", true, "40").await?;
 ```
 
 Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.
@@ -154,15 +174,19 @@ The helper lowers to the existing semantic, branch, failure and user-input IR op
 
 ### Versioned compact policies and purchase tiers
 
-New source can use `use allowit::v1::prelude::*;` and `pub async fn exec(ctx: &Context) -> PolicyResult`. The legacy import, `evaluate` function name and six-argument preference form remain accepted. The compact versioned form is:
+New source can use `use allowit::v1::prelude::*;` and `pub async fn execute(ctx: &Context) -> PolicyResult`. The legacy import, `exec` and `evaluate` function names and six-argument preference form remain accepted. The compact versioned form is:
 
 ```rust
 use allowit::v1::prelude::*;
 
-pub async fn exec(ctx: &Context) -> PolicyResult {
+pub async fn execute(ctx: &Context) -> PolicyResult {
     set_cap(ctx, "10", "USDC")?;
     cap_purchase_tiers(ctx, "1", 2, "USDC")?;
-    allow_actions(ctx, &["research"])?;
+    check_preference(ctx,
+        "Does this purchase count as research under the user's stated purpose and definitions?",
+        0.40,
+        0.85,
+    ).await?;
     check_preference(ctx,
         "Is this primary evidence for the research task?",
         0.40, // deny at or below
@@ -183,3 +207,8 @@ Consumers need a build containing this helper; older evaluators fail closed on t
 The default `oracle-ledger` feature includes host purchase counters. Contract builds disable default features and return `LEDGER_REQUIRED` for tier calls, excluding ledger-only code from tight on-chain upload budgets.
 
 Builds without `oracle-ledger` reject purchase-tier IR during validation with `LEDGER_REQUIRED`, before any evaluation. The registry still describes the function so callers can identify this unsupported feature. The public `spending` module is available only with `oracle-ledger`. Default SDK WASM and host builds include it; contract builds exclude it.
+
+
+## License
+
+AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.

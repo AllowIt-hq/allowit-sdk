@@ -143,6 +143,16 @@ pub struct WorkflowBlock {
     /// UTF-16 code-unit offsets, compatible with browser strings and LSP.
     pub start: usize,
     pub end: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub score_thresholds: Vec<ScoreThreshold>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScoreThreshold {
+    pub field: String,
+    pub operator: String,
+    pub value_bps: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,12 +170,35 @@ pub struct CompiledPolicy {
     pub source_hash: String,
     pub ir_hash: String,
     pub registry_version: String,
+    pub execution_requirements: ExecutionRequirements,
     pub limit: String,
     pub token: String,
     pub source: String,
     pub workflow: Vec<WorkflowBlock>,
     pub calls: Vec<CallSite>,
     pub ir: Program,
+}
+
+/// Conservative dependencies of all IR paths, not permissions or reachability.
+/// Bound to the enclosing compiled policy's source_hash and ir_hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionRequirements {
+    pub version: u32,
+    pub features: Vec<ExecutionFeature>,
+    pub context_u64_keys: Vec<String>,
+    /// A nonliteral context key exists; the consumer must not invent its value.
+    pub dynamic_context_keys: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionFeature {
+    ConfidenceEvidence,
+    OwnerInput,
+    PurchaseHistory,
+    RuntimeContextU64,
+    SemanticEvidence,
 }
 
 /// Oracle-only execution evidence for the compiler's source-bound workflow.

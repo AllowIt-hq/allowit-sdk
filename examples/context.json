@@ -8,6 +8,11 @@
   "token": "USDC",
   "network": "devnet",
   "now": 1790590000,
+  "original_intent": "Spend up to 100 USDC on research from research.example, at most 10 USDC per purchase.",
+  "runtime_context": {
+    "purpose": "Obtain a dataset for the requested research task",
+    "provenance": "Illustrative caller-supplied claim; an action label alone does not establish research purpose."
+  },
   "answers": {},
   "confidence": {"safety": {"lower_bps": 7000, "upper_bps": 9000}}
 }

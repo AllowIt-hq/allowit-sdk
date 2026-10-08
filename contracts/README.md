@@ -41,6 +41,10 @@ The policy core measures USDC in six decimal places. These rail adapters accept 
 
 Stellar derives the canonical network-specific Stellar Asset Contract address from `USDC` and Circle's issuer: `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` on Mainnet and `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` on Testnet. It checks seven decimals and converts atomic amounts exactly to six-decimal policy units. Sub-micro-unit dust is rejected, never rounded downward.
 
+## Fixed Devnet paid-API vault
+
+The separate [vault v1 interface](solana/VAULT.md) supports a funded PDA wallet with fixed hard limits and per-challenge replay markers. It does not execute arbitrary IR and does not change the allowance API below.
+
 ## Solana API
 
 The program has no hardcoded program ID or default authority. A deployment chooses its program ID. Build a separate artifact for each explicit network:
@@ -85,7 +89,7 @@ The network ID is checked against the actual Stellar Public or Test Network pass
 
 ## Verification and deployment boundary
 
-The [2026-09-28 target validation receipt](review/runtime-validation-2026-09-28.md) records passing compiled SBF and Soroban VM runs, exact artifact hashes, resource measurements and the Opus 5.5 source-review identities.
+The [2026-09-28 target validation receipt](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/contracts/review/runtime-validation-2026-09-28.md) records passing compiled SBF and Soroban VM runs, exact artifact hashes, resource measurements and the Opus 5.5 source-review identities.
 
 ```sh
 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \

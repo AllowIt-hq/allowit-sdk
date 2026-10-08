@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: wasm32v1-none
@@ -77,8 +80,11 @@ jobs:
           set -euo pipefail
           export ALLOWIT_STELLAR_WASM="$GITHUB_WORKSPACE/contracts/dist/allowit_stellar.wasm"
           cargo test --locked --manifest-path contracts/stellar/Cargo.toml -- --nocapture 2>&1 | tee contracts/dist/stellar-runtime-tests.log
-      - uses: actions/upload-artifact@v4
+      - run: python3 scripts/package-licenses.py contracts/dist
+        id: licenses
         if: always()
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.licenses.outcome == 'success'
         with:
           name: soroban-and-native-evidence
           path: contracts/dist/
@@ -90,6 +96,9 @@ jobs:
       ALLOWIT_SOLANA_NETWORK: devnet
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -124,8 +133,11 @@ jobs:
           set -euo pipefail
           export SBF_OUT_DIR="$GITHUB_WORKSPACE/contracts/dist"
           cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml -- --nocapture 2>&1 | tee contracts/dist/solana-sbf-runtime-tests.log
-      - uses: actions/upload-artifact@v4
+      - run: python3 scripts/package-licenses.py contracts/dist
+        id: licenses
         if: always()
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.licenses.outcome == 'success'
         with:
           name: solana-sbf-evidence
           # build-sbf may generate a deployment keypair; it is never an artifact.
@@ -134,4 +146,7 @@ jobs:
             contracts/dist/*.log
             contracts/dist/*sha256.txt
             contracts/dist/solana-toolchain.txt
+            contracts/dist/LICENSE
+            contracts/dist/THIRD_PARTY_NOTICES.md
+            contracts/dist/licenses/
           if-no-files-found: error
