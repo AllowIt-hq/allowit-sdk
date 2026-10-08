@@ -92,6 +92,7 @@ fn private_handler_keeps_hoisted_budget_before_early_returns() {
     }
 }
 
+#[allow(dead_code, unused_variables)]
 mod generated_source_typecheck {
     use allowit_sdk as allowit;
     include!("fixtures/generated-small-payments.rs");
@@ -102,6 +103,7 @@ mod generated_source_typecheck {
     }
 }
 
+#[allow(dead_code, unused_variables)]
 mod generated_invoice_typecheck {
     use allowit_sdk as allowit;
     include!("fixtures/generated-invoice.rs");
@@ -111,6 +113,7 @@ mod generated_invoice_typecheck {
     }
 }
 
+#[allow(dead_code, unused_variables)]
 mod generated_owner_review_typecheck {
     use allowit_sdk as allowit;
     include!("fixtures/generated-owner-review.rs");

@@ -43,6 +43,16 @@ pub(crate) fn registered_path(path: &syn::Path) -> Option<String> {
     crate::registry::canonical_function(&name)
 }
 
+fn unparen(expr: &SynExpr) -> &SynExpr {
+    match expr {
+        SynExpr::Paren(p) => unparen(&p.expr),
+        _ => expr,
+    }
+}
+fn bare_context_string(expr: &SynExpr) -> bool {
+    matches!(unparen(expr),SynExpr::Field(f) if matches!(unparen(&f.base),SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx")) && matches!(&f.member,syn::Member::Named(n) if ["action","merchant","recipient","token","network"].contains(&n.to_string().as_str())))
+}
+
 fn simple_path(path: &syn::Path, name: &str) -> bool {
     path.leading_colon.is_none()
         && path.segments.len() == 1
@@ -107,10 +117,141 @@ fn preference_threshold(expr: &SynExpr, direction: &str) -> Result<(bool, String
 
 struct Parser {
     nodes: usize,
+    params: Option<std::collections::BTreeMap<String, Expr>>,
     helper_calls: Vec<(String, SourceSpan)>,
     preference_steps: Vec<(SourceSpan, Vec<String>)>,
 }
 impl Parser {
+    fn primitive_call(
+        &mut self,
+        call: &syn::ExprCall,
+        depth: usize,
+    ) -> Result<Option<Expr>, CompileError> {
+        if self.params.is_none() {
+            return Ok(None);
+        }
+        let SynExpr::Path(path) = &*call.func else {
+            return Ok(None);
+        };
+        let Some(name) = registered_path(&path.path) else {
+            return Ok(None);
+        };
+        if ![
+            "set_cap",
+            "cap_per_transaction",
+            "cap_purchase_tiers",
+            "allow_actions",
+            "require_merchant",
+            "require_recipient",
+        ]
+        .contains(&name.as_str())
+        {
+            return Ok(None);
+        }
+        if path.path.segments.len() != 2 || !path.attrs.is_empty() || !call.attrs.is_empty() {
+            return Err(error(
+                call.span(),
+                "Use the namespaced primitive guard signature.",
+            ));
+        }
+        let expected: &[(&str, bool)] = match name.as_str() {
+            "set_cap" => &[
+                ("spent_units", false),
+                ("amount_units", false),
+                ("token", true),
+            ],
+            "cap_per_transaction" => &[("amount_units", false), ("token", true)],
+            "cap_purchase_tiers" => &[
+                ("amount_units", false),
+                ("token", true),
+                ("purchase_counts", true),
+            ],
+            "allow_actions" => &[("action", true)],
+            "require_merchant" => &[("merchant", true)],
+            _ => &[("recipient", true)],
+        };
+        let financial = matches!(
+            name.as_str(),
+            "set_cap" | "cap_per_transaction" | "cap_purchase_tiers"
+        );
+        let suffix = if name == "cap_purchase_tiers" {
+            4
+        } else if financial {
+            3
+        } else {
+            1
+        };
+        if call.args.len() != expected.len() + suffix {
+            return Err(error(
+                call.span(),
+                "Arguments do not match the primitive guard signature.",
+            ));
+        }
+        for (arg, (field, borrowed)) in call.args.iter().zip(expected) {
+            let observed = if *borrowed {
+                match arg {
+                    SynExpr::Reference(r) if r.attrs.is_empty() && r.mutability.is_none() => {
+                        &*r.expr
+                    }
+                    _ => return Err(error(arg.span(), "Borrow the exact authenticated field.")),
+                }
+            } else {
+                arg
+            };
+            if !matches!(observed,SynExpr::Field(f) if f.attrs.is_empty() && matches!(&f.member,syn::Member::Named(n) if n==field) && matches!(&*f.base,SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"ctx")))
+            {
+                return Err(error(
+                    arg.span(),
+                    "Use the exact authenticated context field. Caller substitutes cannot enforce this guard.",
+                ));
+            }
+        }
+        let mut args = vec![Expr::Variable { name: "ctx".into() }];
+        let index = expected.len();
+        if financial {
+            let Expr::Integer { value } = self.expr(&call.args[index], depth + 1)? else {
+                return Err(error(
+                    call.args[index].span(),
+                    "Use a fixed amount in integer units or a declared constructor parameter.",
+                ));
+            };
+            if value == 0 {
+                return Err(error(
+                    call.args[index].span(),
+                    "The limit must be positive.",
+                ));
+            }
+            let count = usize::from(name == "cap_purchase_tiers");
+            let currency = self.expr(&call.args[index + 1 + count], depth + 1)?;
+            let decimals = self.expr(&call.args[index + 2 + count], depth + 1)?;
+            if !matches!(&currency,Expr::String{value} if value=="USDC")
+                || !matches!(decimals, Expr::Integer { value: 6 })
+            {
+                return Err(error(
+                    call.span(),
+                    "This profile supports the bound USDC asset with exactly six decimals.",
+                ));
+            }
+            let amount = if value % 1_000_000 == 0 {
+                format!("{}", value / 1_000_000)
+            } else {
+                format!("{}.{:06}", value / 1_000_000, value % 1_000_000)
+            };
+            args.push(Expr::String { value: amount });
+            if count == 1 {
+                args.push(self.expr(&call.args[index + 1], depth + 1)?);
+            }
+            args.push(currency);
+        } else {
+            args.push(self.expr(&call.args[index], depth + 1)?);
+        }
+        Ok(Some(Expr::Call {
+            name,
+            args,
+            span: range(path.span()),
+        }))
+    }
+
     fn preference_step(
         &mut self,
         stmt: &Stmt,
@@ -149,11 +290,47 @@ impl Parser {
                 "Use check_preference(ctx, question, auto_approve, approve_percent, auto_deny, deny_percent).await?; with literal settings.",
             ));
         }
+        let context_arg = if self.params.is_some() {
+            if p.path.segments.len() != 2 || c.args.len() != 4 {
+                return Err(error(
+                    c.span(),
+                    "Use a namespaced preference guard with explicit evidence.",
+                ));
+            }
+            let SynExpr::Call(reader) = &c.args[0] else {
+                return Err(error(
+                    c.args[0].span(),
+                    "Read bound preference evidence explicitly before checking thresholds.",
+                ));
+            };
+            let valid_reader = reader.attrs.is_empty()
+                && reader.args.len() == 2
+                && matches!(&*reader.func,SynExpr::Path(r) if r.attrs.is_empty() && r.qself.is_none() && r.path.segments.len()==2 && registered_path(&r.path).as_deref()==Some("preference_evidence"));
+            if !valid_reader
+                || !matches!(&reader.args[0],SynExpr::Path(r) if r.attrs.is_empty() && r.qself.is_none() && simple_path(&r.path,"ctx"))
+            {
+                return Err(error(
+                    reader.span(),
+                    "Use jev::preference_evidence(ctx, the same literal question).",
+                ));
+            }
+            let read_question = self.expr(&reader.args[1], depth + 1)?;
+            let guard_question = self.expr(&c.args[1], depth + 1)?;
+            if !matches!(&read_question, Expr::String { .. }) || read_question != guard_question {
+                return Err(error(
+                    reader.span(),
+                    "The evidence reader and guard must use the same question.",
+                ));
+            }
+            Expr::Variable { name: "ctx".into() }
+        } else {
+            self.expr(&c.args[0], depth + 1)?
+        };
         let args = if c.args.len() == 4 {
             let (deny, below) = preference_threshold(&c.args[2], "deny")?;
             let (approve, above) = preference_threshold(&c.args[3], "approve")?;
             vec![
-                self.expr(&c.args[0], depth + 1)?,
+                context_arg,
                 self.expr(&c.args[1], depth + 1)?,
                 Expr::Boolean { value: approve },
                 Expr::String { value: above },
@@ -282,6 +459,94 @@ impl Parser {
         let SynExpr::Path(path) = &*call.func else {
             return Ok(None);
         };
+        if self.params.is_some() && path.path.segments.len() != 2 {
+            return Err(error(
+                path.span(),
+                "Use the exact namespaced system function.",
+            ));
+        }
+        if path.qself.is_none() && registered_path(&path.path).as_deref() == Some("stored_limit") {
+            if self.params.is_none()
+                || path.path.segments.len() != 2
+                || !call.attrs.is_empty()
+                || !path.attrs.is_empty()
+                || call.args.len() != 2
+                || !matches!(&call.args[0],SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"ctx"))
+            {
+                return Err(error(
+                    call.span(),
+                    "Read a declared owner limit with stored_limit(ctx, params.field)?.",
+                ));
+            }
+            let SynExpr::Field(field) = &call.args[1] else {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            };
+            if !field.attrs.is_empty()
+                || !matches!(&*field.base,SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"params"))
+            {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            }
+            let binding = self.expr(&call.args[1], depth + 1)?;
+            let Expr::Array { values } = binding else {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            };
+            let [Expr::String { value: key }, Expr::Integer { .. }] = values.as_slice() else {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            };
+            self.helper_calls
+                .push(("stored_limit".into(), range(path.span())));
+            return Ok(Some(Expr::Field {
+                object: Box::new(Expr::Variable { name: "ctx".into() }),
+                name: key.clone(),
+            }));
+        }
+        if path.qself.is_none() && registered_path(&path.path).as_deref() == Some("is_one_of") {
+            if call.args.len() != 2 || !call.attrs.is_empty() || !path.attrs.is_empty() {
+                return Err(error(call.span(), "Use is_one_of(value, &[\"allowed\"])?."));
+            }
+            if bare_context_string(&call.args[0]) {
+                return Err(error(
+                    call.args[0].span(),
+                    "Borrow the authenticated string field.",
+                ));
+            }
+            let value = self.expr(&call.args[0], depth + 1)?;
+            if !matches!(
+                value,
+                Expr::Field { .. } | Expr::String { .. } | Expr::Variable { .. }
+            ) {
+                return Err(error(
+                    call.span(),
+                    "Use a primitive value or a bound scalar field.",
+                ));
+            }
+            let Expr::Array { values } = self.expr(&call.args[1], depth + 1)? else {
+                return Err(error(
+                    call.span(),
+                    "Use an inline string list or a declared list parameter.",
+                ));
+            };
+            if values.is_empty()
+                || values.len() > 32
+                || !values.iter().all(|v| matches!(v, Expr::String { .. }))
+            {
+                return Err(error(call.span(), "Use 1 to 32 literal strings."));
+            }
+            let mut checks = values.into_iter().map(|right| Expr::Binary {
+                op: "==".into(),
+                left: Box::new(value.clone()),
+                right: Box::new(right),
+            });
+            let result = checks.next().expect("nonempty");
+            let result = checks.fold(result, |left, right| Expr::Binary {
+                op: "||".into(),
+                left: Box::new(left),
+                right: Box::new(right),
+            });
+            self.helper_calls
+                .push(("is_one_of".into(), range(path.span())));
+            return Ok(Some(result));
+        }
         let Some(name) = [
             "usdc",
             "percent",
@@ -295,6 +560,12 @@ impl Parser {
         self.tick(call.span(), depth)?;
         if !call.attrs.is_empty() || !path.attrs.is_empty() {
             return Err(error(call.span(), "Helper attributes are not supported."));
+        }
+        if self.params.is_some() && name == "amount_at_most" && path.path.segments.len() != 2 {
+            return Err(error(
+                call.span(),
+                "Use the primitive namespaced amount comparison.",
+            ));
         }
         let count = match name {
             "amount_at_most" => 2,
@@ -340,6 +611,18 @@ impl Parser {
         };
         let result = match name {
             "amount_at_most" => {
+                if self.params.is_some() && path.path.segments.len() == 2 {
+                    if !matches!(&call.args[0], SynExpr::Field(f) if f.attrs.is_empty() && matches!(&f.member,syn::Member::Named(n) if n=="amount_units") && matches!(&*f.base,SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"ctx")))
+                    {
+                        return Err(error(
+                            call.args[0].span(),
+                            "Use the authenticated ctx.amount_units for this purchase guard.",
+                        ));
+                    }
+                    let observed = self.expr(&call.args[0], depth + 1)?;
+                    self.helper_calls.push((name.into(), range(path.span())));
+                    return Ok(Some(binary("<=", observed, integer)));
+                }
                 if !matches!(&call.args[0], SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path, "ctx"))
                 {
                     return Err(error(
@@ -427,7 +710,7 @@ impl Parser {
                 let Pat::Ident(ident) = pat else {
                     return Err(error(pat.span(), "Use a simple immutable variable name."));
                 };
-                if ident.ident.to_string().starts_with("__allowit_") {
+                if ident.ident == "params" || ident.ident.to_string().starts_with("__allowit_") {
                     return Err(error(
                         ident.span(),
                         "This variable prefix is reserved for policy helpers.",
@@ -442,6 +725,14 @@ impl Parser {
                     .ok_or_else(|| error(local.span(), "Variables require an initial value."))?;
                 if init.diverge.is_some() {
                     return Err(error(local.span(), "let-else is not supported."));
+                }
+                if bare_context_string(&init.expr)
+                    || matches!(unparen(&init.expr),SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx"))
+                {
+                    return Err(error(
+                        init.expr.span(),
+                        "Borrow a string field instead of moving it or copying the context.",
+                    ));
                 }
                 Statement::Let {
                     name: ident.ident.to_string(),
@@ -569,16 +860,47 @@ impl Parser {
                 }
             }
             SynExpr::Field(f) => {
+                if matches!(&*f.base,SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"params"))
+                {
+                    let syn::Member::Named(name) = &f.member else {
+                        return Err(error(f.span(), "Use a named constructor parameter."));
+                    };
+                    return self
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get(&name.to_string()))
+                        .cloned()
+                        .ok_or_else(|| {
+                            error(
+                                f.span(),
+                                "Declare this parameter and initialize it in new().",
+                            )
+                        });
+                }
                 let syn::Member::Named(name) = &f.member else {
                     return Err(error(
                         f.span(),
                         "Only named context and confidence fields are supported.",
                     ));
                 };
+                if name == "native_daily_limit" || name == "native_action_limit" {
+                    return Err(error(
+                        f.span(),
+                        "Read declared native storage with stored_limit.",
+                    ));
+                }
                 Expr::Field {
                     object: Box::new(self.expr(&f.base, depth + 1)?),
                     name: name.to_string(),
                 }
+            }
+            SynExpr::Binary(b)
+                if self.params.is_some() && matches!(b.op, BinOp::And(_) | BinOp::Or(_)) =>
+            {
+                return Err(error(
+                    b.span(),
+                    "Use separate sequential guards instead of a combined boolean condition.",
+                ));
             }
             SynExpr::Binary(b) => Expr::Binary {
                 op: match b.op {
@@ -604,6 +926,12 @@ impl Parser {
             SynExpr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => Expr::Not {
                 value: Box::new(self.expr(&u.expr, depth + 1)?),
             },
+            SynExpr::Reference(r)
+                if r.mutability.is_none()
+                    && matches!(&*r.expr,SynExpr::Field(f) if matches!(&f.member,syn::Member::Named(name) if ["token","action","merchant","recipient","network"].contains(&name.to_string().as_str())) && matches!(&*f.base,SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx"))) =>
+            {
+                self.expr(&r.expr, depth + 1)?
+            }
             SynExpr::Try(t) => match self.readable_helper(&t.expr, depth + 1)? {
                 Some(lowered) => lowered,
                 None => Expr::Try {
@@ -614,6 +942,9 @@ impl Parser {
                 value: Box::new(self.expr(&a.base, depth + 1)?),
             },
             SynExpr::Call(c) => {
+                if let Some(lowered) = self.primitive_call(c, depth + 1)? {
+                    return Ok(lowered);
+                }
                 let SynExpr::Path(p) = &*c.func else {
                     return Err(error(
                         c.func.span(),
@@ -629,6 +960,9 @@ impl Parser {
                 } else {
                     return Err(error(p.span(), "Qualified type calls are not supported."));
                 };
+                if self.params.is_some() && name != "Ok" && p.path.segments.len() != 2 {
+                    return Err(error(p.span(), "Use the exact namespaced system function."));
+                }
                 Expr::Call {
                     name,
                     args: c
@@ -773,9 +1107,10 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     let tokens = source
         .parse::<proc_macro2::TokenStream>()
         .map_err(|e| error(e.span(), e.to_string()))?;
+    validate_token_budget(&tokens)?;
+    let (tokens, params) = crate::params::extract(&tokens)?;
     validate_signature(&tokens)?;
     validate_block_shapes(&tokens)?;
-    validate_token_budget(&tokens)?;
     let file = syn::parse2::<syn::File>(tokens).map_err(|e| error(e.span(), e.to_string()))?;
     if !file.attrs.is_empty() || file.shebang.is_some() {
         return Err(CompileError::new(
@@ -816,7 +1151,8 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         || sig.variadic.is_some()
         || !sig.generics.params.is_empty()
         || sig.generics.where_clause.is_some()
-        || sig.inputs.len() != 1
+        || sig.inputs.len() != if params.is_some() { 2 } else { 1 }
+        || (params.is_some() && sig.ident != "_execute")
     {
         return Err(error(
             sig.span(),
@@ -824,8 +1160,10 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         ));
     }
     let valid_arg = matches!(&sig.inputs[0],FnArg::Typed(arg) if arg.attrs.is_empty()&&matches!(&*arg.pat,Pat::Ident(p) if p.ident=="ctx"&&p.mutability.is_none()&&p.by_ref.is_none()&&p.subpat.is_none())&&matches!(&*arg.ty,Type::Reference(r) if r.mutability.is_none()&&r.lifetime.is_none()&&matches!(&*r.elem,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"Context"))));
+    let valid_params = params.is_none()
+        || matches!(&sig.inputs[1],FnArg::Typed(arg) if arg.attrs.is_empty()&&matches!(&*arg.pat,Pat::Ident(p) if p.ident=="params"&&p.mutability.is_none()&&p.by_ref.is_none()&&p.subpat.is_none())&&matches!(&*arg.ty,Type::Reference(r) if r.mutability.is_none()&&r.lifetime.is_none()&&matches!(&*r.elem,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"PolicyParams"))));
     let valid_return = matches!(&sig.output,ReturnType::Type(_,ty) if matches!(&**ty,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"PolicyResult")));
-    if !valid_arg || !valid_return {
+    if !valid_arg || !valid_params || !valid_return {
         return Err(error(
             sig.span(),
             "Use private async fn _execute(ctx: &Context) -> PolicyResult, or a public legacy entrypoint.",
@@ -833,6 +1171,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     }
     let mut parser = Parser {
         nodes: 0,
+        params,
         helper_calls: vec![],
         preference_steps: vec![],
     };
@@ -1032,10 +1371,21 @@ fn validate_signature(tokens: &proc_macro2::TokenStream) -> Result<(), CompileEr
     }
     let mut params = params.stream().into_iter();
     expect(&mut params, &["ctx", ":", "&", "Context"])?;
-    if let Some(last) = params.next()
-        && (!matches(Some(last), ",") || params.next().is_some())
-    {
-        return Err(invalid());
+    if let Some(last) = params.next() {
+        if !matches(Some(last), ",") {
+            return Err(invalid());
+        }
+        if let Some(next) = params.next() {
+            if public || !matches(Some(next), "params") {
+                return Err(invalid());
+            }
+            expect(&mut params, &[":", "&", "PolicyParams"])?;
+            if let Some(last) = params.next()
+                && (!matches(Some(last), ",") || params.next().is_some())
+            {
+                return Err(invalid());
+            }
+        }
     }
     expect(&mut iter, &["-", ">", "PolicyResult"])?;
     if !matches!(iter.next(), Some(TokenTree::Group(body)) if body.delimiter() == Delimiter::Brace)

@@ -109,7 +109,12 @@ impl Validator {
                     let ty = self.expr(value, env, depth + 1, false)?;
                     if !matches!(
                         ty,
-                        Type::String | Type::Integer | Type::Boolean | Type::Interval
+                        Type::String
+                            | Type::ContextString
+                            | Type::Strings
+                            | Type::Integer
+                            | Type::Boolean
+                            | Type::Interval
                     ) {
                         return Err(bad(
                             "A variable must contain an immutable string, integer, boolean or confidence interval.",
@@ -200,6 +205,8 @@ impl Validator {
             Expr::Field { object, name } => match self.expr(object, env, depth + 1, false)? {
                 Type::Context => match name.as_str() {
                     "amount_units" | "allocation_units" | "spent_units" | "now" => Type::Integer,
+                    #[cfg(feature = "std")]
+                    "native_daily_limit" | "native_action_limit" => Type::Integer,
                     "action" | "merchant" | "recipient" | "token" | "network" => {
                         Type::ContextString
                     }
@@ -408,4 +415,48 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         ));
     }
     Ok(())
+}
+
+/// Detect native storage reads in every branch, including unreachable statements.
+#[cfg(feature = "std")]
+pub(crate) fn native_storage_required(program: &Program) -> bool {
+    let mut statements: Vec<&Statement> = program.statements.iter().collect();
+    let mut expressions = Vec::new();
+    while let Some(statement) = statements.pop() {
+        match statement {
+            Statement::Let { value, .. }
+            | Statement::Expression { value, .. }
+            | Statement::Return { value, .. } => expressions.push(value),
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                expressions.push(condition);
+                statements.extend(then_branch);
+                statements.extend(else_branch);
+            }
+        }
+    }
+    while let Some(expr) = expressions.pop() {
+        match expr {
+            Expr::Field { object, name } => {
+                if name == "native_daily_limit" || name == "native_action_limit" {
+                    return true;
+                }
+                expressions.push(object);
+            }
+            Expr::Call { args, .. } | Expr::Array { values: args } => expressions.extend(args),
+            Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
+                expressions.push(value)
+            }
+            Expr::Binary { left, right, .. } => {
+                expressions.push(left);
+                expressions.push(right);
+            }
+            _ => {}
+        }
+    }
+    false
 }

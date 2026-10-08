@@ -53,7 +53,12 @@ impl Collector {
             Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
                 self.expr(value)?
             }
-            Expr::Field { object, .. } => self.expr(object)?,
+            Expr::Field { object, name } => {
+                if name == "native_daily_limit" || name == "native_action_limit" {
+                    self.features.insert(ExecutionFeature::NativePolicyStorage);
+                }
+                self.expr(object)?;
+            }
             Expr::Binary { left, right, .. } => {
                 self.expr(left)?;
                 self.expr(right)?;
