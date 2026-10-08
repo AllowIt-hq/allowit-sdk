@@ -204,3 +204,11 @@ pub async fn require_user_input(_ctx: &Context, _prompt: &str) -> PolicyResult {
         "Use the trusted oracle to obtain an authenticated answer.",
     ))
 }
+
+/// Jev preference evidence and owner-feedback checks.
+/// The trusted oracle supplies evidence and authenticated owner answers.
+pub mod jev {
+    pub use super::semantic;
+    #[cfg(feature = "std")]
+    pub use crate::v1::prelude::check_preference;
+}

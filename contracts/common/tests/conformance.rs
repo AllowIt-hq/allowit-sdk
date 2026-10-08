@@ -267,3 +267,27 @@ fn semantic_evidence_binds_original_intent_and_complete_runtime_context() {
         Err(Error::PolicyDenied)
     );
 }
+
+#[test]
+fn qualified_functions_keep_chain_artifact_and_request_bindings() {
+    let named = SIMPLE
+        .replace("pub async fn evaluate", "async fn _execute")
+        .replace("set_cap(", "allowit::set_cap(")
+        .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
+        .replace("allow_actions(", "allowit::allow_actions(");
+    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap"));
+    let state = fixture(&named);
+    allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact).unwrap();
+    for (amount, pass) in [(10_000_000, true), (10_000_001, false)] {
+        assert_eq!(
+            prepare_execution(&state, &request(&state, amount), 1000).is_ok(),
+            pass
+        );
+    }
+    let original = fixture(SIMPLE);
+    assert_ne!(state.mandate.source_hash, original.mandate.source_hash);
+    assert_eq!(
+        prepare_execution(&state, &request(&original, 1_000_000), 1000),
+        Err(Error::BindingMismatch)
+    );
+}

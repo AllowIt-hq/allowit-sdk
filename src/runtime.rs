@@ -661,7 +661,7 @@ fn validate_artifact(
     policy: &CompiledPolicy,
 ) -> Result<CompiledPolicy, alloc::boxed::Box<Decision>> {
     if policy.language != crate::LANGUAGE
-        || policy.registry_version != crate::REGISTRY_VERSION
+        || !crate::supported_registry_version(&policy.registry_version)
         || digest(policy.source.as_bytes()) != policy.source_hash
         || canonical_ir_hash(&policy.ir).ok().as_ref() != Some(&policy.ir_hash)
     {
