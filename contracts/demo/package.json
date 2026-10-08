@@ -1,8 +1,0 @@
-{
-  "name": "allowit-contract-devnet-demo",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=22" },
-  "scripts": { "start": "node sidecar.mjs", "test": "node --test tests/*.test.mjs" },
-  "dependencies": { "@solana/kit": "8.3.0" }
-}

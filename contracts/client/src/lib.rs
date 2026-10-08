@@ -358,9 +358,74 @@ fn execute(value: &Value) -> Result<Value> {
         "computeBudgetInstructions":allowit_solana::required_compute_budget_instructions().iter().map(instruction_dto).collect::<Vec<_>>()}),
     )
 }
+/// Inspect exact concrete PaySH request bytes without signing or submitting them.
+fn inspect_paysh_request(value: &Value) -> Result<Value> {
+    let bytes = STANDARD
+        .decode(field(value, "requestBase64")?)
+        .map_err(|e| e.to_string())?;
+    let request: allowit_paysh_interface::Request =
+        borsh::from_slice(&bytes).map_err(|e| format!("Invalid PaySH request: {e}"))?;
+    let action = match request.action {
+        allowit_paysh_interface::Action::PayUsdc { amount } if amount > 0 => {
+            json!({"operation":"paysh::pay_usdc", "amountUnits":amount.to_string()})
+        }
+        allowit_paysh_interface::Action::SwapSolToUsdc {
+            amount_in_lamports,
+            min_out_usdc,
+            sqrt_price_limit,
+            tick_arrays,
+        } if amount_in_lamports > 0 && min_out_usdc > 0 && sqrt_price_limit > 0 => {
+            json!({"operation":"paysh::swap_sol_to_usdc", "amountInLamports":amount_in_lamports.to_string(),
+                "minOutUsdc":min_out_usdc.to_string(), "sqrtPriceLimit":sqrt_price_limit.to_string(),
+                "tickArrays":tick_arrays.map(address)})
+        }
+        _ => return Err("PaySH action amounts and price limits must be positive".into()),
+    };
+    if request.expires_slot <= request.signing_slot
+        || request.expires_timestamp <= request.signing_timestamp
+    {
+        return Err("PaySH expiry must follow both signing clocks".into());
+    }
+    Ok(
+        json!({"action":action, "requestHash":allowit_sdk::digest(&bytes),
+        "signedMessageBase64":STANDARD.encode(request.signed_message()),
+        "operationId":hex(&request.operation_id), "nonce":hex(&request.nonce),
+        "challengeHash":hex(&request.challenge_hash), "evidenceHash":hex(&request.evidence_hash),
+        "policy":address(request.policy), "owner":address(request.owner), "program":address(request.program),
+        "network":address(request.network), "moduleDigest":hex(&request.module_digest),
+        "expiresSlot":request.expires_slot.to_string(), "expiresTimestamp":request.expires_timestamp.to_string(),
+        "requestBytes":bytes.len(), "executed":false}),
+    )
+}
+
+/// Explicit namespaces select focused codec operations. Legacy `op` remains readable.
+fn operation(value: &Value) -> Result<&str> {
+    if let Some(name) = value.get("operation") {
+        let name = name.as_str().ok_or("operation must be a string")?;
+        if value.get("op").is_some() {
+            return Err("Use operation or op, not both".into());
+        }
+        return match name {
+            "allowit::compile_policy" => Ok("compile"),
+            "jev::preference_key" => Ok("semantic-key"),
+            "solana::prepare_activation" => Ok("activation"),
+            "solana::prepare_execution" => Ok("execute"),
+            "solana::decode_state" => Ok("decode-state"),
+            "solana::prepare_revoke" => Ok("revoke"),
+            "solana::prepare_state" => Ok("create-state"),
+            "solana::prepare_delegate" => Ok("approve"),
+            "solana::derive_addresses" => Ok("addresses"),
+            "paysh::inspect_request" => Ok("inspect-paysh"),
+            _ => Err("Unknown registered codec operation".into()),
+        };
+    }
+    field(value, "op")
+}
+
 pub fn dispatch(value: &Value) -> Result<Value> {
-    let mut output = match field(value, "op")? {
+    let mut output = match operation(value)? {
         "compile" => compile_only(value)?,
+        "inspect-paysh" => inspect_paysh_request(value)?,
         "activation" => activation(value)?,
         "execute" => execute(value)?,
         "decode-state" => state_dto(&decode_input(value)?),
@@ -393,7 +458,7 @@ pub fn dispatch(value: &Value) -> Result<Value> {
 mod tests {
     use super::*;
     fn fixture() -> Value {
-        json!({"op":"activation","source":"pub async fn exec(ctx: &Context) -> PolicyResult { set_cap(ctx, \"5\", \"USDC\")?; Ok(()) }","originalIntent":"Only small USDC transfers",
+        json!({"op":"activation","source":"pub async fn exec(ctx: &Context) -> PolicyResult { allowit::set_cap(ctx, \"5\", \"USDC\")?; Ok(()) }","originalIntent":"Only small USDC transfers",
             "policyId":"01".repeat(32),"programId":address([9;32]),"stateAddress":address([8;32]),"owner":address([1;32]),"executor":address([2;32]),"compiler":address([3;32]),"recipient":address([4;32]),
             "revision":"1","expiresAt":"2000","allocationUnits":"9007199254740993"})
     }

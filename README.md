@@ -212,3 +212,7 @@ Builds without `oracle-ledger` reject purchase-tier IR during validation with `L
 ## License
 
 AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.
+
+## Native Devnet demo
+
+The [native Rust demo codec](contracts/client/README.md) compiles namespaced policies and prepares bounded rail requests. Concrete PaySH request inspection uses the current signed Borsh interface. Live submission and recovery use the native lifecycle through the engine and action CLI.

@@ -6,6 +6,7 @@ edition = "2024"
 [workspace]
 
 [dependencies]
+allowit-paysh-interface = { path = "../../crates/paysh-interface" }
 allowit-contract-core = { path = "../common", features = ["compiler"] }
 allowit-solana = { path = "../solana", features = ["no-entrypoint"] }
 allowit-sdk = { path = "../..", default-features = false, features = ["compiler"] }
