@@ -61,6 +61,10 @@ pub struct PreparedSetup {
     pub allocation_lamports: u64,
     pub message: String,
     pub unsigned_transaction: String,
+    #[serde(default)]
+    pub blockhash_context_slot: Option<u64>,
+    #[serde(default)]
+    pub last_valid_block_height: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -76,6 +80,8 @@ pub enum ExecutionStatus {
     Finalized(Settlement),
     /// Both expiry clocks passed at finalized commitment and nonce is absent.
     ProvenAbsent,
+    /// Nonce receipt proves execution, but finalized transaction metadata is unavailable.
+    ConsumedUnlocated,
 }
 
 pub struct PayShClient {
@@ -449,6 +455,16 @@ impl PayShClient {
             allocation_lamports,
             message: STANDARD.encode(message),
             unsigned_transaction: STANDARD.encode(unsigned),
+            blockhash_context_slot: Some(
+                block["context"]["slot"]
+                    .as_u64()
+                    .ok_or_else(|| Error::config("Missing blockhash context"))?,
+            ),
+            last_valid_block_height: Some(
+                block["value"]["lastValidBlockHeight"]
+                    .as_u64()
+                    .ok_or_else(|| Error::config("Missing blockhash expiry height"))?,
+            ),
         })
     }
 
@@ -1094,15 +1110,16 @@ impl PayShClient {
                 }
             }
         }
-        Err(Error::uncertain(
-            "Authorization was consumed; its finalized transaction is unavailable. Preserve its proof and do not create another payment.",
-        ))
+        Ok(ExecutionStatus::ConsumedUnlocated)
     }
 
     pub fn finalized(&self, prepared: &PreparedExecution) -> Result<bool> {
         match self.settlement(prepared)? {
             ExecutionStatus::Finalized(_) => Ok(true),
             ExecutionStatus::Pending => Ok(false),
+            ExecutionStatus::ConsumedUnlocated => Err(Error::uncertain(
+                "Authorization consumed; finalized transaction unavailable. Do not create another payment",
+            )),
             ExecutionStatus::ProvenAbsent => Err(Error::denied(
                 "Authorization expired without a finalized receipt",
             )),
@@ -1125,14 +1142,53 @@ impl PayShClient {
         }
         self.check_setup_packet(prepared, &prepared.unsigned_transaction, None)?;
         let decoded = packet_message(&raw[65..])?;
-        let valid = self.rpc.call(
-            "isBlockhashValid",
-            json!([decoded.blockhash,{"commitment":"finalized"}]),
-        )?;
+        self.setup_blockhash_expired(prepared, decoded.blockhash)
+    }
+
+    fn setup_blockhash_expired(&self, prepared: &PreparedSetup, blockhash: Key) -> Result<bool> {
+        let (Some(context_slot), Some(last_valid_height)) = (
+            prepared.blockhash_context_slot,
+            prepared.last_valid_block_height,
+        ) else {
+            return Ok(false); // Legacy journals cannot prove coherent expiry.
+        };
+        let options = json!({"commitment":"finalized", "minContextSlot":context_slot});
+        let height = self
+            .rpc
+            .call("getBlockHeight", json!([options.clone()]))?
+            .as_u64()
+            .ok_or_else(|| Error::config("Invalid finalized block height"))?;
+        if height <= last_valid_height {
+            return Ok(false);
+        }
+        let valid = self
+            .rpc
+            .call("isBlockhashValid", json!([blockhash, options]))?;
+        if valid["context"]["slot"]
+            .as_u64()
+            .is_none_or(|slot| slot < context_slot)
+        {
+            return Err(Error::config("Lagging finalized blockhash context"));
+        }
         valid["value"]
             .as_bool()
             .map(|valid| !valid)
             .ok_or_else(|| Error::config("Invalid finalized blockhash status"))
+    }
+
+    /// A signed owner installation can be abandoned only after finalized
+    /// blockhash expiry and finalized absence of its permanent policy account.
+    pub fn setup_proven_absent(&self, prepared: &PreparedSetup, signed: &str) -> Result<bool> {
+        Self::verify_setup_signature(prepared, signed)?;
+        self.check_setup_packet(prepared, signed, None)?;
+        let raw = STANDARD
+            .decode(signed)
+            .map_err(|_| Error::config("Invalid setup packet"))?;
+        let decoded = packet_message(&raw[65..])?;
+        if !self.setup_blockhash_expired(prepared, decoded.blockhash)? {
+            return Ok(false);
+        }
+        Ok(account(&*self.rpc, prepared.policy, prepared.blockhash_context_slot)?.is_none())
     }
 }
 
@@ -2001,6 +2057,91 @@ mod tests {
         tx["meta"] = json!({"err":null});
         tx["transaction"]["message"]["instructions"] = json!([ix.clone(), ix]);
         assert!(settlement_transaction(&tx, "relayer", program, &[1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn setup_expiry_requires_height_and_coherent_finalized_context() {
+        struct ExpiryRpc {
+            height: u64,
+            slot: u64,
+            valid: bool,
+        }
+        impl Rpc for ExpiryRpc {
+            fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+                match method {
+                    "getBlockHeight" => {
+                        assert_eq!(params[0]["minContextSlot"], 100);
+                        Ok(json!(self.height))
+                    }
+                    "isBlockhashValid" => {
+                        assert_eq!(params[1]["minContextSlot"], 100);
+                        Ok(json!({"context":{"slot":self.slot},"value":self.valid}))
+                    }
+                    _ => panic!("unexpected RPC {method}"),
+                }
+            }
+        }
+        let proof = PreparedSetup {
+            owner: Key([1; 32]),
+            policy: Key([2; 32]),
+            sol_vault: Key([3; 32]),
+            config_bytes: String::new(),
+            allocation_lamports: 1,
+            message: String::new(),
+            unsigned_transaction: String::new(),
+            blockhash_context_slot: Some(100),
+            last_valid_block_height: Some(200),
+        };
+        let client = |height, slot, valid| {
+            PayShClient::new(
+                Deployment {
+                    program: Key([4; 32]),
+                    genesis: Key([5; 32]),
+                    module_digest: [6; 32],
+                    program_artifact: [7; 32],
+                    upgrade_authority: None,
+                    pool_program: Key([8; 32]),
+                    pool_program_artifact: [9; 32],
+                    pool_upgrade_authority: None,
+                    lookup_table: None,
+                    compute_limit: 100_000,
+                },
+                Arc::new(ExpiryRpc {
+                    height,
+                    slot,
+                    valid,
+                }),
+            )
+            .unwrap()
+        };
+        let hash = Key([10; 32]);
+        assert!(
+            !client(200, 100, false)
+                .setup_blockhash_expired(&proof, hash)
+                .unwrap()
+        );
+        assert!(
+            !client(201, 101, true)
+                .setup_blockhash_expired(&proof, hash)
+                .unwrap()
+        );
+        assert!(
+            client(201, 99, false)
+                .setup_blockhash_expired(&proof, hash)
+                .is_err()
+        );
+        assert!(
+            client(201, 101, false)
+                .setup_blockhash_expired(&proof, hash)
+                .unwrap()
+        );
+        let mut legacy = proof;
+        legacy.blockhash_context_slot = None;
+        assert!(
+            !client(201, 101, false)
+                .setup_blockhash_expired(&legacy, hash)
+                .unwrap()
+        );
     }
 
     #[test]
