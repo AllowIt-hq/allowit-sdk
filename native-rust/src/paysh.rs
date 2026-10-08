@@ -139,6 +139,14 @@ impl PayShClient {
         ))
     }
 
+    /// Public, verified address snapshot for owner-side v0 intent decoding.
+    /// Addresses contain no signing material and cannot confer authority.
+    pub fn lookup_snapshot(&self) -> Result<Option<LookupTable>> {
+        self.verify_deployment()?;
+        let (slot, _) = self.clock()?;
+        self.lookup(slot)
+    }
+
     pub fn token_balance(&self, address: Key) -> Result<u64> {
         let a = account(&*self.rpc, address, None)?
             .ok_or_else(|| Error::config("Missing policy token account"))?;
