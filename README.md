@@ -46,7 +46,7 @@ fn new() -> PolicyParams {
 }
 ```
 
-Inside the handler, `allowit::stored_limit(ctx, params.action_limit)?` returns the current owner-controlled primitive. The native adapter supplies verified account state through `Context.native_policy_storage`. Request JSON and `runtime_context` are not storage. The adapter checks constructor defaults against the original installation and reads current limits after owner-authorized updates. Only the two named native fields are admitted. Missing state fails closed. The portable contract profile rejects native storage, including unreachable reads.
+Inside the handler, `allowit::stored_limit(ctx, params.action_limit)?` returns the current owner-controlled primitive. The native adapter supplies verified account state through `Context.native_policy_storage`. The JSON protocol rejects `native_policy_storage`. Trusted adapters use the typed evaluator. Request JSON and `runtime_context` are not storage. The adapter checks constructor defaults against the original installation and reads current limits after owner-authorized updates. Only the two named native fields are admitted. Missing state fails closed. The portable contract profile rejects native storage, including unreachable reads.
 
 The registry identifies this source profile as 1.2.0. Historical one-argument source profiles retain their old compiler semantics for artifact validation and recovery. Current primitive Rust exports do not reproduce historical whole-context signatures. New generation uses the constructor profile. Typed vendor movements require their own implemented source and execution binding.
 
@@ -186,7 +186,7 @@ Use decimal strings in policy source; runtime context remains JSON with integer 
 | --- | --- |
 | `usdc("25.50")?` | 25.50 USDC, exactly 25,500,000 units; up to six decimals. Zero is allowed in comparisons. |
 | `percent("85.25")?` | 85.25%, exactly 8,525 basis points; 0–100 with up to two decimals. |
-| `amount_at_most(ctx, "25.50")?` | Whether this purchase is at or below 25.50 USDC, including equality. |
+| `allowit::amount_at_most(ctx.amount_units, "25.50")?` | Whether this purchase is at or below 25.50 USDC, including equality. |
 | `within_percentage_points(candidate, benchmark, "1")?` | Whether a candidate return is at most one percentage point below the benchmark. Both values are immutable integer variables or literals in basis points; 4% versus 5% passes. Higher returns pass. |
 
 These helpers do not create an allowance. Use `set_cap` for the total allocation and `cap_per_transaction` for a per-purchase limit, with explicit positive integer units, currency and decimals. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.

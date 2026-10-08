@@ -418,3 +418,56 @@ fn new_source_requires_namespaces_and_borrowed_string_reads() {
     }
     assert!(compile(&source("let recipient=&ctx.recipient; if !allowit::is_one_of(recipient, &[\"a\"])? {return allowit::fail(\"no\");} Ok(())")).is_ok());
 }
+
+#[test]
+fn purchase_amount_helper_requires_authenticated_amount() {
+    let good = source(
+        "if !allowit::amount_at_most(ctx.amount_units, \"3\")? { return allowit::fail(\"Too large\"); } Ok(())",
+    );
+    let policy = compile(&good).unwrap();
+    let mut ctx = context();
+    ctx.amount_units = 3_000_000;
+    assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, "pass");
+    ctx.amount_units += 1;
+    assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, "fail");
+    for replacement in ["0", "ctx.spent_units", "params.amount"] {
+        let forged = good
+            .replace("ctx.amount_units", replacement)
+            .replace(
+                "struct PolicyParams {}",
+                "struct PolicyParams { amount: u64 }",
+            )
+            .replace("PolicyParams{}", "PolicyParams{amount: 0}");
+        assert!(compile(&forged).is_err(), "accepted {replacement}");
+    }
+}
+#[test]
+fn public_json_protocol_cannot_supply_native_storage() {
+    let source = include_str!("fixtures/native-storage-policy.rs");
+    let mut request = serde_json::json!({"operation":"evaluate","profile":"oracle","source":source,"context":context()});
+    let response = allowit_sdk::process_value(request.clone());
+    assert_eq!(response["decision"]["code"], "NATIVE_STORAGE_REQUIRED");
+    for claimed in [
+        serde_json::Value::Null,
+        serde_json::json!({"daily_limit_units":50_000_000,"action_limit_units":50_000_000}),
+    ] {
+        request["context"]["native_policy_storage"] = claimed;
+        let response = allowit_sdk::process_value(request.clone());
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "INVALID_CONTEXT");
+        request["trace"] = serde_json::json!(true);
+        let traced = allowit_sdk::process_value(request.clone());
+        assert_eq!(traced["error"]["code"], "INVALID_CONTEXT");
+    }
+    let mut ctx = context();
+    ctx.native_policy_storage = Some(allowit_sdk::NativePolicyStorage {
+        daily_limit_units: 50_000_001,
+        action_limit_units: 1,
+    });
+    assert_eq!(
+        allowit_sdk::stored_limit(&ctx, allowit_sdk::owner_limit("native_action_limit", 1))
+            .unwrap_err()
+            .code,
+        "INVALID_NATIVE_STORAGE"
+    );
+}

@@ -612,6 +612,13 @@ impl Parser {
         let result = match name {
             "amount_at_most" => {
                 if self.params.is_some() && path.path.segments.len() == 2 {
+                    if !matches!(&call.args[0], SynExpr::Field(f) if f.attrs.is_empty() && matches!(&f.member,syn::Member::Named(n) if n=="amount_units") && matches!(&*f.base,SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"ctx")))
+                    {
+                        return Err(error(
+                            call.args[0].span(),
+                            "Use the authenticated ctx.amount_units for this purchase guard.",
+                        ));
+                    }
                     let observed = self.expr(&call.args[0], depth + 1)?;
                     self.helper_calls.push((name.into(), range(path.span())));
                     return Ok(Some(binary("<=", observed, integer)));

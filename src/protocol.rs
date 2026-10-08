@@ -118,6 +118,16 @@ pub fn process_value(request: Value) -> Value {
             }
             Some(_) => return failure("INVALID_REQUEST", "trace must be a boolean."),
         };
+        if request
+            .get("context")
+            .and_then(|v| v.get("native_policy_storage"))
+            .is_some()
+        {
+            return failure(
+                "INVALID_CONTEXT",
+                "Request JSON cannot supply native policy storage. Use the typed evaluator with verified adapter state.",
+            );
+        }
         let context: Context = match request.get("context").cloned() {
             Some(v) => match serde_json::from_value(v) {
                 Ok(ctx) => ctx,

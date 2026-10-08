@@ -55,6 +55,7 @@ pub fn cap_per_transaction(
     }
     Ok(())
 }
+/// Compare the authenticated purchase amount; authored policies must pass ctx.amount_units.
 pub fn amount_at_most(amount_units: u64, amount: &str) -> Result<bool, PolicyError> {
     Ok(amount_units <= crate::prelude::usdc(amount)?)
 }
@@ -203,6 +204,12 @@ pub fn stored_limit(ctx: &crate::Context, limit: OwnerLimit) -> Result<u64, Poli
             "Verified native policy storage is required.",
         )
     })?;
+    if storage.daily_limit_units > 50_000_000 || storage.action_limit_units > 50_000_000 {
+        return Err(denied(
+            "INVALID_NATIVE_STORAGE",
+            "Native limit exceeds its supported range.",
+        ));
+    }
     match limit.key {
         "native_daily_limit" => Ok(storage.daily_limit_units),
         "native_action_limit" => Ok(storage.action_limit_units),
