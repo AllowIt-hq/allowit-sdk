@@ -60,6 +60,21 @@ pub struct PreparedSetup {
     pub unsigned_transaction: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settlement {
+    pub signature: String,
+    pub finalized_slot: u64,
+    pub invocation_index: u16,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExecutionStatus {
+    Pending,
+    Finalized(Settlement),
+    /// Both expiry clocks passed at finalized commitment and nonce is absent.
+    ProvenAbsent,
+}
+
 pub struct PayShClient {
     pub deployment: Deployment,
     rpc: Arc<dyn Rpc>,
@@ -341,7 +356,7 @@ impl PayShClient {
             &[interface::POLICY_SEED, &p.owner, &p.config.instance_id],
             self.deployment.program,
         )?;
-        if p.version != 1
+        if !matches!(p.version, 1 | 2)
             || p.bump != expected.1
             || expected.0 != address
             || p.config.network != self.deployment.genesis.0
@@ -696,15 +711,6 @@ impl PayShClient {
             ));
         }
         let encoded = STANDARD.encode(&raw);
-        let simulation = self.rpc.call(
-            "simulateTransaction",
-            json!([encoded,{"encoding":"base64","sigVerify":true,"commitment":"finalized"}]),
-        )?;
-        if !simulation["value"]["err"].is_null() || simulation.get("value").is_none() {
-            return Err(Error::denied(
-                "Native PaySH simulation rejected the exact transaction",
-            ));
-        }
         Ok(PreparedExecution {
             signature: bs58::encode(signature).into_string(),
             signed_bytes: encoded,
@@ -948,6 +954,12 @@ impl PayShClient {
     pub fn broadcast(&self, prepared: &PreparedExecution) -> Result<()> {
         verify_packet(prepared)?;
         self.check_execution_packet(prepared, None)?;
+        let simulation = self.rpc.call("simulateTransaction", json!([prepared.signed_bytes,{"encoding":"base64","sigVerify":true,"commitment":"finalized"}]))?;
+        if simulation.get("value").is_none() || !simulation["value"]["err"].is_null() {
+            return Err(Error::uncertain(
+                "Native simulation rejected the saved approval. Reconcile its nonce before any replacement.",
+            ));
+        }
         let result = self.rpc.call("sendTransaction", json!([prepared.signed_bytes,{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","maxRetries":0}]))?;
         if result.as_str() != Some(&prepared.signature) {
             return Err(Error::uncertain(
@@ -956,54 +968,218 @@ impl PayShClient {
         }
         Ok(())
     }
-    pub fn finalized(&self, prepared: &PreparedExecution) -> Result<bool> {
+    /// Reconcile the authorization's nonce, not just the sponsor signature.
+    /// Another permitted relayer may have finalized the same request first.
+    pub fn settlement(&self, prepared: &PreparedExecution) -> Result<ExecutionStatus> {
         verify_packet(prepared)?;
-        let statuses = self.rpc.call(
-            "getSignatureStatuses",
-            json!([[prepared.signature],{"searchTransactionHistory":true}]),
-        )?;
-        let s = &statuses["value"][0];
-        if s.is_null() || s["confirmationStatus"] != "finalized" {
-            return Ok(false);
-        }
-        if !s["err"].is_null() {
-            return Err(Error::denied(
-                "PaySH transaction finalized with an execution error",
-            ));
-        }
-        let tx = self.rpc.call("getTransaction", json!([prepared.signature,{"encoding":"base64","commitment":"finalized","maxSupportedTransactionVersion":0}]))?;
-        if tx.is_null() {
-            return Ok(false);
-        }
-        if !tx["meta"]["err"].is_null()
-            || tx["transaction"][1] != "base64"
-            || tx["transaction"][0] != prepared.signed_bytes
-        {
-            return Err(Error::config(
-                "Finalized PaySH transaction differs from the saved exact packet",
-            ));
-        }
-        self.check_execution_packet(prepared, Some(&tx["meta"]))?;
-        let a = account(&*self.rpc, prepared.receipt, s["slot"].as_u64())?
-            .ok_or_else(|| Error::config("Finalized execution has no receipt"))?;
-        let r = Receipt::try_from_slice(&a.data)
-            .map_err(|_| Error::config("Invalid execution receipt"))?;
         let request: Request = borsh::from_slice(
             &STANDARD
                 .decode(&prepared.request_bytes)
                 .map_err(|_| Error::config("Invalid saved request"))?,
         )
         .map_err(|_| Error::config("Invalid saved request"))?;
-        if a.owner != self.deployment.program
-            || r.version != 1
-            || r.request_hash != prepared.request_hash
-            || r.operation_id != request.operation_id
-            || r.signing_timestamp != request.signing_timestamp
+        let policy = self.policy(Key(request.policy))?;
+        let raw = STANDARD
+            .decode(&prepared.signed_bytes)
+            .map_err(|_| Error::config("Invalid saved packet"))?;
+        let decoded = packet_message(&raw[65..])?;
+        if request.program != self.deployment.program.0
+            || request.owner != policy.owner
+            || request.network != self.deployment.genesis.0
+            || request.module_digest != policy.config.module_digest
+            || request.service_fee_lamports != policy.config.service_fee_lamports
+            || decoded.instructions[1].1[16..48] != policy.config.evaluator
         {
-            return Err(Error::config("Receipt does not bind this policy execution"));
+            return Err(Error::config(
+                "Saved approval differs from the installed scope",
+            ));
         }
-        Ok(true)
+        let genesis = self.rpc.call("getGenesisHash", json!([]))?;
+        if genesis.as_str() != Some(&self.deployment.genesis.to_string()) {
+            return Err(Error::config("Recovery RPC network differs"));
+        }
+        let (slot, timestamp) = self.clock()?;
+        let Some(a) = account(&*self.rpc, prepared.receipt, Some(slot))? else {
+            return Ok(
+                if slot > request.expires_slot && timestamp > request.expires_timestamp {
+                    ExecutionStatus::ProvenAbsent
+                } else {
+                    ExecutionStatus::Pending
+                },
+            );
+        };
+        let receipt = Receipt::try_from_slice(&a.data)
+            .map_err(|_| Error::config("Invalid execution receipt"))?;
+        if a.owner != self.deployment.program
+            || a.executable
+            || receipt.version != 1
+            || receipt.request_hash != prepared.request_hash
+            || receipt.operation_id != request.operation_id
+            || receipt.signing_timestamp != request.signing_timestamp
+        {
+            return Err(Error::config(
+                "Receipt does not bind the saved authorization",
+            ));
+        }
+        let expected = borsh::to_vec(&interface::Instruction::Execute(request))
+            .map_err(|_| Error::config("Invalid saved request"))?;
+        // First check the original sponsor packet. If it lost a permissionless
+        // race, use finalized address history to locate the successful relayer.
+        let mut candidates = vec![prepared.signature.clone()];
+        let mut before: Option<String> = None;
+        for page in 0..=4 {
+            for signature in candidates.drain(..) {
+                let tx = self.rpc.call("getTransaction", json!([signature,{"encoding":"json","commitment":"finalized","maxSupportedTransactionVersion":0}]))?;
+                if tx.is_null() || !tx["meta"]["err"].is_null() {
+                    continue;
+                }
+                if let Some(settled) =
+                    settlement_transaction(&tx, &signature, self.deployment.program, &expected)?
+                {
+                    return Ok(ExecutionStatus::Finalized(settled));
+                }
+            }
+            if page == 4 {
+                break;
+            }
+            let mut options = json!({"limit":100,"commitment":"finalized","minContextSlot":slot});
+            if let Some(before) = &before {
+                options["before"] = json!(before);
+            }
+            let history = self.rpc.call(
+                "getSignaturesForAddress",
+                json!([prepared.receipt, options]),
+            )?;
+            let history = history
+                .as_array()
+                .ok_or_else(|| Error::config("Invalid receipt address history"))?;
+            if history.is_empty() {
+                break;
+            }
+            before = history
+                .last()
+                .and_then(|v| v["signature"].as_str())
+                .map(str::to_owned);
+            for entry in history {
+                if entry["err"].is_null() {
+                    candidates.push(
+                        entry["signature"]
+                            .as_str()
+                            .ok_or_else(|| Error::config("Invalid settlement signature"))?
+                            .to_owned(),
+                    );
+                }
+            }
+        }
+        Err(Error::uncertain(
+            "Authorization was consumed; its finalized transaction is unavailable. Preserve its proof and do not create another payment.",
+        ))
     }
+
+    pub fn finalized(&self, prepared: &PreparedExecution) -> Result<bool> {
+        match self.settlement(prepared)? {
+            ExecutionStatus::Finalized(_) => Ok(true),
+            ExecutionStatus::Pending => Ok(false),
+            ExecutionStatus::ProvenAbsent => Err(Error::denied(
+                "Authorization expired without a finalized receipt",
+            )),
+        }
+    }
+
+    /// Refresh only an unsigned installation after its old blockhash has
+    /// positively expired. Signed owner proofs remain separately durable.
+    pub fn setup_expired(&self, prepared: &PreparedSetup) -> Result<bool> {
+        let raw = STANDARD
+            .decode(&prepared.unsigned_transaction)
+            .map_err(|_| Error::config("Invalid setup packet"))?;
+        if raw.len() < 65
+            || raw.len() > 1232
+            || raw[0] != 1
+            || raw[1..65] != [0; 64]
+            || STANDARD.encode(&raw[65..]) != prepared.message
+        {
+            return Err(Error::config("Invalid unsigned setup proof"));
+        }
+        self.check_setup_packet(prepared, &prepared.unsigned_transaction, None)?;
+        let decoded = packet_message(&raw[65..])?;
+        let valid = self.rpc.call(
+            "isBlockhashValid",
+            json!([decoded.blockhash,{"commitment":"finalized"}]),
+        )?;
+        valid["value"]
+            .as_bool()
+            .map(|valid| !valid)
+            .ok_or_else(|| Error::config("Invalid finalized blockhash status"))
+    }
+}
+
+fn settlement_transaction(
+    tx: &serde_json::Value,
+    signature: &str,
+    program: Key,
+    expected: &[u8],
+) -> Result<Option<Settlement>> {
+    if tx["transaction"]["signatures"][0] != signature {
+        return Err(Error::config("Settlement signature differs"));
+    }
+    let message = &tx["transaction"]["message"];
+    let mut keys = Vec::new();
+    for list in [
+        &message["accountKeys"],
+        &tx["meta"]["loadedAddresses"]["writable"],
+        &tx["meta"]["loadedAddresses"]["readonly"],
+    ] {
+        if list.is_null() {
+            continue;
+        }
+        for value in list
+            .as_array()
+            .ok_or_else(|| Error::config("Invalid settlement accounts"))?
+        {
+            keys.push(Key::parse(
+                value
+                    .as_str()
+                    .ok_or_else(|| Error::config("Invalid settlement account"))?,
+            )?);
+        }
+    }
+    let mut found = None;
+    for (index, instruction) in message["instructions"]
+        .as_array()
+        .ok_or_else(|| Error::config("Invalid settlement instructions"))?
+        .iter()
+        .enumerate()
+    {
+        let program_index = instruction["programIdIndex"]
+            .as_u64()
+            .ok_or_else(|| Error::config("Invalid settlement program index"))?
+            as usize;
+        if keys.get(program_index) != Some(&program) {
+            continue;
+        }
+        let bytes = bs58::decode(
+            instruction["data"]
+                .as_str()
+                .ok_or_else(|| Error::config("Invalid settlement instruction"))?,
+        )
+        .into_vec()
+        .map_err(|_| Error::config("Invalid settlement instruction"))?;
+        if bytes == expected {
+            if found.is_some() {
+                return Err(Error::config("Repeated settlement execution"));
+            }
+            found = Some(Settlement {
+                signature: signature.into(),
+                finalized_slot: tx["slot"]
+                    .as_u64()
+                    .ok_or_else(|| Error::config("Missing finalized settlement slot"))?,
+                invocation_index: index
+                    .try_into()
+                    .map_err(|_| Error::config("Invalid settlement invocation index"))?,
+            });
+        }
+    }
+    Ok(found)
 }
 
 fn setup_instructions(
