@@ -1,4 +1,4 @@
-use crate::{CompileError, Expr, MAX_DEPTH, MAX_NODES, Program, REGISTRY_VERSION, Statement};
+use crate::{CompileError, Expr, IR_VERSION, MAX_DEPTH, MAX_NODES, Program, Statement};
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
@@ -391,8 +391,8 @@ fn valid_name(s: &str) -> bool {
 /// Validate every branch of an IR program, including unreachable code.
 /// This is also required when a contract receives serialized IR.
 pub fn validate_program(program: &Program) -> Result<(), CompileError> {
-    if program.version != REGISTRY_VERSION {
-        return Err(bad("Unsupported function-registry version."));
+    if program.version != IR_VERSION {
+        return Err(bad("Unsupported canonical IR version."));
     }
     let mut env = BTreeMap::new();
     env.insert("ctx".to_string(), Type::Context);
