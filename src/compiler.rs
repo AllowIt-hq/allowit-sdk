@@ -719,9 +719,8 @@ impl Parser {
                 if init.diverge.is_some() {
                     return Err(error(local.span(), "let-else is not supported."));
                 }
-                if self.params.is_some()
-                    && (bare_context_string(&init.expr)
-                        || matches!(unparen(&init.expr),SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx")))
+                if bare_context_string(&init.expr)
+                    || matches!(unparen(&init.expr),SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx"))
                 {
                     return Err(error(
                         init.expr.span(),
