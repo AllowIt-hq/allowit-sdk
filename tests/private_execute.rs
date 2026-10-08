@@ -91,3 +91,31 @@ fn private_handler_keeps_hoisted_budget_before_early_returns() {
         assert_eq!(evaluate(&policy, profile, &ctx).outcome, "fail");
     }
 }
+
+mod generated_source_typecheck {
+    use allowit_sdk as allowit;
+    include!("fixtures/generated-small-payments.rs");
+
+    #[test]
+    fn exact_generated_source_typechecks_as_rust() {
+        let _ = _execute;
+    }
+}
+
+mod generated_invoice_typecheck {
+    use allowit_sdk as allowit;
+    include!("fixtures/generated-invoice.rs");
+    #[test]
+    fn exact_generated_source_typechecks_as_rust() {
+        let _ = _execute;
+    }
+}
+
+mod generated_owner_review_typecheck {
+    use allowit_sdk as allowit;
+    include!("fixtures/generated-owner-review.rs");
+    #[test]
+    fn exact_generated_source_typechecks_as_rust() {
+        let _ = _execute;
+    }
+}

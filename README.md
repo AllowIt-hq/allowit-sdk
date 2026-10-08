@@ -20,12 +20,13 @@ The Go [action CLI](https://github.com/AllowIt-hq/allowit-cli) is a separate cli
 
 New policies declare `async fn _execute(ctx: &Context) -> PolicyResult` with
 `use allowit::v1::prelude::*;`. Write each limit and required identifier in the
-source as a literal or an immutable local value. Undeclared installation names
+source as a literal. Configuration calls require literal arguments. Undeclared installation names
 are rejected, including names in unreachable branches.
 
 The compiler lowers this private handler to the same checked IR used by the
 shared evaluator. Contract `execute(...)` entrypoints authenticate the request
 and enforce their existing mandate, budget and replay checks before settlement.
+A top-level cap applies even when an earlier branch returns.
 The source handler does not replace those entrypoints. Public legacy source
 entrypoints remain accepted. Typed native operation arguments and additional
 helper functions are not part of this source profile.
@@ -64,6 +65,9 @@ The prelude is a type-checking facade, not a replacement for the compiler/interp
 Each registered policy function accepts an explicit `allowit::` prefix. `jev::semantic` and `jev::check_preference` select the existing preference checks. Unqualified calls remain supported. The compiler resolves exact registered names and lowers them to the same bounded operations. The registry exposes each accepted spelling with its signature and effect. Wrong prefixes, unknown operations, deeper paths and generic calls fail compilation.
 
 Namespaces identify policy checks. A core check such as `allowit::allow_actions` compares exact labels. It does not execute or classify a vendor operation. PaySH and other vendor prefixes require concrete operations with their own bounded implementation and execution bindings. The restricted compiler rejects `paysh::pay`, `paysh::swap` and other unregistered vendor calls. Native vendor transport requires a separate execution interface.
+
+Source registry 1.1.0 requires compatible rebuilt rail contracts. Contracts that
+accept only registry 1.0.0 reject these new artifacts. This change does not deploy contracts.
 
 Qualified calls preserve the current interpreter, contract opcodes and execution requirements. Source spans and source hashes still bind the exact policy text. Changing the spelling therefore requires a new compiled artifact and the corresponding mandate binding. Solana and Stellar adapters consume that artifact through the shared contract core. A Near adapter requires its own host, asset, authorization and settlement integration.
 

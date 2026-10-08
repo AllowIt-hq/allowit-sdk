@@ -131,6 +131,12 @@ impl Parser {
         if p.qself.is_some() || registered_path(&p.path).as_deref() != Some("check_preference") {
             return Ok(None);
         }
+        if p.path.segments.len() == 2 && c.args.len() != 4 {
+            return Err(error(
+                c.span(),
+                "Use the four-argument namespaced preference check.",
+            ));
+        }
         self.tick(stmt.span(), depth)?;
         if !t.attrs.is_empty()
             || !a.attrs.is_empty()

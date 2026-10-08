@@ -479,6 +479,7 @@ fn qualified_checks_authorize_the_same_spl_transfer() {
         .replace("set_cap(", "allowit::set_cap(")
         .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
         .replace("allow_actions(", "allowit::allow_actions(");
+    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap"));
     let f = Fixture::new(&named);
     let old_stub = set_syscall_stubs(Box::new(TokenCpi { program: f.program }));
     f.initialize();

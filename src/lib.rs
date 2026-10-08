@@ -32,10 +32,13 @@ pub use registry::{FunctionInfo, registry};
 // The crate name is the core namespace. Do not import an `allowit` module through
 // the prelude: it would conflict with `use allowit::prelude::*` in Rust source.
 pub use prelude::{
-    allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, check_preference,
-    confidence, context_u64, fail, percent, require_merchant, require_recipient,
-    require_user_input, semantic, set_cap, usdc, within_percentage_points,
+    allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, confidence,
+    context_u64, fail, percent, require_merchant, require_recipient, require_user_input, semantic,
+    set_cap, usdc, within_percentage_points,
 };
+
+#[cfg(feature = "std")]
+pub use v1::prelude::check_preference;
 
 #[cfg(feature = "compiler")]
 pub use runtime::evaluate;
