@@ -10,7 +10,7 @@ pub struct FunctionInfo {
     pub effect: String,
 }
 pub fn registry() -> Vec<FunctionInfo> {
-    [
+    let functions: Vec<FunctionInfo> = [
         ("set_cap", "Total spending limit", "Sets the total amount this policy can spend. Previous spending and the new request must fit within this limit.", "set_cap(ctx: &Context, amount: &str, token: &str) -> PolicyResult", "config"),
         ("cap_per_transaction", "Limit per purchase", "Rejects a purchase above this amount, even when money remains in the total allowance.", "cap_per_transaction(ctx: &Context, amount: &str, token: &str) -> PolicyResult", "context"),
         ("cap_purchase_tiers", "Purchase tiers", "Limits expensive purchases: the first price band allows the stated count. Each cheaper band halves the ceiling and doubles the count. No minimum purchase amount; the total cap still applies. Uses authoritative purchase history, including reservations.", "cap_purchase_tiers(ctx: &Context, maximum: &str, first_count: u64, token: &str) -> PolicyResult", "ledger"),
@@ -27,10 +27,32 @@ pub fn registry() -> Vec<FunctionInfo> {
         ("context_u64", "Request value", "Reads a whole-number value supplied with the request, such as an expected return in basis points. Missing or non-whole values reject the request. Supplied facts need a trustworthy source.", "context_u64(ctx: &Context, key: &str) -> Result<u64, PolicyError>", "context"),
         ("require_user_input", "Ask for approval", "Pauses for your approval. Declining rejects the request.", "async require_user_input(ctx: &Context, prompt: &str) -> PolicyResult", "user_input"),
         ("fail", "Reject the request", "Stops evaluation and rejects the request with this explanation. No spending is authorized.", "fail(reason: &str) -> PolicyResult", "pure"),
-    ].into_iter().map(|(name,title,description,signature,effect)| FunctionInfo { name:name.into(), title:title.into(), description:description.into(), signature:signature.into(), effect:effect.into() }).collect()
+    ].into_iter().map(|(name,title,description,signature,effect)| FunctionInfo { name:name.into(), title:title.into(), description:description.into(), signature:signature.into(), effect:effect.into() }).collect();
+    let mut result = functions.clone();
+    for function in functions {
+        let mut qualified = function.clone();
+        qualified.name = alloc::format!("allowit::{}", function.name);
+        qualified.signature = function.signature.replace(&function.name, &qualified.name);
+        result.push(qualified);
+        if matches!(function.name.as_str(), "semantic" | "check_preference") {
+            let mut qualified = function.clone();
+            qualified.name = alloc::format!("jev::{}", function.name);
+            qualified.signature = function.signature.replace(&function.name, &qualified.name);
+            result.push(qualified);
+        }
+    }
+    result
 }
 
 #[cfg(feature = "compiler")]
 pub(crate) fn function(name: &str) -> Option<FunctionInfo> {
     registry().into_iter().find(|f| f.name == name)
+}
+
+/// Resolve only registered source spellings to the existing policy operation.
+/// Vendor operations need their own implementation before registration.
+#[cfg(feature = "compiler")]
+pub(crate) fn canonical_function(name: &str) -> Option<String> {
+    function(name)?;
+    Some(name.rsplit("::").next()?.into())
 }

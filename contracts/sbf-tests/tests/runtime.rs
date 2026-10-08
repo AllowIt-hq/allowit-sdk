@@ -691,3 +691,23 @@ fn logical_head_cannot_be_substituted_reinitialized_or_used_to_skip_revisions() 
     f.initialize_revision();
     Fixture::error(f.activate(true), Error::BindingMismatch);
 }
+
+#[test]
+fn private_namespaced_handler_runs_in_compiled_sbf() {
+    let source = support::SIMPLE
+        .replace("pub async fn evaluate", "async fn _execute")
+        .replace("set_cap(", "allowit::set_cap(")
+        .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
+        .replace("allow_actions(", "allowit::allow_actions(");
+    let mut f = Fixture::ready(&source, false);
+    let request = support::request(&f.state, 10_000_000);
+    let result = f.execute(request.clone(), false);
+    assert_eq!(result.program_result, ProgramResult::Success);
+    assert_eq!(f.balance(), 10_000_000);
+    Fixture::error(f.execute(request, false), Error::Replay);
+    Fixture::error(
+        f.execute(support::request(&f.read_state(), 10_000_001), false),
+        Error::PolicyDenied,
+    );
+    assert_eq!(f.balance(), 10_000_000);
+}

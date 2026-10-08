@@ -3,18 +3,32 @@
 AllowIt policies are a restricted, validated subset of Rust. This repository contains the source compiler, deterministic interpreter, function registry, workflow projection, CLI and stdio language server. The same `no_std + alloc` interpreter is used by the contract adapters in `contracts/`.
 
 ```rust
-use allowit::prelude::*;
+use allowit::v1::prelude::*;
 
-pub async fn execute(ctx: &Context) -> PolicyResult {
-    set_cap(ctx, "100", "USDC")?;
-    cap_per_transaction(ctx, "10", "USDC")?;
-    require_merchant(ctx, "research.example")?;
-    check_preference(ctx, "Does this purchase count as research under the user's stated purpose and definitions?", true, "85", true, "40").await?;
+async fn _execute(ctx: &Context) -> PolicyResult {
+    allowit::set_cap(ctx, "100", "USDC")?;
+    allowit::cap_per_transaction(ctx, "10", "USDC")?;
+    allowit::require_merchant(ctx, "research.example")?;
+    jev::check_preference(ctx, "Does this purchase count as research under the user's stated purpose and definitions?", auto("deny"), auto("approve")).await?;
     Ok(())
 }
 ```
 
 The Go [action CLI](https://github.com/AllowIt-hq/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. The app server owns HTTP transport. Hosted-agent control and runtime are optional, outside the MVP; they are not SDK responsibilities. Restricted Rust remains the policy source and enforcement language.
+
+## Private policy handler
+
+New policies declare `async fn _execute(ctx: &Context) -> PolicyResult` with
+`use allowit::v1::prelude::*;`. Write each limit and required identifier in the
+source as a literal or an immutable local value. Undeclared installation names
+are rejected, including names in unreachable branches.
+
+The compiler lowers this private handler to the same checked IR used by the
+shared evaluator. Contract `execute(...)` entrypoints authenticate the request
+and enforce their existing mandate, budget and replay checks before settlement.
+The source handler does not replace those entrypoints. Public legacy source
+entrypoints remain accepted. Typed native operation arguments and additional
+helper functions are not part of this source profile.
 
 ## Run
 
@@ -47,7 +61,13 @@ The prelude is a type-checking facade, not a replacement for the compiler/interp
 
 ## Supported source and execution
 
-Each file contains an optional `use allowit::prelude::*;` and one `pub async fn execute(ctx: &Context) -> PolicyResult`. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
+Each registered policy function accepts an explicit `allowit::` prefix. `jev::semantic` and `jev::check_preference` select the existing preference checks. Unqualified calls remain supported. The compiler resolves exact registered names and lowers them to the same bounded operations. The registry exposes each accepted spelling with its signature and effect. Wrong prefixes, unknown operations, deeper paths and generic calls fail compilation.
+
+Namespaces identify policy checks. A core check such as `allowit::allow_actions` compares exact labels. It does not execute or classify a vendor operation. PaySH and other vendor prefixes require concrete operations with their own bounded implementation and execution bindings. The restricted compiler rejects `paysh::pay`, `paysh::swap` and other unregistered vendor calls. Native vendor transport requires a separate execution interface.
+
+Qualified calls preserve the current interpreter, contract opcodes and execution requirements. Source spans and source hashes still bind the exact policy text. Changing the spelling therefore requires a new compiled artifact and the corresponding mandate binding. Solana and Stellar adapters consume that artifact through the shared contract core. A Near adapter requires its own host, asset, authorization and settlement integration.
+
+Each file contains an optional `use allowit::v1::prelude::*;` and one `async fn _execute(ctx: &Context) -> PolicyResult` handler. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
 
 Every function and every branch is validated, including unreachable code. Unknown syntax, imports, macros, attributes, mutation, shadowing, loops, recursion, arbitrary method calls, I/O, unsafe code and unchecked/discarded function results are rejected. Source is limited to 32 KiB and 1,024 syntax tokens (including opening and closing delimiters), IR to 2,048 nodes and semantic nesting to 48 levels. The total token budget never resets across statements or groups. Before invoking `syn`, a token preflight checks the exact function signature and permits only simple `u64`, `bool`, `&str` or `ConfidenceInterval` local annotations. Type declarations, casts, closures and qualified type expressions are rejected before Rust's recursive type parser runs. An iterative token-tree walk bounds actual delimiter depth to 32 and each statement/header to 256 tokens, 96 punctuation operators and 32 control prefixes, with at most 32 `else` branches in a policy. Only the function body and statement-level `if`/`else` bodies may contain code blocks; conditional expressions and semicolons inside expression groups are unsupported. Flat guard statements have independent budgets. Parentheses and brackets contribute to their enclosing expression budget, so shallow postfix call/index/cast chains cannot hide a deep AST. String contents and comments do not alter structural depth. UTF-8 source must not contain a leading byte-order mark.
 

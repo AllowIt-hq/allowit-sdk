@@ -34,7 +34,24 @@ context.answers[awaiting.decision.input_key] = true;
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'oracle', context }).decision.outcome, 'pass');
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'panic!("no")') }).ok, false);
-assert.equal(invoke({ operation: 'registry' }).functions.length, 16);
+const registryResponse = invoke({ operation: 'registry' });
+assert.equal(registryResponse.registry_version, '1.1.0');
+const registry = registryResponse.functions;
+assert.equal(registry.length, 34);
+for (const name of ['allowit::set_cap', 'allowit::amount_at_most', 'jev::semantic', 'jev::check_preference']) {
+  assert.ok(registry.some(entry => entry.name === name), `Missing registered namespace ${name}`);
+}
+const qualifiedSource = 'async fn _execute(ctx: &Context) -> PolicyResult { allowit::set_cap(ctx, "50", "USDC")?; jev::check_preference(ctx, "Research?", None, None).await?; Ok(()) }';
+const qualified = invoke({ operation: 'compile', source: qualifiedSource });
+assert.equal(qualified.ok, true);
+assert.equal(qualified.policy.limit, '50');
+assert.equal(qualified.policy.calls[0].name, 'set_cap');
+assert.equal(qualifiedSource.slice(qualified.policy.calls[0].start, qualified.policy.calls[0].end), 'allowit::set_cap');
+assert.equal(JSON.stringify(qualified.policy.ir).includes('allowit::'), false);
+assert.equal(invoke({ operation: 'evaluate', source: qualifiedSource, profile: 'oracle', context }).decision.outcome, 'awaiting_input');
+assert.equal(invoke({ operation: 'evaluate', source: qualifiedSource, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
+assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('allowit::set_cap', 'paysh::set_cap') }).ok, false);
+assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('jev::check_preference', 'other::check_preference') }).ok, false);
 for (let i = 0; i < 100; i++) {
   assert.equal(invoke({ operation: 'compile', source }).policy.ir_hash, compiled.policy.ir_hash);
 }

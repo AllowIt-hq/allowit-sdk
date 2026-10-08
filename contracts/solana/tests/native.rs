@@ -470,3 +470,20 @@ fn an_arbitrary_six_decimal_mint_cannot_be_called_usdc() {
         Err(ProgramError::Custom(Error::BindingMismatch as u32))
     );
 }
+
+#[test]
+fn qualified_checks_authorize_the_same_spl_transfer() {
+    let _guard = LOCK.lock().unwrap();
+    let named = support::SIMPLE
+        .replace("pub async fn evaluate", "async fn _execute")
+        .replace("set_cap(", "allowit::set_cap(")
+        .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
+        .replace("allow_actions(", "allowit::allow_actions(");
+    let f = Fixture::new(&named);
+    let old_stub = set_syscall_stubs(Box::new(TokenCpi { program: f.program }));
+    f.initialize();
+    f.activate().unwrap();
+    f.execute(support::request(&f.state, 10_000_000)).unwrap();
+    assert_eq!(f.balance(), 10_000_000);
+    set_syscall_stubs(old_stub);
+}
