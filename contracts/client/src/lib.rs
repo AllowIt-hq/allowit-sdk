@@ -21,8 +21,13 @@ fn field<'a>(value: &'a Value, name: &str) -> Result<&'a str> {
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{name} must be a string"))
 }
-fn optional<'a>(value: &'a Value, name: &str, default: &'a str) -> &'a str {
-    value.get(name).and_then(Value::as_str).unwrap_or(default)
+fn optional<'a>(value: &'a Value, name: &str, default: &'a str) -> Result<&'a str> {
+    match value.get(name) {
+        None => Ok(default),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| format!("{name} must be a string when supplied")),
+    }
 }
 fn units(value: &Value, name: &str) -> Result<u64> {
     let raw = field(value, name)?;
@@ -111,7 +116,7 @@ fn mandate(value: &Value, artifact: &Artifact, bytes: &[u8]) -> Result<Mandate> 
         owner: key(value, "owner")?.to_bytes(),
         executor: key(value, "executor")?.to_bytes(),
         compiler: key(value, "compiler")?.to_bytes(),
-        compiler_key_id: optional(value, "compilerKeyId", "demo-compiler").into(),
+        compiler_key_id: optional(value, "compilerKeyId", "demo-compiler")?.into(),
         compiler_version: artifact.compiler_version.clone(),
         evidence_authority,
         registry_version: artifact.registry_version.clone(),
@@ -123,8 +128,8 @@ fn mandate(value: &Value, artifact: &Artifact, bytes: &[u8]) -> Result<Mandate> 
         asset_decimals: 6,
         recipient: recipient.to_bytes(),
         recipient_address: recipient.to_string(),
-        action: optional(value, "action", "transfer").into(),
-        merchant: optional(value, "merchant", "demo").into(),
+        action: optional(value, "action", "transfer")?.into(),
+        merchant: optional(value, "merchant", "demo")?.into(),
         revision: units(value, "revision")?,
         expires_at: units(value, "expiresAt")?,
         allocation_units: units(value, "allocationUnits")?,
@@ -223,13 +228,16 @@ fn activation(value: &Value) -> Result<Value> {
             "initialize-state".into(),
         )?,
     ];
-    let chunk = value
-        .get("uploadChunkBytes")
-        .and_then(Value::as_u64)
-        .unwrap_or(480) as usize;
+    let chunk = match value.get("uploadChunkBytes") {
+        None => 480,
+        Some(v) => v
+            .as_u64()
+            .ok_or("uploadChunkBytes must be an integer when supplied")?,
+    };
     if !(1..=700).contains(&chunk) {
         return Err("uploadChunkBytes must be 1..700".into());
     }
+    let chunk = chunk as usize;
     for (index, part) in bytes.chunks(chunk).enumerate() {
         instructions.push(rail(
             program,
@@ -381,14 +389,21 @@ fn inspect_paysh_request(value: &Value) -> Result<Value> {
         }
         _ => return Err("PaySH action amounts and price limits must be positive".into()),
     };
-    if request.expires_slot <= request.signing_slot
-        || request.expires_timestamp <= request.signing_timestamp
+    if request.signing_timestamp < 0
+        || request.expires_slot < request.signing_slot
+        || request.expires_timestamp < request.signing_timestamp
     {
-        return Err("PaySH expiry must follow both signing clocks".into());
+        return Err(
+            "PaySH expiry must cover both signing clocks and the signing time must be non-negative"
+                .into(),
+        );
     }
     Ok(
-        json!({"action":action, "requestHash":allowit_sdk::digest(&bytes),
+        json!({"action":action, "requestHash":allowit_sdk::digest(&request.signed_message()),
+        "requestBytesSha256":allowit_sdk::digest(&bytes),
         "signedMessageBase64":STANDARD.encode(request.signed_message()),
+        "serviceFeeLamports":request.service_fee_lamports.to_string(),
+        "signingSlot":request.signing_slot.to_string(), "signingTimestamp":request.signing_timestamp.to_string(),
         "operationId":hex(&request.operation_id), "nonce":hex(&request.nonce),
         "challengeHash":hex(&request.challenge_hash), "evidenceHash":hex(&request.evidence_hash),
         "policy":address(request.policy), "owner":address(request.owner), "program":address(request.program),

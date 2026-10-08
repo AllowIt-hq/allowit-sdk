@@ -45,10 +45,17 @@ fn paysh_inspection_uses_concrete_request_bytes_and_identity() {
     assert_eq!(inspected["action"]["operation"], "paysh::pay_usdc");
     assert_eq!(
         inspected["requestHash"],
-        "25f8336a9bd38a60e45329d909fcd1c915bff6fc4c2efd446253da9e66c07873"
+        "471619df8b715557596e009e83a1e96324b7842cf39ae5338fc165e5e5009549"
     );
     assert_eq!(inspected["operationId"], "06".repeat(32));
     assert_eq!(inspected["executed"], false);
+    assert_eq!(inspected["serviceFeeLamports"], "1000");
+    assert_eq!(inspected["signingSlot"], "1000");
+    assert_eq!(inspected["signingTimestamp"], "3601");
+    assert_eq!(
+        inspected["requestBytesSha256"],
+        "25f8336a9bd38a60e45329d909fcd1c915bff6fc4c2efd446253da9e66c07873"
+    );
     let mut substituted = request.clone();
     substituted.challenge_hash[0] ^= 1;
     let other = dispatch(&json!({"operation":"paysh::inspect_request", "requestBase64":STANDARD.encode(borsh::to_vec(&substituted).unwrap())})).unwrap();
@@ -65,7 +72,7 @@ fn paysh_inspection_uses_concrete_request_bytes_and_identity() {
 #[test]
 fn paysh_inspection_rejects_invalid_action_and_expiry() {
     let mut request = request();
-    request.expires_slot = request.signing_slot;
+    request.expires_slot = request.signing_slot - 1;
     assert!(dispatch(&json!({"operation":"paysh::inspect_request", "requestBase64":STANDARD.encode(borsh::to_vec(&request).unwrap())})).is_err());
     request.expires_slot += 1;
     request.action = Action::PayUsdc { amount: 0 };
@@ -97,4 +104,58 @@ fn concrete_swap_inspection_preserves_integer_width_and_signing_message() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn paysh_inspection_matches_native_expiry_equality_and_negative_time_rules() {
+    let mut request = request();
+    request.expires_slot = request.signing_slot;
+    request.expires_timestamp = request.signing_timestamp;
+    assert!(dispatch(&json!({"operation":"paysh::inspect_request", "requestBase64":STANDARD.encode(borsh::to_vec(&request).unwrap())})).is_ok());
+    request.signing_timestamp = -1;
+    assert!(dispatch(&json!({"operation":"paysh::inspect_request", "requestBase64":STANDARD.encode(borsh::to_vec(&request).unwrap())})).is_err());
+}
+fn activation() -> serde_json::Value {
+    let key = |n| solana_program::pubkey::Pubkey::new_from_array([n; 32]).to_string();
+    json!({"operation":"solana::prepare_activation",
+        "source":"pub async fn execute(ctx: &Context) -> PolicyResult { allowit::set_cap(ctx, \"5\", \"USDC\")?; Ok(()) }",
+        "originalIntent":"Small purchases", "policyId":"01".repeat(32),
+        "programId":key(9),"stateAddress":key(8),"owner":key(1),"executor":key(2),"compiler":key(3),"recipient":key(4),
+        "revision":"1", "expiresAt":"2000", "allocationUnits":"5000000"})
+}
+#[test]
+fn devnet_demo_binds_the_explicit_network_and_canonical_asset() {
+    let result = dispatch(&activation()).unwrap();
+    assert_eq!(result["mandate"]["network"], "solana:devnet");
+    assert_eq!(
+        result["mandate"]["asset"],
+        "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    );
+}
+#[test]
+fn present_wrong_field_types_never_change_mandate_bindings_to_defaults() {
+    let input = activation();
+    let result = dispatch(&input).unwrap();
+    assert_eq!(result["mandate"]["action"], "transfer");
+    assert_eq!(result["mandate"]["merchant"], "demo");
+    assert_eq!(result["mandate"]["compilerKeyId"], "demo-compiler");
+    for field in ["action", "merchant", "compilerKeyId"] {
+        for wrong in [json!(null), json!(false), json!(12), json!([])] {
+            let mut invalid = input.clone();
+            invalid[field] = wrong;
+            assert!(dispatch(&invalid).is_err(), "{field}");
+        }
+    }
+    for wrong in [
+        json!(null),
+        json!(false),
+        json!("480"),
+        json!(480.5),
+        json!(-1),
+        json!(u64::MAX),
+    ] {
+        let mut invalid = input.clone();
+        invalid["uploadChunkBytes"] = wrong;
+        assert!(dispatch(&invalid).is_err());
+    }
 }
