@@ -49,6 +49,8 @@ The prelude is a type-checking facade, not a replacement for the compiler/interp
 
 Each registered policy function accepts an explicit `allowit::` prefix. `jev::semantic` and `jev::check_preference` select the existing preference checks. Unqualified calls remain supported. The compiler resolves exact registered names and lowers them to the same bounded operations. The registry exposes each accepted spelling with its signature and effect. Wrong prefixes, unknown operations, deeper paths and generic calls fail compilation.
 
+Source registry `1.1.0` advertises these aliases. Canonical IR remains version `1.0.0`. The evaluator accepts artifacts from both registries and rejects unknown registry versions.
+
 Namespaces identify policy checks. A core check such as `allowit::allow_actions` compares exact labels. It does not execute or classify a vendor operation. PaySH and other vendor prefixes require concrete operations with their own bounded implementation and execution bindings. The restricted compiler rejects `paysh::pay`, `paysh::swap` and other unregistered vendor calls. The native PaySH `Pay` and `Swap` transport remains a separate execution interface.
 
 Qualified calls preserve the current interpreter, contract opcodes and execution requirements. Source spans and source hashes still bind the exact policy text. Changing the spelling therefore requires a new compiled artifact and the corresponding mandate binding. Solana and Stellar adapters consume that artifact through the shared contract core. A Near adapter requires its own host, asset, authorization and settlement integration.

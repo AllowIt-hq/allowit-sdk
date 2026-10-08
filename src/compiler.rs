@@ -1,5 +1,5 @@
 use crate::{
-    CallSite, CompileError, CompiledPolicy, Expr, LANGUAGE, MAX_SOURCE_BYTES, Program,
+    CallSite, CompileError, CompiledPolicy, Expr, IR_VERSION, LANGUAGE, MAX_SOURCE_BYTES, Program,
     REGISTRY_VERSION, SourceSpan, Statement, WorkflowBlock, canonical_ir_hash, digest,
     registry::function, validate_program,
 };
@@ -829,7 +829,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         preference_steps: vec![],
     };
     let ir = Program {
-        version: REGISTRY_VERSION.into(),
+        version: IR_VERSION.into(),
         statements: parser.block(&f.block, 0)?,
     };
     validate_program(&ir)?;
