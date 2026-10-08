@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
-pub const REGISTRY_VERSION: &str = "1.1.0";
+pub const REGISTRY_VERSION: &str = "1.2.0";
 /// Canonical operation schema. Source-only aliases do not change this version.
 pub const IR_VERSION: &str = "1.0.0";
 /// Both registries use the same canonical operations and artifact semantics.
 pub fn supported_registry_version(version: &str) -> bool {
-    matches!(version, "1.0.0" | REGISTRY_VERSION)
+    matches!(version, "1.0.0" | "1.1.0" | REGISTRY_VERSION)
 }
 pub const MAX_SOURCE_BYTES: usize = 32768;
 pub const MAX_NODES: usize = 2048;

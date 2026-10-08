@@ -176,7 +176,13 @@ pub(crate) struct Settings {
 fn function(file: &syn::File) -> Result<&ItemFn, CompileError> {
     file.items
         .iter()
-        .find_map(|i| if let Item::Fn(f) = i { Some(f) } else { None })
+        .find_map(|i| {
+            if let Item::Fn(f) = i {
+                if f.sig.ident != "new" { Some(f) } else { None }
+            } else {
+                None
+            }
+        })
         .ok_or_else(|| bad("Policy function missing."))
 }
 fn parse(source: &str) -> Result<syn::File, CompileError> {

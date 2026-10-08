@@ -31,14 +31,21 @@ pub use protocol::{process_json, process_value};
 pub use registry::{FunctionInfo, registry};
 // The crate name is the core namespace. Do not import an `allowit` module through
 // the prelude: it would conflict with `use allowit::prelude::*` in Rust source.
+#[cfg(feature = "compiler")]
+mod params;
+mod primitives;
 pub use prelude::{
-    allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, confidence,
-    context_u64, fail, percent, require_merchant, require_recipient, require_user_input, semantic,
-    set_cap, usdc, within_percentage_points,
+    confidence, context_u64, fail, percent, require_user_input, semantic, usdc,
+    within_percentage_points,
+};
+pub use primitives::{
+    allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, is_one_of,
+    require_merchant, require_recipient, set_cap,
 };
 
 #[cfg(feature = "std")]
-pub use v1::prelude::check_preference;
+pub use primitives::check_preference;
+pub use primitives::preference_evidence;
 
 #[cfg(feature = "compiler")]
 pub use runtime::evaluate;

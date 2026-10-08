@@ -210,5 +210,6 @@ pub async fn require_user_input(_ctx: &Context, _prompt: &str) -> PolicyResult {
 pub mod jev {
     pub use super::semantic;
     #[cfg(feature = "std")]
-    pub use crate::v1::prelude::check_preference;
+    pub use crate::primitives::check_preference;
+    pub use crate::primitives::preference_evidence;
 }
