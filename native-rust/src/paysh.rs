@@ -882,7 +882,24 @@ impl PayShClient {
             historical_lookup(lookup, &meta["loadedAddresses"]).map(Some)
         } else {
             let (slot, _) = self.clock()?;
-            self.lookup(slot)
+            let table = self
+                .lookup(slot)?
+                .ok_or_else(|| Error::config("Missing configured lookup table"))?;
+            let resolve = |indices: &[u8]| -> Result<Vec<String>> {
+                indices
+                    .iter()
+                    .map(|i| {
+                        table
+                            .addresses
+                            .get(*i as usize)
+                            .map(ToString::to_string)
+                            .ok_or_else(|| Error::config("Saved lookup index is absent"))
+                    })
+                    .collect()
+            };
+            // Appending unrelated entries may not alter the signed packet's
+            // original choice between static and loaded accounts.
+            historical_lookup(lookup, &json!({"writable":resolve(&lookup.writable)?, "readonly":resolve(&lookup.readonly)?})).map(Some)
         }
     }
 
