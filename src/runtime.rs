@@ -137,6 +137,20 @@ impl Evaluator<'_> {
             Expr::Variable { name } => env.get(name).cloned().ok_or_else(invalid)?,
             Expr::Field { object, name } => match self.expr(object, env)? {
                 Value::Context => match name.as_str() {
+                    "native_daily_limit" | "native_action_limit" => {
+                        let storage =
+                            self.context.native_policy_storage.as_ref().ok_or_else(|| {
+                                failure(
+                                    "NATIVE_STORAGE_REQUIRED",
+                                    "Verified native policy storage is required.",
+                                )
+                            })?;
+                        Value::Integer(if name == "native_daily_limit" {
+                            storage.daily_limit_units
+                        } else {
+                            storage.action_limit_units
+                        })
+                    }
                     "amount_units" => Value::Integer(self.context.amount_units),
                     "allocation_units" => Value::Integer(self.context.allocation_units),
                     "spent_units" => Value::Integer(self.context.spent_units),
@@ -576,6 +590,26 @@ fn run_inner(
 ) -> Decision {
     if let Err(error) = validate_program(ir) {
         return Decision::fail("INVALID_POLICY", error.message);
+    }
+    if crate::validation::native_storage_required(ir) {
+        if profile == Profile::Contract {
+            return Decision::fail(
+                "NATIVE_STORAGE_UNSUPPORTED",
+                "This contract profile cannot read native policy storage.",
+            );
+        }
+        let Some(storage) = ctx.native_policy_storage.as_ref() else {
+            return Decision::fail(
+                "NATIVE_STORAGE_REQUIRED",
+                "Verified native policy storage is required.",
+            );
+        };
+        if storage.daily_limit_units > 50_000_000 || storage.action_limit_units > 50_000_000 {
+            return Decision::fail(
+                "INVALID_NATIVE_STORAGE",
+                "Native limit exceeds its supported range.",
+            );
+        }
     }
     if let Err(error) = validate_context(ctx) {
         return *error;

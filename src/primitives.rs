@@ -178,3 +178,34 @@ pub async fn check_preference(
         "Use the trusted oracle to obtain an authenticated answer.",
     ))
 }
+
+/// Owner-controlled native limit descriptor. Only the native adapter can supply current values.
+#[derive(Clone, Copy)]
+pub struct OwnerLimit {
+    key: &'static str,
+    initial_units: u64,
+}
+/// Declare a native account field and its installation value in the policy constructor.
+pub fn owner_limit(key: &'static str, initial_units: u64) -> OwnerLimit {
+    OwnerLimit { key, initial_units }
+}
+/// Read verified current account state. Request JSON and runtime_context are not policy storage.
+pub fn stored_limit(ctx: &crate::Context, limit: OwnerLimit) -> Result<u64, PolicyError> {
+    if limit.initial_units == 0 || limit.initial_units > 50_000_000 {
+        return Err(denied(
+            "INVALID_POLICY",
+            "The initial native limit is outside its supported range.",
+        ));
+    }
+    let storage = ctx.native_policy_storage.as_ref().ok_or_else(|| {
+        denied(
+            "NATIVE_STORAGE_REQUIRED",
+            "Verified native policy storage is required.",
+        )
+    })?;
+    match limit.key {
+        "native_daily_limit" => Ok(storage.daily_limit_units),
+        "native_action_limit" => Ok(storage.action_limit_units),
+        _ => Err(denied("INVALID_POLICY", "Unknown native storage field.")),
+    }
+}

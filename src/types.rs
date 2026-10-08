@@ -201,6 +201,7 @@ pub struct ExecutionRequirements {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionFeature {
+    NativePolicyStorage,
     ConfidenceEvidence,
     OwnerInput,
     PurchaseHistory,
@@ -259,9 +260,19 @@ pub struct ConfidenceInterval {
     pub upper_bps: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePolicyStorage {
+    pub daily_limit_units: u64,
+    pub action_limit_units: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
+    /// Trusted current native account state. Adapters must overwrite caller-supplied values.
+    #[serde(default)]
+    pub native_policy_storage: Option<NativePolicyStorage>,
     pub amount_units: u64,
     pub allocation_units: u64,
     pub spent_units: u64,
@@ -290,6 +301,7 @@ fn empty_runtime_context() -> serde_json::Value {
 impl Default for Context {
     fn default() -> Self {
         Self {
+            native_policy_storage: None,
             amount_units: 0,
             allocation_units: 0,
             spent_units: 0,

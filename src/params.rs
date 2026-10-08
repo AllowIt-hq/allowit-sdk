@@ -10,6 +10,7 @@ enum Kind {
     Boolean,
     String,
     Strings,
+    OwnerLimit,
 }
 fn invalid() -> CompileError {
     CompileError::new(
@@ -56,6 +57,9 @@ fn fields(tokens: TokenStream) -> Result<Vec<(String, Vec<TokenTree>)>, CompileE
     Ok(result)
 }
 fn kind(tokens: &[TokenTree]) -> Result<Kind, CompileError> {
+    if exact(tokens, &["OwnerLimit"]) {
+        return Ok(Kind::OwnerLimit);
+    }
     if exact(tokens, &["u64"]) {
         return Ok(Kind::Number);
     }
@@ -79,6 +83,35 @@ fn kind(tokens: &[TokenTree]) -> Result<Kind, CompileError> {
 }
 fn literal(tokens: &[TokenTree], kind: Kind) -> Result<Expr, CompileError> {
     match (kind, tokens) {
+        (Kind::OwnerLimit, [a, c1, c2, f, TokenTree::Group(args)])
+            if exact(
+                &[a.clone(), c1.clone(), c2.clone(), f.clone()],
+                &["allowit", ":", ":", "owner_limit"],
+            ) && args.delimiter() == Delimiter::Parenthesis =>
+        {
+            let args: Vec<_> = args.stream().into_iter().collect();
+            let [key, comma, amount] = args.as_slice() else {
+                return Err(invalid());
+            };
+            if !punctuation(comma, ',') {
+                return Err(invalid());
+            }
+            let key = literal(core::slice::from_ref(key), Kind::String)?;
+            let amount = literal(core::slice::from_ref(amount), Kind::Number)?;
+            if !matches!(&key,Expr::String{value} if value=="native_daily_limit" || value=="native_action_limit")
+                || !matches!(
+                    amount,
+                    Expr::Integer {
+                        value: 1..=50_000_000
+                    }
+                )
+            {
+                return Err(invalid());
+            }
+            Ok(Expr::Array {
+                values: vec![key, amount],
+            })
+        }
         (Kind::Number, [TokenTree::Literal(l)]) => {
             let v = syn::parse_str::<syn::LitInt>(&l.to_string()).map_err(|_| invalid())?;
             if !v.suffix().is_empty() {
@@ -161,7 +194,7 @@ pub(crate) fn extract(
         || !ident(new, "new")
         || args.delimiter() != Delimiter::Parenthesis
         || !args.stream().is_empty()
-        || !punctuation(minus, '-')
+        || !matches!(minus,TokenTree::Punct(p) if p.as_char()=='-' && p.spacing()==proc_macro2::Spacing::Joint)
         || !punctuation(arrow, '>')
         || !ident(ret, "PolicyParams")
         || body.delimiter() != Delimiter::Brace
@@ -183,7 +216,31 @@ pub(crate) fn extract(
     let mut bindings = BTreeMap::new();
     for (name, ty) in schema {
         let value = values.remove(&name).ok_or_else(invalid)?;
-        bindings.insert(name, literal(&value, kind(&ty)?)?);
+        let field_kind = kind(&ty)?;
+        let binding = literal(&value, field_kind)?;
+        if field_kind == Kind::OwnerLimit {
+            let Expr::Array { values } = &binding else {
+                return Err(invalid());
+            };
+            let expected = match name.as_str() {
+                "daily_limit" => "native_daily_limit",
+                "action_limit" => "native_action_limit",
+                _ => return Err(invalid()),
+            };
+            if !matches!(&values[0],Expr::String{value} if value==expected) {
+                return Err(invalid());
+            }
+        }
+        bindings.insert(name, binding);
+    }
+    let mut storage_keys = std::collections::BTreeSet::new();
+    for binding in bindings.values() {
+        if let Expr::Array { values } = binding
+            && let [Expr::String { value: key }, Expr::Integer { .. }] = values.as_slice()
+            && !storage_keys.insert(key)
+        {
+            return Err(invalid());
+        }
     }
     let entry = tokens[..start]
         .iter()
@@ -191,4 +248,23 @@ pub(crate) fn extract(
         .chain(entry.iter().cloned())
         .collect();
     Ok((entry, Some(bindings)))
+}
+
+/// Return constructor initializers after checking the complete source and storage descriptors.
+pub fn native_storage_initializers(source: &str) -> Result<BTreeMap<String, u64>, CompileError> {
+    crate::compile(source)?;
+    let tokens = source.parse::<TokenStream>().map_err(|_| invalid())?;
+    let (_, params) = extract(&tokens)?;
+    let mut result = BTreeMap::new();
+    for value in params.unwrap_or_default().values() {
+        if let Expr::Array { values } = value
+            && let [
+                Expr::String { value: key },
+                Expr::Integer { value: initial },
+            ] = values.as_slice()
+        {
+            result.insert(key.clone(), *initial);
+        }
+    }
+    Ok(result)
 }

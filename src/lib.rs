@@ -33,6 +33,8 @@ pub use registry::{FunctionInfo, registry};
 // the prelude: it would conflict with `use allowit::prelude::*` in Rust source.
 #[cfg(feature = "compiler")]
 mod params;
+#[cfg(feature = "compiler")]
+pub use params::native_storage_initializers;
 mod primitives;
 pub use prelude::{
     confidence, context_u64, fail, percent, require_user_input, semantic, usdc,
@@ -45,7 +47,7 @@ pub use primitives::{
 
 #[cfg(feature = "std")]
 pub use primitives::check_preference;
-pub use primitives::preference_evidence;
+pub use primitives::{OwnerLimit, owner_limit, preference_evidence, stored_limit};
 
 #[cfg(feature = "compiler")]
 pub use runtime::evaluate;

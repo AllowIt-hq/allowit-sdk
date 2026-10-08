@@ -5,31 +5,50 @@ AllowIt policies are a restricted, validated subset of Rust. This repository con
 ```rust
 use allowit::v1::prelude::*;
 
-async fn _execute(ctx: &Context) -> PolicyResult {
-    allowit::set_cap(ctx, "100", "USDC")?;
-    allowit::cap_per_transaction(ctx, "10", "USDC")?;
-    allowit::require_merchant(ctx, "research.example")?;
-    jev::check_preference(ctx, "Does this purchase count as research under the user's stated purpose and definitions?", auto("deny"), auto("approve")).await?;
+struct PolicyParams {}
+fn new() -> PolicyParams { PolicyParams {} }
+
+async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
+    allowit::set_cap(ctx.spent_units, ctx.amount_units, &ctx.token, 100_000_000, "USDC", 6)?;
+    allowit::cap_per_transaction(ctx.amount_units, &ctx.token, 10_000_000, "USDC", 6)?;
+    allowit::require_merchant(&ctx.merchant, "research.example")?;
+    jev::check_preference(
+        jev::preference_evidence(ctx, "Does this purchase support the requested research?"),
+        "Does this purchase support the requested research?",
+        auto("deny"), auto("approve"),
+    ).await?;
     Ok(())
 }
 ```
 
 The Go [action CLI](https://github.com/AllowIt-hq/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. The app server owns HTTP transport. Hosted-agent control and runtime are optional, outside the MVP; they are not SDK responsibilities. Restricted Rust remains the policy source and enforcement language.
 
-## Private policy handler
+## Policy source and configuration
 
-New policies declare `async fn _execute(ctx: &Context) -> PolicyResult` with
-`use allowit::v1::prelude::*;`. Write each limit and required identifier in the
-source as a literal. Configuration calls require literal arguments. Undeclared installation names
-are rejected, including names in unreachable branches.
+New source contains the versioned import, `PolicyParams`, a private `new()` constructor, and private `_execute(ctx: &Context, params: &PolicyParams) -> PolicyResult`. Keep fixed limits inline in the handler. Declare constructor fields only when the owner requests initialized configuration. Supported immutable field types are `u64`, `bool`, `&'static str`, and bounded `&'static [&'static str]` lists. Initialize every field with an inline literal. Undeclared names and duplicate or missing fields fail compilation, including unreachable code.
 
-The compiler lowers this private handler to the same checked IR used by the
-shared evaluator. Contract `execute(...)` entrypoints authenticate the request
-and enforce their existing mandate, budget and replay checks before settlement.
-A top-level cap applies even when an earlier branch returns.
-The source handler does not replace those entrypoints. Public legacy source
-entrypoints remain accepted. Typed native operation arguments and additional
-helper functions are not part of this source profile.
+The [policy template](templates/policy/README.md) builds with its default denial stub. Replace only `src/policy.rs` with complete source to check ordinary Rust and the real restricted compiler. The host wrapper evaluates checked IR. Native wrappers authenticate requests and enforce custody, allocation, replay and settlement independently.
+
+Checks receive the observed primitive and its limit or allowlist. Monetary guard inputs specify integer units, currency and decimal count. This profile admits bound six-decimal USDC. The compiler requires exact authenticated fields for accounting guards. Replacing observed spending with `0` or another claimed value fails compilation. Use sequential guards. Combined `&&` and `||` authoring conditions fail in this profile. `is_one_of` compares a primitive string with 1–32 inline or declared entries.
+
+Immutable constructor values become source-bound IR literals. They are not mutable storage. A change requires a new approved policy artifact. Native mutable limits use explicit `OwnerLimit` descriptors instead:
+
+```rust
+struct PolicyParams {
+    daily_limit: OwnerLimit,
+    action_limit: OwnerLimit,
+}
+fn new() -> PolicyParams {
+    PolicyParams {
+        daily_limit: allowit::owner_limit("native_daily_limit", 5_000_000),
+        action_limit: allowit::owner_limit("native_action_limit", 1_000_000),
+    }
+}
+```
+
+Inside the handler, `allowit::stored_limit(ctx, params.action_limit)?` returns the current owner-controlled primitive. The native adapter supplies verified account state through `Context.native_policy_storage`. Request JSON and `runtime_context` are not storage. The adapter checks constructor defaults against the original installation and reads current limits after owner-authorized updates. Only the two named native fields are admitted. Missing state fails closed. The portable contract profile rejects native storage, including unreachable reads.
+
+The registry identifies this source profile as 1.2.0. Historical one-argument source profiles retain their old compiler semantics for artifact validation and recovery. Current primitive Rust exports do not reproduce historical whole-context signatures. New generation uses the constructor profile. Typed vendor movements require their own implemented source and execution binding.
 
 ## Run
 
@@ -66,14 +85,14 @@ Each registered policy function accepts an explicit `allowit::` prefix. `jev::se
 
 Namespaces identify policy checks. A core check such as `allowit::allow_actions` compares exact labels. It does not execute or classify a vendor operation. PaySH and other vendor prefixes require concrete operations with their own bounded implementation and execution bindings. The restricted compiler rejects `paysh::pay`, `paysh::swap` and other unregistered vendor calls. Native vendor transport requires a separate execution interface.
 
-Source registry 1.1.0 requires compatible rebuilt rail contracts. Contracts that
+Source registry 1.2.0 requires compatible rebuilt rail contracts. Contracts that
 accept only registry 1.0.0 reject these new artifacts. This change does not deploy contracts.
 
 Qualified calls preserve the current interpreter, contract opcodes and execution requirements. Source spans and source hashes still bind the exact policy text. Changing the spelling therefore requires a new compiled artifact and the corresponding mandate binding. Solana and Stellar adapters consume that artifact through the shared contract core. A Near adapter requires its own host, asset, authorization and settlement integration.
 
-Each file contains an optional `use allowit::v1::prelude::*;` and one `async fn _execute(ctx: &Context) -> PolicyResult` handler. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
+The constructor profile contains the declarations shown above. Historical single-handler profiles remain readable for existing artifacts. Version 1 accepts immutable `let` values, `if`/`else`, early `return fail("reason")`, `Ok(())`, booleans, strings, `u64` integers, boolean/comparison operators and checked integer `+ - * / %`. Context fields expose amount, allocation, spent, action, merchant, recipient, token, network and evaluation time. Confidence intervals expose `lower_bps` and `upper_bps`.
 
-Every function and every branch is validated, including unreachable code. Unknown syntax, imports, macros, attributes, mutation, shadowing, loops, recursion, arbitrary method calls, I/O, unsafe code and unchecked/discarded function results are rejected. Source is limited to 32 KiB and 1,024 syntax tokens (including opening and closing delimiters), IR to 2,048 nodes and semantic nesting to 48 levels. The total token budget never resets across statements or groups. Before invoking `syn`, a token preflight checks the exact function signature and permits only simple `u64`, `bool`, `&str` or `ConfidenceInterval` local annotations. Type declarations, casts, closures and qualified type expressions are rejected before Rust's recursive type parser runs. An iterative token-tree walk bounds actual delimiter depth to 32 and each statement/header to 256 tokens, 96 punctuation operators and 32 control prefixes, with at most 32 `else` branches in a policy. Only the function body and statement-level `if`/`else` bodies may contain code blocks; conditional expressions and semicolons inside expression groups are unsupported. Flat guard statements have independent budgets. Parentheses and brackets contribute to their enclosing expression budget, so shallow postfix call/index/cast chains cannot hide a deep AST. String contents and comments do not alter structural depth. UTF-8 source must not contain a leading byte-order mark.
+Every function and every branch is validated, including unreachable code. Unknown syntax, imports, macros, attributes, mutation, shadowing, loops, recursion, arbitrary method calls, I/O, unsafe code and unchecked/discarded function results are rejected. Source is limited to 32 KiB and 1,024 syntax tokens (including opening and closing delimiters), IR to 2,048 nodes and semantic nesting to 48 levels. The total token budget never resets across statements or groups. Before invoking `syn`, a token preflight checks the exact function signature and permits only simple `u64`, `bool`, `&str` or `ConfidenceInterval` local annotations. The bounded constructor preflight admits only the declared parameter schema and literal initializers. Other type declarations, casts, closures and qualified type expressions are rejected before Rust's recursive type parser runs. An iterative token-tree walk bounds actual delimiter depth to 32 and each statement/header to 256 tokens, 96 punctuation operators and 32 control prefixes, with at most 32 `else` branches in a policy. Only the function body and statement-level `if`/`else` bodies may contain code blocks; conditional expressions and semicolons inside expression groups are unsupported. Flat guard statements have independent budgets. Parentheses and brackets contribute to their enclosing expression budget, so shallow postfix call/index/cast chains cannot hide a deep AST. String contents and comments do not alter structural depth. UTF-8 source must not contain a leading byte-order mark.
 
 All monetary values in the portable core are micro-USDC (six decimal places). Decimal limit strings are converted exactly; excess precision, zero, negatives and overflow are rejected. Rail adapters must verify the asset and normalize its actual decimal precision without rounding. The Stellar adapter therefore rejects sub-micro-unit dust when converting its seven-decimal asset. Version 1 supports only the bound USDC asset, not arbitrary tokens described as USDC.
 
@@ -170,13 +189,13 @@ Use decimal strings in policy source; runtime context remains JSON with integer 
 | `amount_at_most(ctx, "25.50")?` | Whether this purchase is at or below 25.50 USDC, including equality. |
 | `within_percentage_points(candidate, benchmark, "1")?` | Whether a candidate return is at most one percentage point below the benchmark. Both values are immutable integer variables or literals in basis points; 4% versus 5% passes. Higher returns pass. |
 
-These helpers do not create an allowance. Use `set_cap` for the total allocation and `cap_per_transaction` for a per-purchase limit, with positive decimal strings. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.
+These helpers do not create an allowance. Use `set_cap` for the total allocation and `cap_per_transaction` for a per-purchase limit, with explicit positive integer units, currency and decimals. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.
 
 ```rust
-if !amount_at_most(ctx, "25.50")? {
-    require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
+if !allowit::amount_at_most(ctx.amount_units, "25.50")? {
+    allowit::require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
 }
-check_preference(ctx, "Is there primary evidence supporting this purchase?", true, "85", true, "40").await?;
+jev::check_preference(jev::preference_evidence(ctx, "Is there primary evidence supporting this purchase?"), "Is there primary evidence supporting this purchase?", 0.40, 0.85).await?;
 ```
 
 Decimal helper arguments must be string literals. Excess decimal places, signs, exponent notation, separators and overflow are compile errors. Bind candidate and benchmark returns to variables before comparing them. Their values are claims until authenticated; comparison helpers do not establish provenance. Helpers inside custom logic keep their exact source and function tips in the workflow.
@@ -185,34 +204,14 @@ Decimal helper arguments must be string literals. Excess decimal places, signs, 
 
 `local:dev` is a wallet-free oracle network. Contract evaluation rejects it. Local action records are never blockchain settlement.
 
-`check_preference(ctx, "Does the evidence support this preference?", true, "85", true, "40").await?;` is a predefined source helper. Its arguments are the exact question, automatic approval flag and minimum percentage, then automatic denial flag and maximum percentage. Enabled comparisons include equality. Denial must be strictly below approval when both are enabled. Disable either outcome independently; with both disabled, every reached check asks the owner without calling Jev. Missing or invalid evidence fails closed. The question, original intent and runtime JSON feed the host's Jev assessment. The one estimated field is `preference_fit: number` in `[0,1]`, a point score rather than calibrated confidence. The host rounds down to four decimal places and supplies equal integer basis-point bounds. Hard spending rules still apply.
+`jev::check_preference(jev::preference_evidence(ctx, "Question?"), "Question?", 0.40, 0.85).await?;` checks explicit optional numeric evidence against denial and approval thresholds. The compiler binds the exact nested reader to the same question. Arbitrary scores, another question or another context cannot substitute for authenticated evidence. Enabled comparisons include equality. Denial must be strictly below approval when both are enabled. Disable either outcome independently; with both disabled, every reached check asks the owner without calling Jev. Missing or invalid evidence fails closed. The question, original intent and runtime JSON feed the host's Jev assessment. The one estimated field is `preference_fit: number` in `[0,1]`, a point score rather than calibrated confidence. The host rounds down to four decimal places and supplies equal integer basis-point bounds. Hard spending rules still apply.
 
 The helper lowers to the existing semantic, branch, failure and user-input IR operations; no new contract opcode is added. Oracle input suspends for an authenticated answer; a reached input call fails in contracts. Top-level helpers get a distinct Jev workflow block with editable literal settings; nested calls remain inside their conditional custom code. Existing top-level `let fit = semantic(...)` calls also get their own workflow item, while the branches using the result remain custom code.
 
 
 ### Versioned compact policies and purchase tiers
 
-New source can use `use allowit::v1::prelude::*;` and `pub async fn execute(ctx: &Context) -> PolicyResult`. The legacy import, `exec` and `evaluate` function names and six-argument preference form remain accepted. The compact versioned form is:
-
-```rust
-use allowit::v1::prelude::*;
-
-pub async fn execute(ctx: &Context) -> PolicyResult {
-    set_cap(ctx, "10", "USDC")?;
-    cap_purchase_tiers(ctx, "1", 2, "USDC")?;
-    check_preference(ctx,
-        "Does this purchase count as research under the user's stated purpose and definitions?",
-        0.40,
-        0.85,
-    ).await?;
-    check_preference(ctx,
-        "Is this primary evidence for the research task?",
-        0.40, // deny at or below
-        0.85, // approve at or above
-    ).await?;
-    Ok(())
-}
-```
+Use the complete constructor-based source shown above. The primitive tier signature is `allowit::cap_purchase_tiers(ctx.amount_units, &ctx.token, &ctx.purchase_counts, 1_000_000, 2, "USDC", 6)?;`. The compiler binds these counts to the authoritative ledger.
 
 Thresholds are exact source decimals in 0..1 with at most four decimal places. `None` disables that outcome; `auto("deny")` and `auto("approve")` resolve to the versioned defaults 0.40 and 0.85. They do not invoke a model to choose a threshold. Compiled workflow arguments expose the resolved percentages and enabled flags. Approval still requires every other rule to pass.
 

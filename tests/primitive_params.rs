@@ -254,3 +254,128 @@ fn primitive_preference_rust_guard_agrees_with_runtime_outcomes() {
         .is_ok()
     );
 }
+
+#[test]
+fn native_storage_reads_current_owner_state_and_fails_closed_elsewhere() {
+    let source = include_str!("fixtures/native-storage-policy.rs");
+    let p = compile(source).unwrap();
+    assert_eq!(
+        p.execution_requirements.features,
+        vec![allowit_sdk::ExecutionFeature::NativePolicyStorage]
+    );
+    let initial = allowit_sdk::native_storage_initializers(source).unwrap();
+    assert_eq!(initial["native_daily_limit"], 5_000_000);
+    assert_eq!(initial["native_action_limit"], 1_000_000);
+    let mut ctx = context();
+    ctx.amount_units = 2_000_000;
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &ctx).code,
+        "NATIVE_STORAGE_REQUIRED"
+    );
+    ctx.runtime_context =
+        serde_json::json!({"native_daily_limit":50_000_000,"native_action_limit":50_000_000});
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &ctx).code,
+        "NATIVE_STORAGE_REQUIRED"
+    );
+    ctx.native_policy_storage = Some(allowit_sdk::NativePolicyStorage {
+        daily_limit_units: 5_000_000,
+        action_limit_units: 1_000_000,
+    });
+    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "fail");
+    ctx.native_policy_storage
+        .as_mut()
+        .unwrap()
+        .action_limit_units = 2_000_000;
+    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "pass");
+    ctx.spent_units = 3_000_001;
+    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "fail");
+    ctx.native_policy_storage
+        .as_mut()
+        .unwrap()
+        .daily_limit_units = 6_000_000;
+    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "pass");
+    assert_eq!(
+        evaluate(&p, Profile::Contract, &ctx).code,
+        "NATIVE_STORAGE_UNSUPPORTED"
+    );
+    let changed = source
+        .replace("daily_limit: 5_000_000", "daily_limit: 4_000_000")
+        .replace(
+            "\"native_daily_limit\", 5_000_000",
+            "\"native_daily_limit\", 4_000_000",
+        );
+    let q = compile(&changed).unwrap();
+    assert_ne!(p.source_hash, q.source_hash);
+    assert_eq!(
+        allowit_sdk::native_storage_initializers(&changed).unwrap()["native_daily_limit"],
+        4_000_000
+    );
+}
+#[test]
+fn native_storage_schema_and_origins_are_unambiguous() {
+    let good = include_str!("fixtures/native-storage-policy.rs");
+    for (from, to) in [
+        (
+            "\"native_daily_limit\", 5_000_000",
+            "\"native_action_limit\", 5_000_000",
+        ),
+        (
+            "\"native_daily_limit\", 5_000_000",
+            "\"unknown_limit\", 5_000_000",
+        ),
+        (
+            "\"native_daily_limit\", 5_000_000",
+            "\"native_daily_limit\", 0",
+        ),
+        (
+            "\"native_daily_limit\", 5_000_000",
+            "\"native_daily_limit\", 50_000_001",
+        ),
+        (
+            "allowit::stored_limit(ctx, params.action_limit)",
+            "allowit::stored_limit(ctx, allowit::owner_limit(\"native_action_limit\", 1000000))",
+        ),
+        (
+            "allowit::stored_limit(ctx, params.action_limit)?",
+            "ctx.native_action_limit",
+        ),
+        ("fn new() -> PolicyParams", "fn new() - > PolicyParams"),
+    ] {
+        assert!(compile(&good.replace(from, to)).is_err(), "accepted {to}");
+    }
+    let early = good.replace(
+        "    if ctx.amount_units >",
+        "    return Ok(());\n    if ctx.amount_units >",
+    );
+    let p = compile(&early).unwrap();
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &context()).code,
+        "NATIVE_STORAGE_REQUIRED"
+    );
+}
+#[test]
+fn source_checks_preserve_rust_borrow_types() {
+    for body in [
+        "if &ctx.amount_units > 2 {return allowit::fail(\"no\");} Ok(())",
+        "if !allowit::is_one_of(ctx.recipient, &[\"a\"])? {return allowit::fail(\"no\");} Ok(())",
+    ] {
+        assert!(compile(&source(body)).is_err(), "accepted {body}");
+    }
+    let good = include_str!("fixtures/constructor-policy.rs");
+    assert!(compile(&good.replace("if !params.enabled", "if &params.enabled")).is_err());
+    assert!(
+        compile(&good.replace("fn new() -> PolicyParams", "fn new() - > PolicyParams")).is_err()
+    );
+}
+#[allow(dead_code, unused_variables)]
+mod native_storage_rust_build {
+    use allowit_sdk as allowit;
+    include!("fixtures/native-storage-policy.rs");
+    #[test]
+    fn template_accepts_actual_wrapper() {
+        let config = new();
+        let ctx = super::context();
+        let _future = _execute(&ctx, &config);
+    }
+}

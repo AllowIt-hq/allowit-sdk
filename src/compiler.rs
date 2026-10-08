@@ -449,9 +449,51 @@ impl Parser {
         let SynExpr::Path(path) = &*call.func else {
             return Ok(None);
         };
+        if path.qself.is_none() && registered_path(&path.path).as_deref() == Some("stored_limit") {
+            if self.params.is_none()
+                || path.path.segments.len() != 2
+                || !call.attrs.is_empty()
+                || !path.attrs.is_empty()
+                || call.args.len() != 2
+                || !matches!(&call.args[0],SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"ctx"))
+            {
+                return Err(error(
+                    call.span(),
+                    "Read a declared owner limit with stored_limit(ctx, params.field)?.",
+                ));
+            }
+            let SynExpr::Field(field) = &call.args[1] else {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            };
+            if !field.attrs.is_empty()
+                || !matches!(&*field.base,SynExpr::Path(p) if p.attrs.is_empty() && p.qself.is_none() && simple_path(&p.path,"params"))
+            {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            }
+            let binding = self.expr(&call.args[1], depth + 1)?;
+            let Expr::Array { values } = binding else {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            };
+            let [Expr::String { value: key }, Expr::Integer { .. }] = values.as_slice() else {
+                return Err(error(call.span(), "Use a declared OwnerLimit field."));
+            };
+            self.helper_calls
+                .push(("stored_limit".into(), range(path.span())));
+            return Ok(Some(Expr::Field {
+                object: Box::new(Expr::Variable { name: "ctx".into() }),
+                name: key.clone(),
+            }));
+        }
         if path.qself.is_none() && registered_path(&path.path).as_deref() == Some("is_one_of") {
             if call.args.len() != 2 || !call.attrs.is_empty() || !path.attrs.is_empty() {
                 return Err(error(call.span(), "Use is_one_of(value, &[\"allowed\"])?."));
+            }
+            if matches!(&call.args[0],SynExpr::Field(f) if matches!(&*f.base,SynExpr::Path(p) if simple_path(&p.path,"ctx")))
+            {
+                return Err(error(
+                    call.args[0].span(),
+                    "Borrow the authenticated string field.",
+                ));
             }
             let value = self.expr(&call.args[0], depth + 1)?;
             if !matches!(
@@ -811,6 +853,12 @@ impl Parser {
                         "Only named context and confidence fields are supported.",
                     ));
                 };
+                if name == "native_daily_limit" || name == "native_action_limit" {
+                    return Err(error(
+                        f.span(),
+                        "Read declared native storage with stored_limit.",
+                    ));
+                }
                 Expr::Field {
                     object: Box::new(self.expr(&f.base, depth + 1)?),
                     name: name.to_string(),
@@ -849,7 +897,8 @@ impl Parser {
                 value: Box::new(self.expr(&u.expr, depth + 1)?),
             },
             SynExpr::Reference(r)
-                if r.mutability.is_none() && matches!(&*r.expr, SynExpr::Field(_)) =>
+                if r.mutability.is_none()
+                    && matches!(&*r.expr,SynExpr::Field(f) if matches!(&f.member,syn::Member::Named(name) if ["token","action","merchant","recipient","network"].contains(&name.to_string().as_str())) && matches!(&*f.base,SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path,"ctx"))) =>
             {
                 self.expr(&r.expr, depth + 1)?
             }
