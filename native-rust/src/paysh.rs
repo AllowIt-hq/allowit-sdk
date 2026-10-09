@@ -1111,6 +1111,7 @@ impl PayShClient {
 
     /// Refresh only an unsigned installation after its old blockhash has
     /// positively expired. Signed owner proofs remain separately durable.
+    /// Expiry alone does not permit discard; use `setup_unsigned_proven_absent`.
     pub fn setup_expired(&self, prepared: &PreparedSetup) -> Result<bool> {
         let blockhash = self.unsigned_setup_blockhash(prepared)?;
         self.setup_blockhash_expired(prepared, blockhash)
@@ -2586,6 +2587,8 @@ mod tests {
             lookup: Vec<Key>,
             account_slot: u64,
             landed: bool,
+            donated: bool,
+            expiry_slot: u64,
             wrong_network: bool,
         }
         impl Rpc for UnsignedRpc {
@@ -2601,15 +2604,16 @@ mod tests {
                         Ok(json!(201))
                     }
                     "isBlockhashValid" => {
+                        assert_eq!(params[0], json!(Key([10; 32])));
                         assert_eq!(params[1]["minContextSlot"], 100);
-                        Ok(json!({"context":{"slot":150},"value":false}))
+                        Ok(json!({"context":{"slot":self.expiry_slot},"value":false}))
                     }
                     "getAccountInfo" => {
                         let key = Key::parse(params[0].as_str().unwrap())?;
                         if key == self.policy {
                             assert_eq!(params[1]["minContextSlot"], 150);
                             return Ok(
-                                json!({"context":{"slot":self.account_slot},"value":if self.landed {json!({"owner":self.deployment.program.to_string(),"executable":false,"data":["AA==","base64"]})}else{json!(null)}}),
+                                json!({"context":{"slot":self.account_slot},"value":if self.landed {json!({"owner":self.deployment.program.to_string(),"executable":false,"data":["AA==","base64"]})}else if self.donated {json!({"owner":Key([0;32]).to_string(),"executable":false,"data":["","base64"]})}else{json!(null)}}),
                             );
                         }
                         if Some(key) == self.deployment.lookup_table {
@@ -2719,19 +2723,32 @@ mod tests {
             blockhash_context_slot: Some(100),
             last_valid_block_height: Some(200),
         };
-        for (slot, landed, wrong_network, expected) in [
-            (150, false, false, Some(true)),
-            (149, false, false, None),
-            (150, true, false, Some(false)),
-            (150, false, true, None),
+        for variant in [
+            "absent",
+            "lagging-account",
+            "landed",
+            "wrong-network",
+            "donated",
+            "lagging-expiry",
         ] {
+            let expected = match variant {
+                "absent" | "donated" => Some(true),
+                "landed" => Some(false),
+                _ => None,
+            };
             let rpc = UnsignedRpc {
                 deployment: deployment.clone(),
                 policy,
                 lookup: lookup.clone(),
-                account_slot: slot,
-                landed,
-                wrong_network,
+                account_slot: if variant == "lagging-account" {
+                    149
+                } else {
+                    150
+                },
+                landed: variant == "landed",
+                donated: variant == "donated",
+                expiry_slot: if variant == "lagging-expiry" { 99 } else { 150 },
+                wrong_network: variant == "wrong-network",
             };
             let client = PayShClient::new(deployment.clone(), Arc::new(rpc)).unwrap();
             let result = client.setup_unsigned_proven_absent(&proof);
