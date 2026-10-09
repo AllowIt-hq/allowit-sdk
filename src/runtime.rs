@@ -21,6 +21,7 @@ enum Value {
     Context,
     Interval(ConfidenceInterval),
     Strings(Vec<String>),
+    #[cfg(feature = "typed-workflow")]
     Workflow {
         ty: crate::typed_workflow::WorkflowType,
         data: serde_json::Value,
@@ -29,13 +30,17 @@ enum Value {
 type EvalResult = Result<Value, alloc::boxed::Box<Decision>>;
 
 struct Evaluator<'a> {
+    #[cfg(feature = "typed-workflow")]
     typed_profile: bool,
     context: &'a Context,
     profile: Profile,
     binding: String,
     steps: usize,
+    #[cfg(feature = "typed-workflow")]
     system_operations: Vec<crate::ProviderCallPlan>,
+    #[cfg(feature = "typed-workflow")]
     workflow_outputs: Vec<crate::typed_workflow::WorkflowOutput>,
+    #[cfg(feature = "typed-workflow")]
     budget_guards: Vec<crate::typed_workflow::TypedBudgetRequirement>,
     #[cfg(feature = "compiler")]
     trace: Option<&'a mut crate::trace::TraceRecorder>,
@@ -74,6 +79,7 @@ impl Evaluator<'_> {
                             self.expr(value, env)?;
                             return Ok(true);
                         }
+                        #[cfg(feature = "typed-workflow")]
                         Statement::ForEach {
                             name, values, body, ..
                         } => {
@@ -102,6 +108,7 @@ impl Evaluator<'_> {
                                 }
                             }
                         }
+                        #[cfg(feature = "typed-workflow")]
                         Statement::IfSome {
                             name,
                             value,
@@ -213,6 +220,7 @@ impl Evaluator<'_> {
                             storage.action_limit_units
                         })
                     }
+                    #[cfg(feature = "typed-workflow")]
                     "execution_request" | "curl_request" | "curl_outcome" => {
                         let input = self.context.workflow.as_ref().ok_or_else(|| {
                             failure(
@@ -231,6 +239,7 @@ impl Evaluator<'_> {
                     "amount_units" => Value::Integer(self.context.amount_units),
                     "allocation_units" => Value::Integer(self.context.allocation_units),
                     "spent_units" => Value::Integer(self.context.spent_units),
+                    #[cfg(feature = "typed-workflow")]
                     "now" => Value::Integer(if self.typed_profile {
                         self.context
                             .workflow
@@ -241,6 +250,8 @@ impl Evaluator<'_> {
                     } else {
                         self.context.now
                     }),
+                    #[cfg(not(feature = "typed-workflow"))]
+                    "now" => Value::Integer(self.context.now),
                     "action" => Value::String(self.context.action.clone()),
                     "merchant" => Value::String(self.context.merchant.clone()),
                     "recipient" => Value::String(self.context.recipient.clone()),
@@ -248,6 +259,7 @@ impl Evaluator<'_> {
                     "network" => Value::String(self.context.network.clone()),
                     _ => return Err(invalid()),
                 },
+                #[cfg(feature = "typed-workflow")]
                 Value::Workflow {
                     ty: crate::typed_workflow::WorkflowType::Named(ty),
                     data,
@@ -277,9 +289,9 @@ impl Evaluator<'_> {
                 Value::Boolean(v) => Value::Boolean(!v),
                 _ => return Err(invalid()),
             },
-            Expr::Borrow { value } | Expr::Try { value } | Expr::Await { value } => {
-                self.expr(value, env)?
-            }
+            #[cfg(feature = "typed-workflow")]
+            Expr::Borrow { value } => self.expr(value, env)?,
+            Expr::Try { value } | Expr::Await { value } => self.expr(value, env)?,
             Expr::Binary { op, left, right } => {
                 let a = self.expr(left, env)?;
                 if op == "&&" && a == Value::Boolean(false) {
@@ -289,6 +301,7 @@ impl Evaluator<'_> {
                     return Ok(Value::Boolean(true));
                 }
                 let b = self.expr(right, env)?;
+                #[cfg(feature = "typed-workflow")]
                 if (matches!(
                     &a,
                     Value::Workflow {
@@ -340,6 +353,7 @@ impl Evaluator<'_> {
                     .map(|a| self.expr(a, env))
                     .collect::<Result<Vec<_>, _>>()?;
                 match name.as_str() {
+                    #[cfg(feature = "typed-workflow")]
                     "allowit::execution_request_validate" => {
                         let [
                             Value::Workflow {
@@ -427,6 +441,7 @@ impl Evaluator<'_> {
                             .push(crate::typed_workflow::WorkflowOutput::Execution(result));
                         value
                     }
+                    #[cfg(feature = "typed-workflow")]
                     "paysh::payment_request_from_curl" => {
                         let [
                             Value::Workflow {
@@ -553,6 +568,7 @@ impl Evaluator<'_> {
                             serde_json::to_value(result).map_err(|_| invalid())?,
                         )?
                     }
+                    #[cfg(feature = "typed-workflow")]
                     "allowit::execution_request_cap" | "allowit::payment_request_cap" => {
                         let [
                             Value::Workflow {
@@ -600,6 +616,7 @@ impl Evaluator<'_> {
                         self.budget_guards.push(guard);
                         Value::Unit
                     }
+                    #[cfg(feature = "typed-workflow")]
                     "paysh::call" => {
                         if self.profile != Profile::Oracle {
                             return Err(failure(
@@ -798,14 +815,18 @@ impl Evaluator<'_> {
                                 "The original policy instructions are required for a preference assessment.",
                             ));
                         }
+                        let key = if is_semantic {
+                            crate::semantic_evidence_key(&label)
+                        } else {
+                            label.clone()
+                        };
+                        #[cfg(feature = "typed-workflow")]
                         let key = if self.typed_profile
                             && let Some(environment) = &self.context.workflow
                         {
                             crate::typed_workflow::evidence_key(&environment.binding, &label)
-                        } else if is_semantic {
-                            crate::semantic_evidence_key(&label)
                         } else {
-                            label.clone()
+                            key
                         };
                         let interval = self.context.confidence.get(&key).ok_or_else(|| {
                             let mut decision = failure(
@@ -848,6 +869,14 @@ impl Evaluator<'_> {
                                 "This request requires user input and cannot execute in a smart contract.",
                             ));
                         }
+                        let key = digest(
+                            format!(
+                                "allowit-input-v1:{}:{}:{}",
+                                self.binding, span.start, prompt
+                            )
+                            .as_bytes(),
+                        );
+                        #[cfg(feature = "typed-workflow")]
                         let key = if self.typed_profile
                             && let Some(environment) = &self.context.workflow
                         {
@@ -857,13 +886,7 @@ impl Evaluator<'_> {
                                 &prompt,
                             )
                         } else {
-                            digest(
-                                format!(
-                                    "allowit-input-v1:{}:{}:{}",
-                                    self.binding, span.start, prompt
-                                )
-                                .as_bytes(),
-                            )
+                            key
                         };
                         match self.context.answers.get(&key) {
                             Some(true) => Value::Unit,
@@ -875,8 +898,11 @@ impl Evaluator<'_> {
                             }
                             None => {
                                 return Err(alloc::boxed::Box::new(Decision {
+                                    #[cfg(feature = "typed-workflow")]
                                     system_operations: Vec::new(),
+                                    #[cfg(feature = "typed-workflow")]
                                     workflow_outputs: Vec::new(),
+                                    #[cfg(feature = "typed-workflow")]
                                     typed_budget_plans: Vec::new(),
                                     outcome: "awaiting_input".into(),
                                     code: "USER_INPUT_REQUIRED".into(),
@@ -905,6 +931,7 @@ fn string(values: &[Value], index: usize) -> Result<String, alloc::boxed::Box<De
         _ => Err(invalid()),
     }
 }
+#[cfg(feature = "typed-workflow")]
 fn integer(values: &[Value], index: usize) -> Result<u64, alloc::boxed::Box<Decision>> {
     match values.get(index) {
         Some(Value::Integer(value)) => Ok(*value),
@@ -922,6 +949,9 @@ fn validate_context(
     ctx: &Context,
     provider_profile: bool,
 ) -> Result<(), alloc::boxed::Box<Decision>> {
+    #[cfg(not(feature = "typed-workflow"))]
+    let _ = provider_profile;
+    #[cfg(feature = "typed-workflow")]
     if provider_profile {
         let binding = ctx.provider_call_input.as_ref().ok_or_else(|| {
             failure(
@@ -942,6 +972,13 @@ fn validate_context(
             ));
         }
     } else if ctx.token != "USDC" {
+        return Err(failure(
+            "TOKEN_MISMATCH",
+            "This policy supports six-decimal USDC.",
+        ));
+    }
+    #[cfg(not(feature = "typed-workflow"))]
+    if ctx.token != "USDC" {
         return Err(failure(
             "TOKEN_MISMATCH",
             "This policy supports six-decimal USDC.",
@@ -1084,6 +1121,7 @@ fn run_inner(
     if let Err(error) = validate_program(ir) {
         return Decision::fail("INVALID_POLICY", error.message);
     }
+    #[cfg(feature = "typed-workflow")]
     if crate::typed_workflow::required(ir) {
         if profile != Profile::Oracle {
             return Decision::fail(
@@ -1132,6 +1170,7 @@ fn run_inner(
             );
         }
     }
+    #[cfg(feature = "typed-workflow")]
     if profile == Profile::Contract && crate::validation::provider_call_required(ir) {
         return Decision::fail(
             "PROVIDER_PROFILE_UNSUPPORTED",
@@ -1159,12 +1198,23 @@ fn run_inner(
             );
         }
     }
-    let typed_only =
-        crate::typed_workflow::required(ir) && !crate::validation::provider_call_required(ir);
+    let typed_only = cfg!(feature = "typed-workflow")
+        && crate::typed_workflow::required(ir)
+        && !crate::validation::provider_call_required(ir);
     if let Err(error) = if typed_only {
-        validate_workflow_context(ctx)
+        #[cfg(feature = "typed-workflow")]
+        {
+            validate_workflow_context(ctx)
+        }
+        #[cfg(not(feature = "typed-workflow"))]
+        {
+            Err(invalid())
+        }
     } else {
-        validate_context(ctx, crate::validation::provider_call_required(ir))
+        validate_context(
+            ctx,
+            cfg!(feature = "typed-workflow") && crate::validation::provider_call_required(ir),
+        )
     } {
         return *error;
     }
@@ -1175,13 +1225,17 @@ fn run_inner(
         );
     }
     let mut evaluator = Evaluator {
-        typed_profile: crate::typed_workflow::required(ir),
+        #[cfg(feature = "typed-workflow")]
+        typed_profile: cfg!(feature = "typed-workflow") && crate::typed_workflow::required(ir),
         context: ctx,
         profile,
         binding,
         steps: 0,
+        #[cfg(feature = "typed-workflow")]
         budget_guards: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         workflow_outputs: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         system_operations: Vec::new(),
         #[cfg(feature = "compiler")]
         trace,
@@ -1210,76 +1264,86 @@ fn run_inner(
     }
     match evaluator.block(&ir.statements, &mut env) {
         Ok(true) => {
-            if crate::typed_workflow::required(ir) && evaluator.workflow_outputs.len() != 1 {
-                return Decision::fail(
-                    "WORKFLOW_PROPOSAL_REQUIRED",
-                    "One validated proposal or authenticated free response is required.",
-                );
-            }
-            if evaluator
-                .workflow_outputs
-                .iter()
-                .any(|output| match output {
-                    crate::typed_workflow::WorkflowOutput::Execution(r) => {
-                        r.request.fee_bounds.is_none()
-                    }
-                    crate::typed_workflow::WorkflowOutput::Payment(r) => r.fee_bounds.is_none(),
-                    _ => false,
-                })
+            #[cfg(feature = "typed-workflow")]
             {
-                return Decision::fail(
-                    "WORKFLOW_FEES_UNRESOLVED",
-                    "Final authorization requires explicit authenticated fee bounds.",
-                );
-            }
-            if evaluator
-                .workflow_outputs
-                .iter()
-                .any(|output| match output {
-                    crate::typed_workflow::WorkflowOutput::Execution(r) => {
-                        r.request.fee_bounds.as_ref().is_some_and(|fees| {
-                            crate::typed_workflow::requires_zero_fee_proof(
-                                fees,
-                                crate::typed_workflow::authority_source(&r.domain),
-                                &r.domain,
-                            )
-                        })
-                    }
-                    crate::typed_workflow::WorkflowOutput::Payment(r) => {
-                        r.fee_bounds.as_ref().is_some_and(|fees| {
-                            crate::typed_workflow::requires_zero_fee_proof(
-                                fees,
-                                &r.fee_payer,
-                                &r.binding.domain,
-                            )
-                        })
-                    }
-                    _ => false,
-                })
-            {
-                let Some(environment) = ctx.workflow.as_ref() else {
-                    return *invalid();
-                };
-                if environment
-                    .host
-                    .zero_fee_evidence(&environment.binding)
-                    .is_none_or(|proof| {
-                        proof.binding != environment.binding
-                            || proof.evidence.digest == [0; 32]
-                            || proof.evidence.schema == 0
-                            || proof.evidence.namespace_id == 0
-                            || proof.evidence.kind
-                                != crate::typed_workflow::EvidenceKind::ExternalClaim
+                if crate::typed_workflow::required(ir) && evaluator.workflow_outputs.len() != 1 {
+                    return Decision::fail(
+                        "WORKFLOW_PROPOSAL_REQUIRED",
+                        "One validated proposal or authenticated free response is required.",
+                    );
+                }
+                if evaluator
+                    .workflow_outputs
+                    .iter()
+                    .any(|output| match output {
+                        crate::typed_workflow::WorkflowOutput::Execution(r) => {
+                            r.request.fee_bounds.is_none()
+                        }
+                        crate::typed_workflow::WorkflowOutput::Payment(r) => r.fee_bounds.is_none(),
+                        _ => false,
                     })
                 {
                     return Decision::fail(
-                        "WORKFLOW_ZERO_FEE_EVIDENCE_REQUIRED",
-                        "An empty fee list needs authenticated proof of no extra charge.",
+                        "WORKFLOW_FEES_UNRESOLVED",
+                        "Final authorization requires explicit authenticated fee bounds.",
                     );
                 }
+                if evaluator
+                    .workflow_outputs
+                    .iter()
+                    .any(|output| match output {
+                        crate::typed_workflow::WorkflowOutput::Execution(r) => {
+                            r.request.fee_bounds.as_ref().is_some_and(|fees| {
+                                crate::typed_workflow::requires_zero_fee_proof(
+                                    fees,
+                                    crate::typed_workflow::authority_source(&r.domain),
+                                    &r.domain,
+                                )
+                            })
+                        }
+                        crate::typed_workflow::WorkflowOutput::Payment(r) => {
+                            r.fee_bounds.as_ref().is_some_and(|fees| {
+                                crate::typed_workflow::requires_zero_fee_proof(
+                                    fees,
+                                    &r.fee_payer,
+                                    &r.binding.domain,
+                                )
+                            })
+                        }
+                        _ => false,
+                    })
+                {
+                    let Some(environment) = ctx.workflow.as_ref() else {
+                        return *invalid();
+                    };
+                    if environment
+                        .host
+                        .zero_fee_evidence(&environment.binding)
+                        .is_none_or(|proof| {
+                            proof.binding != environment.binding
+                                || proof.evidence.digest == [0; 32]
+                                || proof.evidence.schema == 0
+                                || proof.evidence.namespace_id == 0
+                                || proof.evidence.kind
+                                    != crate::typed_workflow::EvidenceKind::ExternalClaim
+                        })
+                    {
+                        return Decision::fail(
+                            "WORKFLOW_ZERO_FEE_EVIDENCE_REQUIRED",
+                            "An empty fee list needs authenticated proof of no extra charge.",
+                        );
+                    }
+                }
             }
+            #[cfg(feature = "typed-workflow")]
             let mut decision = Decision::pass();
-            decision.system_operations = evaluator.system_operations;
+            #[cfg(not(feature = "typed-workflow"))]
+            let decision = Decision::pass();
+            #[cfg(feature = "typed-workflow")]
+            {
+                decision.system_operations = evaluator.system_operations;
+            }
+            #[cfg(feature = "typed-workflow")]
             if !evaluator.workflow_outputs.is_empty() {
                 let Some(environment) = ctx.workflow.as_ref() else {
                     return *invalid();
@@ -1293,7 +1357,10 @@ fn run_inner(
                     Err(error) => return *error,
                 };
             }
-            decision.workflow_outputs = evaluator.workflow_outputs;
+            #[cfg(feature = "typed-workflow")]
+            {
+                decision.workflow_outputs = evaluator.workflow_outputs;
+            }
             decision
         }
         Ok(false) => *invalid(),
@@ -1383,6 +1450,7 @@ pub fn evaluate_ir(ir: &Program, profile: Profile, ctx: &Context) -> Decision {
     run(ir, profile, ctx, binding)
 }
 
+#[cfg(feature = "typed-workflow")]
 fn workflow_value(ty: crate::typed_workflow::WorkflowType, data: serde_json::Value) -> EvalResult {
     use crate::typed_workflow::WorkflowType as T;
     Ok(match ty {
@@ -1392,12 +1460,14 @@ fn workflow_value(ty: crate::typed_workflow::WorkflowType, data: serde_json::Val
         other => Value::Workflow { ty: other, data },
     })
 }
+#[cfg(feature = "typed-workflow")]
 fn typed_value(name: &str, value: &impl serde::Serialize) -> EvalResult {
     workflow_value(
         crate::typed_workflow::WorkflowType::named(name),
         serde_json::to_value(value).map_err(|_| invalid())?,
     )
 }
+#[cfg(feature = "typed-workflow")]
 fn amount_value(value: &Value) -> Option<crate::typed_workflow::Amount256> {
     match value {
         Value::Integer(v) => Some((*v).into()),
@@ -1408,6 +1478,7 @@ fn amount_value(value: &Value) -> Option<crate::typed_workflow::Amount256> {
         _ => None,
     }
 }
+#[cfg(feature = "typed-workflow")]
 fn validate_workflow_context(ctx: &Context) -> Result<(), alloc::boxed::Box<Decision>> {
     if ctx.answers.len() > 32
         || ctx.confidence.len() > 32
@@ -1424,6 +1495,7 @@ fn validate_workflow_context(ctx: &Context) -> Result<(), alloc::boxed::Box<Deci
     validate_runtime_context(&ctx.runtime_context)
 }
 
+#[cfg(feature = "typed-workflow")]
 fn optional_value(name: &str, value: &impl serde::Serialize) -> EvalResult {
     workflow_value(
         crate::typed_workflow::WorkflowType::Option(alloc::boxed::Box::new(
@@ -1433,6 +1505,7 @@ fn optional_value(name: &str, value: &impl serde::Serialize) -> EvalResult {
     )
 }
 
+#[cfg(feature = "typed-workflow")]
 fn typed_budget_plans(
     outputs: &[crate::typed_workflow::WorkflowOutput],
     guards: &[crate::typed_workflow::TypedBudgetRequirement],

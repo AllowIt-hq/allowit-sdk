@@ -246,3 +246,5 @@ any policy with this compiler; older readers reject registry 1.3 artifacts.
 ## License
 
 AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.
+
+Host workflow evaluation uses the `typed-workflow` feature. The compiler enables it automatically. A host without the compiler can enable it explicitly, including with `no_std`. Scalar chain interpreters use no default features and reject host workflow IR. Host-only context objects use heap storage; public JSON cannot install them.

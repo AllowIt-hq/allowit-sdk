@@ -464,6 +464,7 @@ pub fn signature(name: &str) -> Option<WorkflowSignature> {
     })
 }
 
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn field_type(ty: &str, field: &str) -> Option<WorkflowType> {
     use WorkflowType as T;
     let n = T::named;
@@ -497,6 +498,7 @@ pub(crate) fn field_type(ty: &str, field: &str) -> Option<WorkflowType> {
         _ => return None,
     })
 }
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn required(program: &crate::Program) -> bool {
     use crate::{Expr, Statement};
     let mut statements: Vec<_> = program.statements.iter().collect();
@@ -548,6 +550,12 @@ pub(crate) fn required(program: &crate::Program) -> bool {
     false
 }
 
+#[cfg(not(feature = "typed-workflow"))]
+pub(crate) fn required(_program: &crate::Program) -> bool {
+    false
+}
+
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn binding_valid(binding: &WorkflowBinding) -> bool {
     [
         binding.installation_id,
@@ -582,6 +590,7 @@ pub(crate) fn hex(digest: &Digest) -> String {
     }
     result
 }
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn execution_shape(request: &ExecutionRequest) -> bool {
     request.effect_bounds.len() <= 16
         && request.fee_bounds.as_ref().is_none_or(|v| v.len() <= 16)
@@ -593,6 +602,7 @@ pub(crate) fn execution_shape(request: &ExecutionRequest) -> bool {
             ExecutionInput::Message(v) => !v.is_empty() && v.len() <= 65536,
         }
 }
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn curl_shape(request: &CurlRequest) -> bool {
     request.body_file.is_none()
         && request.url.len() <= 4096
@@ -759,6 +769,7 @@ pub fn asset_identity(asset: &WorkflowAsset) -> String {
         ),
     }
 }
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn asset_from_identity(value: &str) -> Option<WorkflowAsset> {
     let parts: Vec<_> = value.split(':').collect();
     let chain = |s| match s {
@@ -807,6 +818,7 @@ pub(crate) fn asset_from_identity(value: &str) -> Option<WorkflowAsset> {
     }
 }
 
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn instruction_shape(instruction: &NativeInstruction) -> bool {
     let args = match instruction {
         NativeInstruction::SolanaNativeTransfer { lamports, .. } => return *lamports > 0,
@@ -893,6 +905,7 @@ mod decimal_u64 {
     }
 }
 
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn asset_in_domain(asset: &WorkflowAsset, domain: &WorkflowDomain) -> bool {
     match asset {
         WorkflowAsset::Native { chain, network } => {
@@ -903,6 +916,7 @@ pub(crate) fn asset_in_domain(asset: &WorkflowAsset, domain: &WorkflowDomain) ->
         }
     }
 }
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn authority_source(domain: &WorkflowDomain) -> &AccountId {
     match &domain.authority {
         WorkflowAuthority::EngineWallet { wallet, .. } => wallet,
@@ -911,6 +925,7 @@ pub(crate) fn authority_source(domain: &WorkflowDomain) -> &AccountId {
 }
 
 /// Cheap aggregate transfer coverage. Registered ABI effect decoding remains the installed host's responsibility.
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn native_transfers_covered(
     request: &ExecutionRequest,
     domain: &WorkflowDomain,
@@ -981,6 +996,7 @@ pub(crate) fn native_transfers_covered(
     true
 }
 
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn debit_authorized(
     account: &AccountId,
     asset: &WorkflowAsset,
@@ -1073,6 +1089,7 @@ pub fn evidence_key(binding: &WorkflowBinding, label: &str) -> String {
         .expect("finite binding serialization");
     crate::digest(&bytes)
 }
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn requires_zero_fee_proof(
     fees: &[WorkflowFeeBound],
     payer: &AccountId,
@@ -1089,6 +1106,7 @@ pub(crate) fn requires_zero_fee_proof(
     })
 }
 
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn instruction_in_domain(
     instruction: &NativeInstruction,
     domain: &WorkflowDomain,

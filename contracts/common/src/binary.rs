@@ -104,11 +104,10 @@ impl Encoder {
         }
         Ok(())
     }
+    // Reject host-only variants when SDK features unify in a native caller.
+    #[allow(unreachable_patterns)]
     fn statement(&mut self, value: &Statement) -> Result<(), Error> {
         match value {
-            Statement::IfSome { .. } | Statement::ForEach { .. } => {
-                return Err(Error::InvalidArtifact);
-            }
             Statement::Let {
                 name,
                 value,
@@ -151,6 +150,7 @@ impl Encoder {
                 self.statements(else_branch)?;
                 self.span(span)?;
             }
+            _ => return Err(Error::InvalidArtifact),
         }
         Ok(())
     }
@@ -161,9 +161,10 @@ impl Encoder {
         }
         Ok(())
     }
+    // Reject host-only variants when SDK features unify in a native caller.
+    #[allow(unreachable_patterns)]
     fn expr(&mut self, value: &Expr) -> Result<(), Error> {
         match value {
-            Expr::Borrow { .. } => return Err(Error::InvalidArtifact),
             Expr::String { value } => {
                 self.byte(0);
                 self.string(value)?;
@@ -214,6 +215,7 @@ impl Encoder {
                 self.byte(11);
                 self.expr(value)?;
             }
+            _ => return Err(Error::InvalidArtifact),
         }
         Ok(())
     }

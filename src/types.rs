@@ -91,6 +91,7 @@ pub enum Expr {
         args: Vec<Expr>,
         span: SourceSpan,
     },
+    #[cfg(feature = "typed-workflow")]
     Borrow {
         value: alloc::boxed::Box<Expr>,
     },
@@ -120,6 +121,7 @@ pub enum Statement {
         value: Expr,
         span: SourceSpan,
     },
+    #[cfg(feature = "typed-workflow")]
     IfSome {
         name: String,
         value: Expr,
@@ -127,6 +129,7 @@ pub enum Statement {
         else_branch: Vec<Statement>,
         span: SourceSpan,
     },
+    #[cfg(feature = "typed-workflow")]
     ForEach {
         name: String,
         values: Expr,
@@ -146,9 +149,9 @@ impl Statement {
             Self::Let { span, .. }
             | Self::Expression { span, .. }
             | Self::Return { span, .. }
-            | Self::If { span, .. }
-            | Self::IfSome { span, .. }
-            | Self::ForEach { span, .. } => *span,
+            | Self::If { span, .. } => *span,
+            #[cfg(feature = "typed-workflow")]
+            Self::IfSome { span, .. } | Self::ForEach { span, .. } => *span,
         }
     }
 }
@@ -352,15 +355,20 @@ pub struct ProviderCallPlan {
 #[serde(deny_unknown_fields)]
 pub struct Context {
     #[serde(skip)]
-    pub workflow: Option<crate::typed_workflow::WorkflowEnvironment>,
+    #[cfg(feature = "typed-workflow")]
+    pub workflow: Option<alloc::boxed::Box<crate::typed_workflow::WorkflowEnvironment>>,
     #[serde(skip)]
-    pub execution_request: Option<crate::typed_workflow::ExecutionRequest>,
+    #[cfg(feature = "typed-workflow")]
+    pub execution_request: Option<alloc::boxed::Box<crate::typed_workflow::ExecutionRequest>>,
     #[serde(skip)]
-    pub curl_request: Option<crate::typed_workflow::CurlRequest>,
+    #[cfg(feature = "typed-workflow")]
+    pub curl_request: Option<alloc::boxed::Box<crate::typed_workflow::CurlRequest>>,
     #[serde(skip)]
-    pub curl_outcome: Option<crate::typed_workflow::CurlOutcome>,
+    #[cfg(feature = "typed-workflow")]
+    pub curl_outcome: Option<alloc::boxed::Box<crate::typed_workflow::CurlOutcome>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(skip_deserializing)]
+    #[cfg(feature = "typed-workflow")]
     pub provider_call_input: Option<ProviderCallInput>,
     /// Trusted current native account state. Adapters must overwrite caller-supplied values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -392,20 +400,29 @@ fn empty_runtime_context() -> serde_json::Value {
 }
 impl Context {
     /// Install authenticated host objects together. JSON cannot install this binding.
+    #[cfg(feature = "typed-workflow")]
     pub fn install_workflow(&mut self, environment: crate::typed_workflow::WorkflowEnvironment) {
-        self.execution_request = environment.execution_request.clone();
-        self.curl_request = environment.curl_request.clone();
-        self.curl_outcome = environment.curl_outcome.clone();
-        self.workflow = Some(environment);
+        self.execution_request = environment
+            .execution_request
+            .clone()
+            .map(alloc::boxed::Box::new);
+        self.curl_request = environment.curl_request.clone().map(alloc::boxed::Box::new);
+        self.curl_outcome = environment.curl_outcome.clone().map(alloc::boxed::Box::new);
+        self.workflow = Some(alloc::boxed::Box::new(environment));
     }
 }
 impl Default for Context {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "typed-workflow")]
             workflow: None,
+            #[cfg(feature = "typed-workflow")]
             execution_request: None,
+            #[cfg(feature = "typed-workflow")]
             curl_request: None,
+            #[cfg(feature = "typed-workflow")]
             curl_outcome: None,
+            #[cfg(feature = "typed-workflow")]
             provider_call_input: None,
             native_policy_storage: None,
             amount_units: 0,
@@ -430,12 +447,15 @@ impl Default for Context {
 #[serde(deny_unknown_fields)]
 pub struct Decision {
     #[serde(default, skip_serializing_if = "Vec::is_empty", skip_deserializing)]
+    #[cfg(feature = "typed-workflow")]
     pub workflow_outputs: Vec<crate::typed_workflow::WorkflowOutput>,
     #[serde(default, skip_serializing_if = "Vec::is_empty", skip_deserializing)]
+    #[cfg(feature = "typed-workflow")]
     pub typed_budget_plans: Vec<crate::typed_workflow::TypedBudgetPlan>,
     /// Only effects on the successful evaluated path. Empty on failure or owner/evidence pauses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(skip_deserializing)]
+    #[cfg(feature = "typed-workflow")]
     pub system_operations: Vec<ProviderCallPlan>,
     pub outcome: String,
     pub code: String,
@@ -457,8 +477,11 @@ pub struct Decision {
 impl Decision {
     pub fn fail(code: &str, reason: impl Into<String>) -> Self {
         Self {
+            #[cfg(feature = "typed-workflow")]
             workflow_outputs: Vec::new(),
+            #[cfg(feature = "typed-workflow")]
             typed_budget_plans: Vec::new(),
+            #[cfg(feature = "typed-workflow")]
             system_operations: Vec::new(),
             outcome: "fail".into(),
             code: code.into(),
@@ -473,8 +496,11 @@ impl Decision {
     }
     pub fn pass() -> Self {
         Self {
+            #[cfg(feature = "typed-workflow")]
             workflow_outputs: Vec::new(),
+            #[cfg(feature = "typed-workflow")]
             typed_budget_plans: Vec::new(),
+            #[cfg(feature = "typed-workflow")]
             system_operations: Vec::new(),
             outcome: "pass".into(),
             code: "PASS".into(),

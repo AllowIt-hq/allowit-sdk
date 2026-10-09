@@ -17,6 +17,7 @@ enum Type {
     Context,
     Interval,
     Strings,
+    #[cfg(feature = "typed-workflow")]
     Workflow(crate::typed_workflow::WorkflowType),
     Result(Box<Type>),
     Future(Box<Type>),
@@ -70,21 +71,51 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
 struct Validator {
     nodes: usize,
     config_count: usize,
+    #[cfg(feature = "typed-workflow")]
     provider_call_count: usize,
+    #[cfg(feature = "typed-workflow")]
     provider_profile: bool,
+    #[cfg(feature = "typed-workflow")]
     loop_depth: usize,
+    #[cfg(feature = "typed-workflow")]
     typed_nodes: Vec<crate::typed_workflow::TypedWorkflowNode>,
+    #[cfg(feature = "typed-workflow")]
     typed_only: bool,
+    #[cfg(feature = "typed-workflow")]
     budgets: Vec<crate::typed_workflow::TypedBudgetRequirement>,
+    #[cfg(feature = "typed-workflow")]
     binding_states: BTreeMap<String, String>,
     #[cfg(feature = "oracle-ledger")]
     tier_count: usize,
 }
 impl Validator {
+    #[inline(always)]
+    fn typed_only(&self) -> bool {
+        #[cfg(feature = "typed-workflow")]
+        {
+            self.typed_only
+        }
+        #[cfg(not(feature = "typed-workflow"))]
+        {
+            false
+        }
+    }
+    #[inline(always)]
+    fn provider_profile(&self) -> bool {
+        #[cfg(feature = "typed-workflow")]
+        {
+            self.provider_profile
+        }
+        #[cfg(not(feature = "typed-workflow"))]
+        {
+            false
+        }
+    }
+
     fn tick(&mut self, depth: usize) -> Result<(), CompileError> {
         self.nodes += 1;
         if self.nodes > MAX_NODES || depth > MAX_DEPTH {
-            Err(bad("Policy complexity exceeds the supported limit."))
+            Err(bad("Policy complexity exceeds its limit."))
         } else {
             Ok(())
         }
@@ -111,25 +142,25 @@ impl Validator {
                 } => {
                     if name == "ctx"
                         || env.contains_key(name)
-                        || !(valid_name(name) || (self.typed_only && valid_typed_name(name)))
+                        || !(valid_name(name) || (self.typed_only() && valid_typed_name(name)))
                     {
-                        return Err(bad(
-                            "Variables must have distinct names and cannot replace ctx.",
-                        ));
+                        return Err(bad("Use distinct variable names. Do not replace ctx."));
                     }
                     let ty = self.expr(value, env, depth + 1, false)?;
-                    if !matches!(
-                        ty,
+                    let supported = match ty {
                         Type::String
-                            | Type::ContextString
-                            | Type::Strings
-                            | Type::Integer
-                            | Type::Boolean
-                            | Type::Interval
-                            | Type::Workflow(_)
-                    ) {
+                        | Type::ContextString
+                        | Type::Strings
+                        | Type::Integer
+                        | Type::Boolean
+                        | Type::Interval => true,
+                        #[cfg(feature = "typed-workflow")]
+                        Type::Workflow(_) => true,
+                        _ => false,
+                    };
+                    if !supported {
                         return Err(bad(
-                            "A variable must contain an immutable string, integer, boolean or confidence interval.",
+                            "Variables require immutable strings, integers, booleans or confidence intervals.",
                         ));
                     }
                     if let Some(annotation) = annotation {
@@ -144,6 +175,7 @@ impl Validator {
                             return Err(bad("Variable type does not match its value."));
                         }
                     }
+                    #[cfg(feature = "typed-workflow")]
                     if let Some(last) = self.typed_nodes.last_mut()
                         && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call {span,..} if *span==last.span))
                     {
@@ -155,6 +187,7 @@ impl Validator {
                             last.output_value_type = (**inner).clone();
                         }
                     }
+                    #[cfg(feature = "typed-workflow")]
                     let state = match unborrow(value) {
                         Expr::Try { .. } => "via_try".into(),
                         Expr::Variable { name } => self
@@ -164,6 +197,7 @@ impl Validator {
                             .unwrap_or_else(|| "bound".into()),
                         _ => "bound".into(),
                     };
+                    #[cfg(feature = "typed-workflow")]
                     self.binding_states.insert(name.clone(), state);
                     env.insert(name.clone(), ty);
                 }
@@ -176,19 +210,18 @@ impl Validator {
                     if *semicolon {
                         if ty != Type::Unit {
                             return Err(bad(
-                                "Use ? to check every predefined function result. Await user input before propagating its result.",
+                                "Check each function result with ?. Await user input before propagation.",
                             ));
                         }
                     } else {
                         if !top || index + 1 != block.len() || ty != result(Type::Unit) {
-                            return Err(bad(
-                                "A policy must finish with Ok(()) or return fail(\"reason\").",
-                            ));
+                            return Err(bad("Finish with Ok(()) or return fail(\"reason\")."));
                         }
                         terminal = true;
                     }
                 }
                 Statement::Return { value, .. } => {
+                    #[cfg(feature = "typed-workflow")]
                     if self.loop_depth > 0 && !matches!(value,Expr::Call{name,..} if name=="fail") {
                         return Err(bad(
                             "A bounded loop can only return a refusal; it must check every entry before allowing.",
@@ -199,6 +232,7 @@ impl Validator {
                     }
                     terminal = true;
                 }
+                #[cfg(feature = "typed-workflow")]
                 Statement::IfSome {
                     name,
                     value,
@@ -207,7 +241,7 @@ impl Validator {
                     ..
                 } => {
                     if env.contains_key(name)
-                        || !(valid_name(name) || (self.typed_only && valid_typed_name(name)))
+                        || !(valid_name(name) || (self.typed_only() && valid_typed_name(name)))
                     {
                         return Err(bad("Some bindings must be distinct immutable variables."));
                     }
@@ -218,15 +252,23 @@ impl Validator {
                     };
                     let mut branch = env.clone();
                     branch.insert(name.clone(), Type::Workflow(*inner));
+                    #[cfg(feature = "typed-workflow")]
                     let states = self.binding_states.clone();
                     self.binding_states
                         .insert(name.clone(), "after_some".into());
                     let a = self.block(then_branch, &mut branch, depth + 1, false)?;
-                    self.binding_states = states.clone();
+                    #[cfg(feature = "typed-workflow")]
+                    {
+                        self.binding_states = states.clone();
+                    }
                     let b = self.block(else_branch, &mut env.clone(), depth + 1, false)?;
-                    self.binding_states = states;
+                    #[cfg(feature = "typed-workflow")]
+                    {
+                        self.binding_states = states;
+                    }
                     terminal = a && b;
                 }
+                #[cfg(feature = "typed-workflow")]
                 Statement::ForEach {
                     name, values, body, ..
                 } => {
@@ -234,7 +276,7 @@ impl Validator {
                         return Err(bad("Nested loops are not supported."));
                     }
                     if env.contains_key(name)
-                        || !(valid_name(name) || (self.typed_only && valid_typed_name(name)))
+                        || !(valid_name(name) || (self.typed_only() && valid_typed_name(name)))
                     {
                         return Err(bad("Loop bindings must be distinct immutable variables."));
                     }
@@ -245,11 +287,15 @@ impl Validator {
                     };
                     let mut branch = env.clone();
                     branch.insert(name.clone(), Type::Workflow(*inner));
+                    #[cfg(feature = "typed-workflow")]
                     let states = self.binding_states.clone();
                     self.loop_depth += 1;
                     let result = self.block(body, &mut branch, depth + 1, false);
                     self.loop_depth -= 1;
-                    self.binding_states = states;
+                    #[cfg(feature = "typed-workflow")]
+                    {
+                        self.binding_states = states;
+                    }
                     result?;
                 }
                 Statement::If {
@@ -261,11 +307,18 @@ impl Validator {
                     if self.expr(condition, env, depth + 1, false)? != Type::Boolean {
                         return Err(bad("An if condition must be boolean."));
                     }
+                    #[cfg(feature = "typed-workflow")]
                     let states = self.binding_states.clone();
                     let a = self.block(then_branch, &mut env.clone(), depth + 1, false)?;
-                    self.binding_states = states.clone();
+                    #[cfg(feature = "typed-workflow")]
+                    {
+                        self.binding_states = states.clone();
+                    }
                     let b = self.block(else_branch, &mut env.clone(), depth + 1, false)?;
-                    self.binding_states = states;
+                    #[cfg(feature = "typed-workflow")]
+                    {
+                        self.binding_states = states;
+                    }
                     if a && b && !else_branch.is_empty() {
                         terminal = true;
                     }
@@ -308,7 +361,7 @@ impl Validator {
                     | "recipient"
                     | "native_daily_limit"
                     | "native_action_limit"
-                        if self.typed_only =>
+                        if self.typed_only() =>
                     {
                         return Err(bad(
                             "Typed request policies must guard authenticated typed amounts and assets, not legacy scalar token observations.",
@@ -317,14 +370,17 @@ impl Validator {
                     "amount_units" | "allocation_units" | "spent_units" | "now" => Type::Integer,
                     #[cfg(feature = "std")]
                     "native_daily_limit" | "native_action_limit" => Type::Integer,
+                    #[cfg(feature = "typed-workflow")]
                     "execution_request" => {
                         Type::Workflow(crate::typed_workflow::WorkflowType::Option(Box::new(
                             crate::typed_workflow::WorkflowType::named("ExecutionRequest"),
                         )))
                     }
+                    #[cfg(feature = "typed-workflow")]
                     "curl_request" => Type::Workflow(crate::typed_workflow::WorkflowType::Option(
                         Box::new(crate::typed_workflow::WorkflowType::named("CurlRequest")),
                     )),
+                    #[cfg(feature = "typed-workflow")]
                     "curl_outcome" => Type::Workflow(crate::typed_workflow::WorkflowType::Option(
                         Box::new(crate::typed_workflow::WorkflowType::named("CurlOutcome")),
                     )),
@@ -333,6 +389,7 @@ impl Validator {
                     }
                     _ => return Err(bad(format!("Unsupported context field: {name}"))),
                 },
+                #[cfg(feature = "typed-workflow")]
                 Type::Workflow(crate::typed_workflow::WorkflowType::Named(ref ty)) => {
                     Type::Workflow(
                         crate::typed_workflow::field_type(ty, name)
@@ -340,11 +397,11 @@ impl Validator {
                     )
                 }
                 Type::Interval if name == "lower_bps" || name == "upper_bps" => Type::Integer,
-                _ => return Err(bad("This value has no supported field with that name.")),
+                _ => return Err(bad("This value has no such field.")),
             },
             Expr::Array { values } => {
                 if values.is_empty() || values.len() > 32 {
-                    return Err(bad("An action list must contain 1 to 32 strings."));
+                    return Err(bad("Action lists require 1 to 32 strings."));
                 }
                 for value in values {
                     if self.expr(value, env, depth + 1, false)? != Type::String {
@@ -354,8 +411,13 @@ impl Validator {
                 Type::Strings
             }
             Expr::Binary { op, left, right } => {
-                let a = scalar_type(self.expr(left, env, depth + 1, false)?);
-                let b = scalar_type(self.expr(right, env, depth + 1, false)?);
+                let a = self.expr(left, env, depth + 1, false)?;
+                let b = self.expr(right, env, depth + 1, false)?;
+                #[cfg(feature = "typed-workflow")]
+                let a = scalar_type(a);
+                #[cfg(feature = "typed-workflow")]
+                let b = scalar_type(b);
+                #[cfg(feature = "typed-workflow")]
                 if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=")
                     && ((a == Type::Workflow(crate::typed_workflow::WorkflowType::Amount256)
                         && b == Type::Integer)
@@ -366,6 +428,7 @@ impl Validator {
                 {
                     return Ok(Type::Boolean);
                 }
+                #[cfg(feature = "typed-workflow")]
                 if matches!(op.as_str(), "==" | "!=")
                     && a == b
                     && matches!(
@@ -395,15 +458,16 @@ impl Validator {
                         Type::Boolean
                     }
                     "&&" | "||" if a == Type::Boolean && b == Type::Boolean => Type::Boolean,
-                    _ => return Err(bad("This operator is not supported for these value types.")),
+                    _ => return Err(bad("Unsupported operator for these types.")),
                 }
             }
             Expr::Not { value } => {
                 if self.expr(value, env, depth + 1, false)? != Type::Boolean {
-                    return Err(bad("Only boolean values support !."));
+                    return Err(bad("! requires a boolean."));
                 }
                 Type::Boolean
             }
+            #[cfg(feature = "typed-workflow")]
             Expr::Borrow { value } => {
                 let ty = self.expr(value, env, depth + 1, false)?;
                 if !matches!(
@@ -426,9 +490,11 @@ impl Validator {
             },
             Expr::Await { value } => match self.expr(value, env, depth + 1, false)? {
                 Type::Future(inner) => *inner,
-                _ => return Err(bad("Only require_user_input supports .await.")),
+                _ => return Err(bad("Await only require_user_input.")),
             },
             Expr::Call { name, args, span } => {
+                #[cfg(not(feature = "typed-workflow"))]
+                let _ = span;
                 #[cfg(not(feature = "oracle-ledger"))]
                 if name == "cap_purchase_tiers" {
                     return Err(CompileError::new(
@@ -441,13 +507,16 @@ impl Validator {
                     .map(|a| self.expr(a, env, depth + 1, false))
                     .collect::<Result<Vec<_>, _>>()?;
                 let expected = match name.as_str() {
+                    #[cfg(feature = "typed-workflow")]
                     "allowit::execution_request_validate" => alloc::vec![Type::Workflow(
                         crate::typed_workflow::WorkflowType::named("ExecutionRequest")
                     )],
+                    #[cfg(feature = "typed-workflow")]
                     "paysh::payment_request_from_curl" => alloc::vec![
                         Type::Workflow(crate::typed_workflow::WorkflowType::named("CurlOutcome")),
                         Type::Workflow(crate::typed_workflow::WorkflowType::named("CurlRequest"))
                     ],
+                    #[cfg(feature = "typed-workflow")]
                     "allowit::execution_request_cap" | "allowit::payment_request_cap" => {
                         alloc::vec![
                             Type::Workflow(crate::typed_workflow::WorkflowType::named(
@@ -465,6 +534,7 @@ impl Validator {
                             Type::Integer
                         ]
                     }
+                    #[cfg(feature = "typed-workflow")]
                     "paysh::call" => alloc::vec![
                         Type::String,
                         Type::String,
@@ -489,10 +559,9 @@ impl Validator {
                     _ => return Err(bad(format!("Unknown function: {name}"))),
                 };
                 if types != expected {
-                    return Err(bad(format!(
-                        "Arguments do not match the signature of {name}."
-                    )));
+                    return Err(bad(format!("Arguments do not match {name}.")));
                 }
+                #[cfg(feature = "typed-workflow")]
                 if [
                     "allowit::execution_request_cap",
                     "allowit::payment_request_cap",
@@ -541,6 +610,7 @@ impl Validator {
                             max_fee_units: *fee,
                         });
                 }
+                #[cfg(feature = "typed-workflow")]
                 if let Some(signature) = crate::typed_workflow::signature(name) {
                     if signature.effect == "pure_validation"
                         && (self.loop_depth != 0
@@ -598,6 +668,7 @@ impl Validator {
                         _ => return Err(bad("Invalid typed signature.")),
                     });
                 }
+                #[cfg(feature = "typed-workflow")]
                 if name == "paysh::call" {
                     if self.loop_depth > 0 {
                         return Err(bad(
@@ -626,7 +697,7 @@ impl Validator {
                         return Err(bad("Declare at most one provider call per policy."));
                     }
                 }
-                if self.typed_only
+                if self.typed_only()
                     && [
                         "set_cap",
                         "cap_per_transaction",
@@ -655,7 +726,7 @@ impl Validator {
                             Some(Expr::String { value: amount }),
                             Some(Expr::String { value: token }),
                         ) if token == "USDC"
-                            || (self.provider_profile
+                            || (self.provider_profile()
                                 && !token.is_empty()
                                 && token.len() <= 128) =>
                         {
@@ -685,7 +756,7 @@ impl Validator {
                             Some(Expr::Integer { value: count }),
                             Some(Expr::String { value: token }),
                         ) if (token == "USDC"
-                            || (self.provider_profile
+                            || (self.provider_profile()
                                 && !token.is_empty()
                                 && token.len() <= 128))
                             && *count > 0
@@ -709,10 +780,10 @@ impl Validator {
                         amount_units(value)?;
                     }
                     if let Some(Expr::String { value }) = args.get(2) {
-                        if self.provider_profile && (value.is_empty() || value.len() > 128) {
+                        if self.provider_profile() && (value.is_empty() || value.len() > 128) {
                             return Err(bad("Provider asset identifiers require 1 to 128 bytes."));
                         }
-                        if value != "USDC" && !self.provider_profile {
+                        if value != "USDC" && !self.provider_profile() {
                             return Err(bad("Version 1 supports six-decimal USDC only."));
                         }
                     }
@@ -731,9 +802,11 @@ impl Validator {
                 {
                     return Err(bad("The function argument must not be empty."));
                 }
+                #[cfg(feature = "typed-workflow")]
                 if name == "paysh::call" {
-                    Type::Boolean
-                } else if name == "confidence" || name == "semantic" {
+                    return Ok(Type::Boolean);
+                }
+                if name == "confidence" || name == "semantic" {
                     result(Type::Interval)
                 } else if name == "context_u64" {
                     result(Type::Integer)
@@ -757,6 +830,11 @@ fn valid_name(s: &str) -> bool {
 /// Validate every branch of an IR program, including unreachable code.
 /// This is also required when a contract receives serialized IR.
 pub fn validate_program(program: &Program) -> Result<(), CompileError> {
+    #[cfg(not(feature = "typed-workflow"))]
+    if program.version != IR_VERSION {
+        return Err(bad("Unsupported canonical IR version."));
+    }
+    #[cfg(feature = "typed-workflow")]
     if (crate::typed_workflow::required(program) && provider_call_required(program))
         || (!crate::typed_workflow::required(program) && program.version != IR_VERSION)
         || ![IR_VERSION, crate::TYPED_IR_VERSION].contains(&program.version.as_str())
@@ -767,24 +845,32 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
     let mut env = BTreeMap::new();
     env.insert("ctx".to_string(), Type::Context);
     let mut validator = Validator {
+        #[cfg(feature = "typed-workflow")]
         loop_depth: 0,
+        #[cfg(feature = "typed-workflow")]
         typed_nodes: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         budgets: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         binding_states: BTreeMap::new(),
-        typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
+        #[cfg(feature = "typed-workflow")]
+        typed_only: cfg!(feature = "typed-workflow")
+            && crate::typed_workflow::required(program)
+            && !provider_call_required(program),
+        #[cfg(feature = "typed-workflow")]
         provider_call_count: 0,
-        provider_profile: provider_call_required(program),
+        #[cfg(feature = "typed-workflow")]
+        provider_profile: cfg!(feature = "typed-workflow") && provider_call_required(program),
         nodes: 0,
         config_count: 0,
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
     if !validator.block(&program.statements, &mut env, 0, true)? {
-        return Err(bad(
-            "Every policy path must return Ok(()) or fail(\"reason\").",
-        ));
+        return Err(bad("Each path must return Ok(()) or fail(\"reason\")."));
     }
-    if validator.provider_profile
+    #[cfg(feature = "typed-workflow")]
+    if validator.provider_profile()
         && provider_asset_id(program).is_none_or(|asset| ["USDC", "SOL"].contains(&asset))
     {
         return Err(bad(
@@ -795,6 +881,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
 }
 
 /// The payment asset comes from the same unconditional numeric guard as funding metadata.
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn provider_asset_id(program: &Program) -> Option<&str> {
     program.statements.iter().find_map(|statement| {
         let Statement::Expression {
@@ -832,17 +919,23 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
                 then_branch,
                 else_branch,
                 ..
-            }
-            | Statement::IfSome {
-                value: condition,
-                then_branch,
-                else_branch,
-                ..
             } => {
                 expressions.push(condition);
                 statements.extend(then_branch);
                 statements.extend(else_branch);
             }
+            #[cfg(feature = "typed-workflow")]
+            Statement::IfSome {
+                value,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                expressions.push(value);
+                statements.extend(then_branch);
+                statements.extend(else_branch);
+            }
+            #[cfg(feature = "typed-workflow")]
             Statement::ForEach { values, body, .. } => {
                 expressions.push(values);
                 statements.extend(body);
@@ -858,10 +951,11 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
                 expressions.push(object);
             }
             Expr::Call { args, .. } | Expr::Array { values: args } => expressions.extend(args),
-            Expr::Borrow { value }
-            | Expr::Try { value }
-            | Expr::Await { value }
-            | Expr::Not { value } => expressions.push(value),
+            #[cfg(feature = "typed-workflow")]
+            Expr::Borrow { value } => expressions.push(value),
+            Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
+                expressions.push(value)
+            }
             Expr::Binary { left, right, .. } => {
                 expressions.push(left);
                 expressions.push(right);
@@ -877,6 +971,7 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
 }
 
 /// Provider operations require host settlement even when an IR branch is not taken.
+#[cfg(feature = "typed-workflow")]
 pub(crate) fn provider_call_required(program: &Program) -> bool {
     let mut statements: Vec<&Statement> = program.statements.iter().collect();
     let mut expressions = Vec::new();
@@ -890,17 +985,23 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
                 then_branch,
                 else_branch,
                 ..
-            }
-            | Statement::IfSome {
-                value: condition,
-                then_branch,
-                else_branch,
-                ..
             } => {
                 expressions.push(condition);
                 statements.extend(then_branch);
                 statements.extend(else_branch);
             }
+            #[cfg(feature = "typed-workflow")]
+            Statement::IfSome {
+                value,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                expressions.push(value);
+                statements.extend(then_branch);
+                statements.extend(else_branch);
+            }
+            #[cfg(feature = "typed-workflow")]
             Statement::ForEach { values, body, .. } => {
                 expressions.push(values);
                 statements.extend(body);
@@ -919,10 +1020,11 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
                 expressions.extend(args);
             }
             Expr::Array { values } => expressions.extend(values),
-            Expr::Borrow { value }
-            | Expr::Try { value }
-            | Expr::Await { value }
-            | Expr::Not { value } => expressions.push(value),
+            #[cfg(feature = "typed-workflow")]
+            Expr::Borrow { value } => expressions.push(value),
+            Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
+                expressions.push(value)
+            }
             Expr::Binary { left, right, .. } => {
                 expressions.push(left);
                 expressions.push(right);
@@ -937,10 +1039,19 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
     false
 }
 
+#[cfg(not(feature = "typed-workflow"))]
+pub(crate) fn provider_call_required(_program: &Program) -> bool {
+    false
+}
+
+#[cfg(feature = "typed-workflow")]
 fn scalar_type(ty: Type) -> Type {
     match ty {
+        #[cfg(feature = "typed-workflow")]
         Type::Workflow(crate::typed_workflow::WorkflowType::U64) => Type::Integer,
+        #[cfg(feature = "typed-workflow")]
         Type::Workflow(crate::typed_workflow::WorkflowType::Bool) => Type::Boolean,
+        #[cfg(feature = "typed-workflow")]
         Type::Workflow(crate::typed_workflow::WorkflowType::String) => Type::String,
         other => other,
     }
@@ -952,12 +1063,19 @@ pub(crate) fn typed_nodes(
 ) -> Result<Vec<crate::typed_workflow::TypedWorkflowNode>, CompileError> {
     validate_program(program)?;
     let mut validator = Validator {
+        #[cfg(feature = "typed-workflow")]
         loop_depth: 0,
+        #[cfg(feature = "typed-workflow")]
         typed_nodes: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         budgets: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         binding_states: BTreeMap::new(),
+        #[cfg(feature = "typed-workflow")]
         typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
+        #[cfg(feature = "typed-workflow")]
         provider_call_count: 0,
+        #[cfg(feature = "typed-workflow")]
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
@@ -976,12 +1094,19 @@ pub(crate) fn typed_budgets(
 ) -> Result<Vec<crate::typed_workflow::TypedBudgetRequirement>, CompileError> {
     validate_program(program)?;
     let mut v = Validator {
+        #[cfg(feature = "typed-workflow")]
         loop_depth: 0,
+        #[cfg(feature = "typed-workflow")]
         typed_nodes: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         budgets: Vec::new(),
+        #[cfg(feature = "typed-workflow")]
         binding_states: BTreeMap::new(),
+        #[cfg(feature = "typed-workflow")]
         typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
+        #[cfg(feature = "typed-workflow")]
         provider_call_count: 0,
+        #[cfg(feature = "typed-workflow")]
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
@@ -994,13 +1119,16 @@ pub(crate) fn typed_budgets(
     Ok(v.budgets)
 }
 
+#[cfg(feature = "typed-workflow")]
 fn unborrow(expr: &Expr) -> &Expr {
     match expr {
+        #[cfg(feature = "typed-workflow")]
         Expr::Borrow { value } => unborrow(value),
         _ => expr,
     }
 }
 
+#[cfg(feature = "typed-workflow")]
 fn valid_typed_name(s: &str) -> bool {
     use unicode_normalization::UnicodeNormalization;
     use unicode_script::{Script, UnicodeScript};
@@ -1024,4 +1152,9 @@ fn valid_typed_name(s: &str) -> bool {
         .is_some_and(|c| unicode_ident::is_xid_start(c) || c == '_')
         && chars.all(unicode_ident::is_xid_continue)
         && s.len() <= 64
+}
+
+#[cfg(not(feature = "typed-workflow"))]
+fn valid_typed_name(_s: &str) -> bool {
+    false
 }
