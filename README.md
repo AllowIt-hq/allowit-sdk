@@ -231,3 +231,17 @@ Builds without `oracle-ledger` reject purchase-tier IR during validation with `L
 ## License
 
 AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.
+
+Provider policies declare their exact payment asset in one unconditional `set_cap`
+guard. The compiler projects that literal into `CompiledPolicy.token` and
+`provider_call_requirements[].payment_asset_id`. The authenticated host sets
+`Context.token` to this mint and supplies `ProviderCallInput.payment_asset`
+with the verified network, mint and six decimals. A source guard for `USDC`
+does not accept the Testnet demo token. Legacy policies keep their USDC profile.
+Provider binding cannot round-trip through JSON; the host assigns it through the
+typed API after authenticating the canonical run input. Execute effects only from
+an in-process successful evaluation, never from a deserialized decision. Hosts
+must deduplicate by canonical run/input identity and verify all native authority
+and settlement bounds. `evaluate_ir` also requires the host to choose and enforce
+the supported execution profile. Deploy registry 1.3 readers before authoring
+provider policies; older readers reject this registered operation.

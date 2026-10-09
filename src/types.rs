@@ -205,14 +205,14 @@ pub struct ExecutionRequirements {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionFeature {
     NativePolicyStorage,
-    ProviderCall,
-    PaidHttpCall,
-    NativeSettlement,
     ConfidenceEvidence,
     OwnerInput,
     PurchaseHistory,
     RuntimeContextU64,
     SemanticEvidence,
+    ProviderCall,
+    PaidHttpCall,
+    NativeSettlement,
 }
 
 /// Oracle-only execution evidence for the compiler's source-bound workflow.
@@ -273,10 +273,20 @@ pub struct NativePolicyStorage {
     pub action_limit_units: u64,
 }
 
+/// Exact native payment asset supplied by the authenticated wallet adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderPaymentAsset {
+    pub network: String,
+    pub asset: String,
+    pub decimals: u8,
+}
+
 /// Host-authenticated canonical input. Public JSON evaluation cannot supply this binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderCallInput {
+    pub payment_asset: ProviderPaymentAsset,
     pub service_id: String,
     pub input_key: String,
     pub request_digest: String,
@@ -286,6 +296,7 @@ pub struct ProviderCallInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderCallRequirement {
+    pub payment_asset_id: String,
     pub operation: String,
     pub service_id: String,
     pub input_key: String,
@@ -298,6 +309,7 @@ pub struct ProviderCallRequirement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderCallPlan {
+    pub payment_asset: ProviderPaymentAsset,
     pub operation: String,
     pub service_id: String,
     pub input_key: String,

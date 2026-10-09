@@ -70,6 +70,7 @@ struct Validator {
     nodes: usize,
     config_count: usize,
     provider_call_count: usize,
+    provider_profile: bool,
     #[cfg(feature = "oracle-ledger")]
     tier_count: usize,
 }
@@ -318,6 +319,13 @@ impl Validator {
                             "Provider operation arguments must be source literals or initialized constructor constants.",
                         ));
                     }
+                    for arg in &args[..2] {
+                        if let Expr::String { value } = arg
+                            && (value.trim().is_empty() || value.len() > 128)
+                        {
+                            return Err(bad("Provider identifiers require 1 to 128 bytes."));
+                        }
+                    }
                     self.provider_call_count += 1;
                     if self.provider_call_count > 1 {
                         return Err(bad("Declare at most one provider call per policy."));
@@ -334,7 +342,11 @@ impl Validator {
                         (
                             Some(Expr::String { value: amount }),
                             Some(Expr::String { value: token }),
-                        ) if token == "USDC" => {
+                        ) if token == "USDC"
+                            || (self.provider_profile
+                                && !token.is_empty()
+                                && token.len() <= 128) =>
+                        {
                             amount_units(amount)?;
                         }
                         _ => {
@@ -360,7 +372,13 @@ impl Validator {
                             Some(Expr::String { value: amount }),
                             Some(Expr::Integer { value: count }),
                             Some(Expr::String { value: token }),
-                        ) if token == "USDC" && *count > 0 && *count <= 1_000_000 => {
+                        ) if (token == "USDC"
+                            || (self.provider_profile
+                                && !token.is_empty()
+                                && token.len() <= 128))
+                            && *count > 0
+                            && *count <= 1_000_000 =>
+                        {
                             if amount_units(amount)? > 1_000_000_000_000 {
                                 return Err(bad(
                                     "The purchase ceiling must be at most 1000000 USDC.",
@@ -380,6 +398,7 @@ impl Validator {
                     }
                     if let Some(Expr::String { value }) = args.get(2)
                         && value != "USDC"
+                        && !self.provider_profile
                     {
                         return Err(bad("Version 1 supports six-decimal USDC only."));
                     }
@@ -431,6 +450,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
     env.insert("ctx".to_string(), Type::Context);
     let mut validator = Validator {
         provider_call_count: 0,
+        provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
         #[cfg(feature = "oracle-ledger")]
@@ -441,7 +461,35 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
             "Every policy path must return Ok(()) or fail(\"reason\").",
         ));
     }
+    if validator.provider_profile && provider_asset_id(program).is_none() {
+        return Err(bad(
+            "Provider policies require one unconditional set_cap with a literal payment asset.",
+        ));
+    }
     Ok(())
+}
+
+/// The payment asset comes from the same unconditional numeric guard as funding metadata.
+pub(crate) fn provider_asset_id(program: &Program) -> Option<&str> {
+    program.statements.iter().find_map(|statement| {
+        let Statement::Expression {
+            value: Expr::Try { value },
+            ..
+        } = statement
+        else {
+            return None;
+        };
+        let Expr::Call { name, args, .. } = &**value else {
+            return None;
+        };
+        if name != "set_cap" {
+            return None;
+        }
+        match args.get(2) {
+            Some(Expr::String { value }) => Some(value.as_str()),
+            _ => None,
+        }
+    })
 }
 
 /// Detect native storage reads in every branch, including unreachable statements.

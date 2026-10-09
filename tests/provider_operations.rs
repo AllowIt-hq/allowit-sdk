@@ -1,18 +1,25 @@
 use allowit_sdk::{
-    Context, ExecutionFeature, Profile, ProviderCallInput, compile, evaluate, process_value,
+    Context, ExecutionFeature, Profile, ProviderCallInput, ProviderPaymentAsset, compile, evaluate,
+    process_value,
 };
 use serde_json::json;
 
 const CALL: &str = "paysh::call(\"air-quality\", \"request\", 1000, 5000000, 100000)";
 fn source(body: &str) -> String {
     format!(
-        "use allowit::prelude::*; pub async fn execute(ctx: &Context) -> PolicyResult {{ set_cap(ctx, \"100\", \"USDC\")?; {body} }}"
+        "use allowit::prelude::*; pub async fn execute(ctx: &Context) -> PolicyResult {{ set_cap(ctx, \"100\", \"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\")?; {body} }}"
     )
 }
 fn context() -> Context {
     let mut ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
     ctx.amount_units = 1000;
+    ctx.token = "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv".into();
     ctx.provider_call_input = Some(ProviderCallInput {
+        payment_asset: ProviderPaymentAsset {
+            network: ctx.network.clone(),
+            asset: "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv".into(),
+            decimals: 6,
+        },
         service_id: "air-quality".into(),
         input_key: "request".into(),
         request_digest: "a".repeat(64),
@@ -93,7 +100,9 @@ fn later_refusal_pause_caps_or_untaken_branch_discard_provider_effects() {
     for body in [
         format!("let admitted = {CALL}; fail(\"Denied\")"),
         format!("let admitted = {CALL}; require_user_input(ctx, \"Approve\").await?; Ok(())"),
-        format!("let admitted = {CALL}; cap_per_transaction(ctx, \"0.000001\", \"USDC\")?; Ok(())"),
+        format!(
+            "let admitted = {CALL}; cap_per_transaction(ctx, \"0.000001\", \"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\")?; Ok(())"
+        ),
     ] {
         let result = evaluate(
             &compile(&source(&body)).unwrap(),
@@ -230,7 +239,7 @@ fn dynamic_source_caps_reject_and_constructor_constants_are_projected() {
             .is_err()
         );
     }
-    let src = "use allowit::v1::prelude::*; struct PolicyParams {max_units:u64} fn new()->PolicyParams{PolicyParams{max_units:1000}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { if !paysh::call(\"air-quality\",\"request\",params.max_units,5000000,100000){return allowit::fail(\"Unavailable\");} Ok(()) }";
+    let src = "use allowit::v1::prelude::*; struct PolicyParams {max_units:u64} fn new()->PolicyParams{PolicyParams{max_units:1000}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { allowit::set_cap(ctx.spent_units,ctx.amount_units,&ctx.token,100000000,\"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\",6)?; if !paysh::call(\"air-quality\",\"request\",params.max_units,5000000,100000){return allowit::fail(\"Unavailable\");} Ok(()) }";
     let compiled = compile(src).unwrap();
     assert_eq!(
         compiled.provider_call_requirements[0].max_payment_units,
@@ -287,6 +296,71 @@ fn forged_ir_aliases_duplicate_calls_and_legacy_hidden_calls_fail_closed() {
     hidden.registry_version = "1.2.0".into();
     assert_eq!(
         evaluate(&hidden, Profile::Oracle, &context()).code,
+        "INVALID_ARTIFACT"
+    );
+}
+
+#[test]
+fn authenticated_testnet_asset_is_exact_and_legacy_usdc_semantics_are_unchanged() {
+    let mint = "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv";
+    let policy = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
+    assert_eq!(policy.token, mint);
+    assert_eq!(policy.provider_call_requirements[0].payment_asset_id, mint);
+    let passed = evaluate(&policy, Profile::Oracle, &context());
+    assert_eq!(passed.outcome, "pass");
+    assert_eq!(passed.system_operations[0].payment_asset.asset, mint);
+    for field in ["SOL", "USDC", "mint", "decimals", "network"] {
+        let mut ctx = context();
+        match field {
+            "SOL" => ctx.token = "SOL".into(),
+            "USDC" => ctx.token = "USDC".into(),
+            "mint" => {
+                ctx.token = "wrong-mint".into();
+                ctx.provider_call_input
+                    .as_mut()
+                    .unwrap()
+                    .payment_asset
+                    .asset = "wrong-mint".into();
+            }
+            "decimals" => {
+                ctx.provider_call_input
+                    .as_mut()
+                    .unwrap()
+                    .payment_asset
+                    .decimals = 9
+            }
+            _ => {
+                ctx.provider_call_input
+                    .as_mut()
+                    .unwrap()
+                    .payment_asset
+                    .network = "solana:mainnet".into()
+            }
+        }
+        let result = evaluate(&policy, Profile::Oracle, &ctx);
+        assert_eq!(result.outcome, "fail", "{field}");
+        assert!(result.system_operations.is_empty());
+    }
+    let usdc_guard = compile(&source(&format!(
+        "if ctx.token != \"USDC\" {{ return fail(\"Not USDC\"); }} let admitted = {CALL}; Ok(())"
+    )))
+    .unwrap();
+    assert_eq!(
+        evaluate(&usdc_guard, Profile::Oracle, &context()).reason,
+        "Not USDC"
+    );
+    let legacy = compile("use allowit::prelude::*; pub async fn execute(ctx:&Context)->PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; Ok(()) }").unwrap();
+    assert_eq!(
+        evaluate(&legacy, Profile::Oracle, &context()).outcome,
+        "fail"
+    );
+    let ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
+    assert_eq!(evaluate(&legacy, Profile::Oracle, &ctx).outcome, "pass");
+    assert!(compile(&format!("use allowit::prelude::*; pub async fn execute(ctx:&Context)->PolicyResult {{ {CALL}; Ok(()) }}")).is_err());
+    let mut forged = policy;
+    forged.provider_call_requirements[0].payment_asset_id = "USDC".into();
+    assert_eq!(
+        evaluate(&forged, Profile::Oracle, &context()).code,
         "INVALID_ARTIFACT"
     );
 }

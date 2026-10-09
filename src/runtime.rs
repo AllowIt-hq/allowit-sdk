@@ -276,6 +276,7 @@ impl Evaluator<'_> {
                             ));
                         }
                         self.system_operations.push(crate::ProviderCallPlan {
+                            payment_asset: binding.payment_asset.clone(),
                             operation: "paysh::call".into(),
                             service_id,
                             input_key,
@@ -305,7 +306,7 @@ impl Evaluator<'_> {
                             ));
                         }
                         let token = string(&values, 3)?;
-                        if token != "USDC" || token != self.context.token {
+                        if token != self.context.token {
                             return Err(failure("TOKEN_MISMATCH", "Token does not match."));
                         }
                         let maximum = amount_units(&string(&values, 1)?)
@@ -319,7 +320,7 @@ impl Evaluator<'_> {
                     }
                     "set_cap" | "cap_per_transaction" => {
                         let token = string(&values, 2)?;
-                        if token != "USDC" || token != self.context.token {
+                        if token != self.context.token {
                             return Err(failure(
                                 "TOKEN_MISMATCH",
                                 "The requested token does not match the policy.",
@@ -522,8 +523,30 @@ fn invalid() -> alloc::boxed::Box<Decision> {
     )
 }
 
-fn validate_context(ctx: &Context) -> Result<(), alloc::boxed::Box<Decision>> {
-    if ctx.token != "USDC" {
+fn validate_context(
+    ctx: &Context,
+    provider_profile: bool,
+) -> Result<(), alloc::boxed::Box<Decision>> {
+    if provider_profile {
+        let binding = ctx.provider_call_input.as_ref().ok_or_else(|| {
+            failure(
+                "PROVIDER_INPUT_REQUIRED",
+                "Authenticated provider input is required.",
+            )
+        })?;
+        let asset = &binding.payment_asset;
+        if asset.asset.is_empty()
+            || asset.asset.len() > 128
+            || asset.network != ctx.network
+            || asset.decimals != 6
+            || ctx.token != asset.asset
+        {
+            return Err(failure(
+                "PROVIDER_ASSET_MISMATCH",
+                "Context must match the authenticated six-decimal native payment asset.",
+            ));
+        }
+    } else if ctx.token != "USDC" {
         return Err(failure(
             "TOKEN_MISMATCH",
             "This policy supports six-decimal USDC.",
@@ -693,7 +716,7 @@ fn run_inner(
             );
         }
     }
-    if let Err(error) = validate_context(ctx) {
+    if let Err(error) = validate_context(ctx, crate::validation::provider_call_required(ir)) {
         return *error;
     }
     if profile == Profile::Contract && ctx.network == "local:dev" {

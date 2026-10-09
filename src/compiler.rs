@@ -224,12 +224,12 @@ impl Parser {
             let count = usize::from(name == "cap_purchase_tiers");
             let currency = self.expr(&call.args[index + 1 + count], depth + 1)?;
             let decimals = self.expr(&call.args[index + 2 + count], depth + 1)?;
-            if !matches!(&currency,Expr::String{value} if value=="USDC")
+            if !matches!(&currency,Expr::String{value} if !value.is_empty() && value.len()<=128)
                 || !matches!(decimals, Expr::Integer { value: 6 })
             {
                 return Err(error(
                     call.span(),
-                    "This profile supports the bound USDC asset with exactly six decimals.",
+                    "Use one explicit bound asset identifier with exactly six decimals.",
                 ));
             }
             let amount = if value % 1_000_000 == 0 {
@@ -1294,7 +1294,9 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         execution_requirements: crate::requirements::extract(&ir)?,
         provider_call_requirements: crate::requirements::provider_calls(&ir)?,
         limit,
-        token: "USDC".into(),
+        token: crate::validation::provider_asset_id(&ir)
+            .unwrap_or("USDC")
+            .into(),
         source: source.into(),
         workflow,
         calls,

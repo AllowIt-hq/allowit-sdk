@@ -37,6 +37,7 @@ impl Collector {
                             ));
                         };
                         self.provider_calls.push(crate::ProviderCallRequirement {
+                            payment_asset_id: String::new(),
                             operation: name.clone(),
                             service_id: service_id.clone(),
                             input_key: input_key.clone(),
@@ -149,6 +150,17 @@ pub(crate) fn provider_calls(
 ) -> Result<Vec<crate::ProviderCallRequirement>, CompileError> {
     let mut collector = Collector::default();
     collector.block(&program.statements)?;
+    if !collector.provider_calls.is_empty() {
+        let asset = crate::validation::provider_asset_id(program).ok_or_else(|| {
+            CompileError::new(
+                "UNSUPPORTED_REQUIREMENT",
+                "Provider payment asset requires an unconditional numeric guard.",
+            )
+        })?;
+        for call in &mut collector.provider_calls {
+            call.payment_asset_id = asset.into();
+        }
+    }
     Ok(collector.provider_calls)
 }
 
