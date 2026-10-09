@@ -522,3 +522,41 @@ pub fn record_execution(state: &mut State, request: &Request) -> Result<(), Erro
     state.next_nonce = state.next_nonce.checked_add(1).ok_or(Error::Overflow)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod typed_profile_rejection {
+    use super::*;
+
+    #[test]
+    fn forged_scalar_version_does_not_admit_host_workflow_nodes() {
+        let mut program = allowit_sdk::compile(include_str!(
+            "../../../tests/fixtures/typed-execution-policy.rs"
+        ))
+        .unwrap()
+        .ir;
+        program.version = "1.0.0".into();
+        assert_eq!(
+            validate_chain_program(&program),
+            Err(Error::InvalidArtifact)
+        );
+    }
+
+    #[test]
+    fn binary_encoder_rejects_unknown_version_even_with_only_scalar_nodes() {
+        let compiled = allowit_sdk::compile(
+            "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"1\", \"USDC\")?; Ok(()) }",
+        )
+        .unwrap();
+        let mut artifact = Artifact {
+            original_intent: String::new(),
+            source_hash: compiled.source_hash,
+            ir_hash: compiled.ir_hash,
+            registry_version: compiled.registry_version,
+            core_version: CORE_VERSION.into(),
+            compiler_version: CORE_VERSION.into(),
+            ir: compiled.ir,
+        };
+        artifact.ir.version = "1.1.0".into();
+        assert_eq!(binary::encode(&artifact), Err(Error::InvalidArtifact));
+    }
+}
