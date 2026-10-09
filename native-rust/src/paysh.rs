@@ -602,8 +602,13 @@ impl PayShClient {
         if account(&*self.rpc, receipt, None)?.is_some_and(|a| !unallocated(&a)) {
             return Err(Error::denied("Request nonce was already consumed"));
         }
-        let spent = if let Some(a) = account(&*self.rpc, budget, None)? {
-            if a.owner != self.deployment.program || a.data.len() != interface::BUDGET_BYTES {
+        // The contract allocates an empty System-owned PDA even if it was prefunded.
+        let spent = if let Some(a) = account(&*self.rpc, budget, None)?.filter(|a| !unallocated(a))
+        {
+            if a.owner != self.deployment.program
+                || a.executable
+                || a.data.len() != interface::BUDGET_BYTES
+            {
                 return Err(Error::config("Invalid budget account"));
             }
             let b = Budget::try_from_slice(&a.data)
