@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
-pub const REGISTRY_VERSION: &str = "1.2.0";
+pub const REGISTRY_VERSION: &str = "1.3.0";
 /// Canonical operation schema. Source-only aliases do not change this version.
 pub const IR_VERSION: &str = "1.0.0";
 /// Both registries use the same canonical operations and artifact semantics.
 pub fn supported_registry_version(version: &str) -> bool {
-    matches!(version, "1.0.0" | "1.1.0" | REGISTRY_VERSION)
+    matches!(version, "1.0.0" | "1.1.0" | "1.2.0" | REGISTRY_VERSION)
 }
 pub const MAX_SOURCE_BYTES: usize = 32768;
 pub const MAX_NODES: usize = 2048;
@@ -202,6 +202,9 @@ pub struct ExecutionRequirements {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionFeature {
     NativePolicyStorage,
+    ProviderCall,
+    PaidHttpCall,
+    NativeSettlement,
     ConfidenceEvidence,
     OwnerInput,
     PurchaseHistory,
@@ -267,9 +270,33 @@ pub struct NativePolicyStorage {
     pub action_limit_units: u64,
 }
 
+/// Host-authenticated canonical input. Public JSON evaluation cannot supply this binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderCallInput {
+    pub service_id: String,
+    pub input_key: String,
+    pub request_digest: String,
+}
+
+/// A source-admitted provider effect. This is neither a payment nor a delivery receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderCallPlan {
+    pub operation: String,
+    pub service_id: String,
+    pub input_key: String,
+    pub request_digest: String,
+    pub max_payment_units: u64,
+    pub max_swap_lamports: u64,
+    pub max_service_fee_lamports: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_call_input: Option<ProviderCallInput>,
     /// Trusted current native account state. Adapters must overwrite caller-supplied values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_policy_storage: Option<NativePolicyStorage>,
@@ -301,6 +328,7 @@ fn empty_runtime_context() -> serde_json::Value {
 impl Default for Context {
     fn default() -> Self {
         Self {
+            provider_call_input: None,
             native_policy_storage: None,
             amount_units: 0,
             allocation_units: 0,
@@ -323,6 +351,9 @@ impl Default for Context {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Decision {
+    /// Only effects on the successful evaluated path. Empty on failure or owner/evidence pauses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub system_operations: Vec<ProviderCallPlan>,
     pub outcome: String,
     pub code: String,
     pub reason: String,
@@ -343,6 +374,7 @@ pub struct Decision {
 impl Decision {
     pub fn fail(code: &str, reason: impl Into<String>) -> Self {
         Self {
+            system_operations: Vec::new(),
             outcome: "fail".into(),
             code: code.into(),
             reason: reason.into(),
@@ -356,6 +388,7 @@ impl Decision {
     }
     pub fn pass() -> Self {
         Self {
+            system_operations: Vec::new(),
             outcome: "pass".into(),
             code: "PASS".into(),
             reason: "The request satisfies this policy.".into(),

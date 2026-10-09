@@ -29,6 +29,7 @@ struct Evaluator<'a> {
     profile: Profile,
     binding: String,
     steps: usize,
+    system_operations: Vec<crate::ProviderCallPlan>,
     #[cfg(feature = "compiler")]
     trace: Option<&'a mut crate::trace::TraceRecorder>,
     #[cfg(feature = "compiler")]
@@ -220,6 +221,65 @@ impl Evaluator<'_> {
                     .map(|a| self.expr(a, env))
                     .collect::<Result<Vec<_>, _>>()?;
                 match name.as_str() {
+                    "paysh::call" => {
+                        if self.profile != Profile::Oracle {
+                            return Err(failure(
+                                "PROVIDER_PROFILE_UNSUPPORTED",
+                                "Provider effects require an authenticated host adapter.",
+                            ));
+                        }
+                        if !self.system_operations.is_empty() {
+                            return Err(failure(
+                                "PROVIDER_CALL_LIMIT",
+                                "Only one provider call is supported per run.",
+                            ));
+                        }
+                        let service_id = string(&values, 0)?;
+                        let input_key = string(&values, 1)?;
+                        let binding =
+                            self.context.provider_call_input.as_ref().ok_or_else(|| {
+                                failure(
+                                    "PROVIDER_INPUT_REQUIRED",
+                                    "Authenticated provider input is required.",
+                                )
+                            })?;
+                        if service_id.is_empty()
+                            || service_id.len() > 128
+                            || input_key.is_empty()
+                            || input_key.len() > 128
+                            || service_id != binding.service_id
+                            || input_key != binding.input_key
+                            || binding.request_digest.len() != 64
+                            || !binding
+                                .request_digest
+                                .bytes()
+                                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                        {
+                            return Err(failure(
+                                "PROVIDER_INPUT_MISMATCH",
+                                "The operation does not match authenticated canonical run input.",
+                            ));
+                        }
+                        let max_payment_units = integer(&values, 2)?;
+                        let max_swap_lamports = integer(&values, 3)?;
+                        let max_service_fee_lamports = integer(&values, 4)?;
+                        if max_payment_units == 0 {
+                            return Err(failure(
+                                "PROVIDER_INVALID_PAYMENT",
+                                "A paid call requires a positive payment ceiling.",
+                            ));
+                        }
+                        self.system_operations.push(crate::ProviderCallPlan {
+                            operation: "paysh::call".into(),
+                            service_id,
+                            input_key,
+                            request_digest: binding.request_digest.clone(),
+                            max_payment_units,
+                            max_swap_lamports,
+                            max_service_fee_lamports,
+                        });
+                        Value::Boolean(true)
+                    }
                     "Ok" => Value::Unit,
                     "fail" => return Err(failure("POLICY_REJECTED", string(&values, 0)?)),
                     #[cfg(not(feature = "oracle-ledger"))]
@@ -414,6 +474,7 @@ impl Evaluator<'_> {
                             }
                             None => {
                                 return Err(alloc::boxed::Box::new(Decision {
+                                    system_operations: Vec::new(),
                                     outcome: "awaiting_input".into(),
                                     code: "USER_INPUT_REQUIRED".into(),
                                     reason:
@@ -438,6 +499,12 @@ impl Evaluator<'_> {
 fn string(values: &[Value], index: usize) -> Result<String, alloc::boxed::Box<Decision>> {
     match values.get(index) {
         Some(Value::String(s)) => Ok(s.clone()),
+        _ => Err(invalid()),
+    }
+}
+fn integer(values: &[Value], index: usize) -> Result<u64, alloc::boxed::Box<Decision>> {
+    match values.get(index) {
+        Some(Value::Integer(value)) => Ok(*value),
         _ => Err(invalid()),
     }
 }
@@ -592,6 +659,12 @@ fn run_inner(
     if let Err(error) = validate_program(ir) {
         return Decision::fail("INVALID_POLICY", error.message);
     }
+    if profile == Profile::Contract && crate::validation::provider_call_required(ir) {
+        return Decision::fail(
+            "PROVIDER_PROFILE_UNSUPPORTED",
+            "This contract profile cannot execute provider operations; use the authenticated host settlement adapter.",
+        );
+    }
     #[cfg(feature = "std")]
     if crate::validation::native_storage_required(ir) {
         if profile == Profile::Contract {
@@ -627,6 +700,7 @@ fn run_inner(
         profile,
         binding,
         steps: 0,
+        system_operations: Vec::new(),
         #[cfg(feature = "compiler")]
         trace,
         #[cfg(feature = "compiler")]
@@ -653,7 +727,11 @@ fn run_inner(
         }
     }
     match evaluator.block(&ir.statements, &mut env) {
-        Ok(true) => Decision::pass(),
+        Ok(true) => {
+            let mut decision = Decision::pass();
+            decision.system_operations = evaluator.system_operations;
+            decision
+        }
         Ok(false) => *invalid(),
         Err(decision) => *decision,
     }
@@ -698,6 +776,8 @@ fn validate_artifact(
 ) -> Result<CompiledPolicy, alloc::boxed::Box<Decision>> {
     if policy.language != crate::LANGUAGE
         || !crate::supported_registry_version(&policy.registry_version)
+        || (crate::validation::provider_call_required(&policy.ir)
+            && policy.registry_version != crate::REGISTRY_VERSION)
         || digest(policy.source.as_bytes()) != policy.source_hash
         || canonical_ir_hash(&policy.ir).ok().as_ref() != Some(&policy.ir_hash)
     {

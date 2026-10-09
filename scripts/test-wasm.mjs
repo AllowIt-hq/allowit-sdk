@@ -35,9 +35,9 @@ assert.equal(invoke({ operation: 'evaluate', source, profile: 'oracle', context 
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'panic!("no")') }).ok, false);
 const registryResponse = invoke({ operation: 'registry' });
-assert.equal(registryResponse.registry_version, '1.2.0');
+assert.equal(registryResponse.registry_version, '1.3.0');
 const registry = registryResponse.functions;
-assert.equal(registry.length, 43);
+assert.equal(registry.length, 44);
 for (const name of ['allowit::set_cap', 'allowit::amount_at_most', 'jev::semantic', 'jev::check_preference']) {
   assert.ok(registry.some(entry => entry.name === name), `Missing registered namespace ${name}`);
 }

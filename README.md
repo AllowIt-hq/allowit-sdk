@@ -153,6 +153,8 @@ Hosts must bind each trace to the request, evaluation attempt and approved revis
 
 Contract adapters use `default-features = false`, `validate_program`, `canonical_ir_hash` and `evaluate_ir`. The contract must authenticate the IR artifact during owner activation and bind it to the action, owner, network, asset, current budget, original intent, runtime-context digest and authority. The `no_std` evaluator validates the complete IR but does not contain the source parser; it does not claim to recompile source on chain. Source digests are owner-bound metadata there. Native `evaluate` recompiles source to reject a forged source/IR correspondence and is available only with the compiler feature.
 
+The registered `paysh::call(service_id, input_key, max_payment_units, max_swap_lamports, max_service_fee_lamports) -> bool` admits a paid provider plan. Its five arguments use two strings and three integer ceilings. Supply `Context.provider_call_input` only from an authenticated typed host adapter, with the canonical input digest. Public JSON evaluation rejects this binding. `evaluate_with_trace` returns `Decision.system_operations` only after all executed policy checks pass. Owner/evidence pauses and refusals expose no effects. The adapter must bind the plan to the authenticated run, enforce its ceilings and native wallet limits, and record payment and delivery separately. One provider call is supported per policy. Contract evaluation rejects this host operation; a fixed native wallet settles the adapter's signed bounded request rather than executing arbitrary Rust. The direct Rust source facade returns false because it has no authenticated host adapter.
+
 ## WebAssembly
 
 ```sh

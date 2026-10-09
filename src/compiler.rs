@@ -1548,6 +1548,7 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                         || ident == "Ok"
                         || ident == "allowit"
                         || ident == "jev"
+                        || ident == "paysh"
                         || crate::registry::function(&ident.to_string()).is_some() =>
                 {
                     current.after_if_body = false;
@@ -1609,7 +1610,9 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                 stack.push(frame(group.stream(), scope, depth));
             }
             TokenTree::Ident(ident) => {
-                if current.scope != Scope::File && (ident == "allowit" || ident == "jev") {
+                if current.scope != Scope::File
+                    && (ident == "allowit" || ident == "jev" || ident == "paysh")
+                {
                     let mut lookahead = current.iter.clone();
                     if matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':' && p.spacing() == proc_macro2::Spacing::Joint)
                         && matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':')

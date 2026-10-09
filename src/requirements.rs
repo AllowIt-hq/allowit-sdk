@@ -15,6 +15,11 @@ impl Collector {
         match expr {
             Expr::Call { name, args, .. } => {
                 let feature = match name.as_str() {
+                    "paysh::call" => {
+                        self.features.insert(ExecutionFeature::PaidHttpCall);
+                        self.features.insert(ExecutionFeature::NativeSettlement);
+                        Some(ExecutionFeature::ProviderCall)
+                    }
                     "semantic" => Some(ExecutionFeature::SemanticEvidence),
                     "confidence" => Some(ExecutionFeature::ConfidenceEvidence),
                     "require_user_input" => Some(ExecutionFeature::OwnerInput),

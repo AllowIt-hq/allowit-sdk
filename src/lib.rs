@@ -9,6 +9,19 @@ mod editing;
 #[cfg(feature = "compiler")]
 pub mod lsp;
 pub mod prelude;
+/// Source type-checking facade. Authoritative provider admission uses evaluated IR.
+pub mod paysh {
+    /// Direct Rust execution has no authenticated host adapter and fails closed.
+    pub fn call(
+        _service_id: &str,
+        _input_key: &str,
+        _max_payment_units: u64,
+        _max_swap_lamports: u64,
+        _max_service_fee_lamports: u64,
+    ) -> bool {
+        false
+    }
+}
 mod protocol;
 mod readability;
 mod registry;

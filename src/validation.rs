@@ -69,6 +69,7 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
 struct Validator {
     nodes: usize,
     config_count: usize,
+    provider_call_count: usize,
     #[cfg(feature = "oracle-ledger")]
     tier_count: usize,
 }
@@ -278,6 +279,13 @@ impl Validator {
                     .map(|a| self.expr(a, env, depth + 1, false))
                     .collect::<Result<Vec<_>, _>>()?;
                 let expected = match name.as_str() {
+                    "paysh::call" => alloc::vec![
+                        Type::String,
+                        Type::String,
+                        Type::Integer,
+                        Type::Integer,
+                        Type::Integer
+                    ],
                     "set_cap" | "cap_per_transaction" => {
                         alloc::vec![Type::Context, Type::String, Type::String]
                     }
@@ -298,6 +306,12 @@ impl Validator {
                     return Err(bad(format!(
                         "Arguments do not match the signature of {name}."
                     )));
+                }
+                if name == "paysh::call" {
+                    self.provider_call_count += 1;
+                    if self.provider_call_count > 1 {
+                        return Err(bad("Declare at most one provider call per policy."));
+                    }
                 }
                 if name == "set_cap" {
                     self.config_count += 1;
@@ -374,7 +388,9 @@ impl Validator {
                 {
                     return Err(bad("The function argument must not be empty."));
                 }
-                if name == "confidence" || name == "semantic" {
+                if name == "paysh::call" {
+                    Type::Boolean
+                } else if name == "confidence" || name == "semantic" {
                     result(Type::Interval)
                 } else if name == "context_u64" {
                     result(Type::Integer)
@@ -404,6 +420,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
     let mut env = BTreeMap::new();
     env.insert("ctx".to_string(), Type::Context);
     let mut validator = Validator {
+        provider_call_count: 0,
         nodes: 0,
         config_count: 0,
         #[cfg(feature = "oracle-ledger")]
@@ -448,6 +465,52 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
                 expressions.push(object);
             }
             Expr::Call { args, .. } | Expr::Array { values: args } => expressions.extend(args),
+            Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
+                expressions.push(value)
+            }
+            Expr::Binary { left, right, .. } => {
+                expressions.push(left);
+                expressions.push(right);
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Provider operations require host settlement even when an IR branch is not taken.
+pub(crate) fn provider_call_required(program: &Program) -> bool {
+    let mut statements: Vec<&Statement> = program.statements.iter().collect();
+    let mut expressions = Vec::new();
+    while let Some(statement) = statements.pop() {
+        match statement {
+            Statement::Let { value, .. }
+            | Statement::Expression { value, .. }
+            | Statement::Return { value, .. } => expressions.push(value),
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                expressions.push(condition);
+                statements.extend(then_branch);
+                statements.extend(else_branch);
+            }
+        }
+    }
+    while let Some(expr) = expressions.pop() {
+        match expr {
+            Expr::Field { object, .. } => {
+                expressions.push(object);
+            }
+            Expr::Call { name, args, .. } => {
+                if name == "paysh::call" {
+                    return true;
+                }
+                expressions.extend(args);
+            }
+            Expr::Array { values } => expressions.extend(values),
             Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
                 expressions.push(value)
             }
