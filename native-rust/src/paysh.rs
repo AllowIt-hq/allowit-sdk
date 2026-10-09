@@ -1112,6 +1112,21 @@ impl PayShClient {
     /// Refresh only an unsigned installation after its old blockhash has
     /// positively expired. Signed owner proofs remain separately durable.
     pub fn setup_expired(&self, prepared: &PreparedSetup) -> Result<bool> {
+        let blockhash = self.unsigned_setup_blockhash(prepared)?;
+        self.setup_blockhash_expired(prepared, blockhash)
+    }
+
+    /// Discard an unsigned preparation only after coherent finalized blockhash
+    /// expiry and account absence at or after the exact expiry observation.
+    pub fn setup_unsigned_proven_absent(&self, prepared: &PreparedSetup) -> Result<bool> {
+        let blockhash = self.unsigned_setup_blockhash(prepared)?;
+        let Some(expiry_slot) = self.setup_expiry_context(prepared, blockhash)? else {
+            return Ok(false);
+        };
+        self.setup_account_absent(prepared, expiry_slot)
+    }
+
+    fn unsigned_setup_blockhash(&self, prepared: &PreparedSetup) -> Result<Key> {
         let raw = STANDARD
             .decode(&prepared.unsigned_transaction)
             .map_err(|_| Error::config("Invalid setup packet"))?;
@@ -1124,8 +1139,7 @@ impl PayShClient {
             return Err(Error::config("Invalid unsigned setup proof"));
         }
         self.check_setup_packet(prepared, &prepared.unsigned_transaction, None)?;
-        let decoded = packet_message(&raw[65..])?;
-        self.setup_blockhash_expired(prepared, decoded.blockhash)
+        Ok(packet_message(&raw[65..])?.blockhash)
     }
 
     fn setup_blockhash_expired(&self, prepared: &PreparedSetup, blockhash: Key) -> Result<bool> {
@@ -2564,6 +2578,170 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn unsigned_absence_uses_exact_expiry_slot_and_checked_deployment() {
+        struct UnsignedRpc {
+            deployment: Deployment,
+            policy: Key,
+            lookup: Vec<Key>,
+            account_slot: u64,
+            landed: bool,
+            wrong_network: bool,
+        }
+        impl Rpc for UnsignedRpc {
+            fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+                match method {
+                    "getGenesisHash" => Ok(json!(if self.wrong_network {
+                        Key([99; 32]).to_string()
+                    } else {
+                        self.deployment.genesis.to_string()
+                    })),
+                    "getBlockHeight" => {
+                        assert_eq!(params[0]["minContextSlot"], 100);
+                        Ok(json!(201))
+                    }
+                    "isBlockhashValid" => {
+                        assert_eq!(params[1]["minContextSlot"], 100);
+                        Ok(json!({"context":{"slot":150},"value":false}))
+                    }
+                    "getAccountInfo" => {
+                        let key = Key::parse(params[0].as_str().unwrap())?;
+                        if key == self.policy {
+                            assert_eq!(params[1]["minContextSlot"], 150);
+                            return Ok(
+                                json!({"context":{"slot":self.account_slot},"value":if self.landed {json!({"owner":self.deployment.program.to_string(),"executable":false,"data":["AA==","base64"]})}else{json!(null)}}),
+                            );
+                        }
+                        if Some(key) == self.deployment.lookup_table {
+                            let mut data = vec![0; 56];
+                            data[..4].copy_from_slice(&1u32.to_le_bytes());
+                            data[4..12].copy_from_slice(&u64::MAX.to_le_bytes());
+                            for address in &self.lookup {
+                                data.extend(address.0);
+                            }
+                            return Ok(
+                                json!({"context":{"slot":150},"value":{"owner":LOOKUP,"executable":false,"data":[STANDARD.encode(data),"base64"]}}),
+                            );
+                        }
+                        if key == Key::parse("SysvarC1ock11111111111111111111111111111111")? {
+                            let mut data = vec![0; 40];
+                            data[..8].copy_from_slice(&150u64.to_le_bytes());
+                            return Ok(
+                                json!({"context":{"slot":150},"value":{"owner":"Sysvar1111111111111111111111111111111111111","executable":false,"data":[STANDARD.encode(data),"base64"]}}),
+                            );
+                        }
+                        let loader = Key::parse("BPFLoaderUpgradeab1e11111111111111111111111")?;
+                        let mut data;
+                        let executable =
+                            self.deployment.program == key || self.deployment.pool_program == key;
+                        if executable {
+                            data = 2u32.to_le_bytes().to_vec();
+                            data.extend(Key::find_program_address(&[&key.0], loader)?.0.0);
+                        } else {
+                            assert!(
+                                [self.deployment.program, self.deployment.pool_program]
+                                    .iter()
+                                    .any(|program| Key::find_program_address(
+                                        &[&program.0],
+                                        loader
+                                    )
+                                    .unwrap()
+                                    .0 == key)
+                            );
+                            data = vec![0; 45];
+                            data[..4].copy_from_slice(&3u32.to_le_bytes());
+                            data.extend([1, 2, 3]);
+                        }
+                        Ok(
+                            json!({"context":{"slot":150},"value":{"owner":loader.to_string(),"executable":executable,"data":[STANDARD.encode(data),"base64"]}}),
+                        )
+                    }
+                    _ => panic!(
+                        "unexpected RPC {method}; no independent getSlot or broadcast is allowed"
+                    ),
+                }
+            }
+        }
+        let fixture = RecoveryFixture::new();
+        let mut deployment = fixture.deployment;
+        deployment.lookup_table = Some(Key([55; 32]));
+        deployment.upgrade_authority = None;
+        deployment.pool_upgrade_authority = None;
+        deployment.program_artifact = Sha256::digest([1, 2, 3]).into();
+        deployment.pool_program_artifact = deployment.program_artifact;
+        let owner = Key(fixture.request.owner);
+        let config = fixture.policy.config;
+        let policy = Key::find_program_address(
+            &[interface::POLICY_SEED, &owner.0, &config.instance_id],
+            deployment.program,
+        )
+        .unwrap()
+        .0;
+        let sol_vault =
+            Key::find_program_address(&[interface::SOL_SEED, &policy.0], deployment.program)
+                .unwrap()
+                .0;
+        let instructions = setup_instructions(
+            owner,
+            &config,
+            1,
+            deployment.program,
+            policy,
+            sol_vault,
+            deployment.compute_limit,
+        )
+        .unwrap();
+        let mut lookup = Vec::new();
+        for instruction in &instructions {
+            for meta in &instruction.accounts {
+                if !lookup.contains(&meta.key) {
+                    lookup.push(meta.key);
+                }
+            }
+        }
+        let table = LookupTable {
+            key: deployment.lookup_table.unwrap(),
+            addresses: lookup.clone(),
+        };
+        let message =
+            transaction_message(owner, Key([10; 32]), &instructions, Some(&table)).unwrap();
+        let mut raw = vec![1];
+        raw.extend([0; 64]);
+        raw.extend(&message);
+        let proof = PreparedSetup {
+            owner,
+            policy,
+            sol_vault,
+            config_bytes: STANDARD.encode(borsh::to_vec(&config).unwrap()),
+            allocation_lamports: 1,
+            message: STANDARD.encode(message),
+            unsigned_transaction: STANDARD.encode(raw),
+            blockhash_context_slot: Some(100),
+            last_valid_block_height: Some(200),
+        };
+        for (slot, landed, wrong_network, expected) in [
+            (150, false, false, Some(true)),
+            (149, false, false, None),
+            (150, true, false, Some(false)),
+            (150, false, true, None),
+        ] {
+            let rpc = UnsignedRpc {
+                deployment: deployment.clone(),
+                policy,
+                lookup: lookup.clone(),
+                account_slot: slot,
+                landed,
+                wrong_network,
+            };
+            let client = PayShClient::new(deployment.clone(), Arc::new(rpc)).unwrap();
+            let result = client.setup_unsigned_proven_absent(&proof);
+            match expected {
+                Some(value) => assert_eq!(result.unwrap(), value),
+                None => assert!(result.is_err()),
+            }
+        }
+    }
+
     #[test]
     fn failed_exact_owner_packet_is_unfinalized_not_positive_absence() {
         let fixture = RecoveryFixture::new();
