@@ -129,7 +129,7 @@ fn journal_precedes_single_broadcast_and_saved_wire_never_resends() {
         sig
     );
     rpc.done();
-    let rpc = Mock::new(vec![network(&p), height]);
+    let rpc = Mock::new(vec![]);
     owner_wallet::submit_initial(&rpc, &p, &wire, |_, _, _| Ok(false)).unwrap();
     rpc.done();
 }
@@ -144,19 +144,9 @@ fn expiry_journal_failure_and_rpc_failure_never_regenerate() {
             Ok(json!(501)),
         ),
     ]);
-    assert!(
-        owner_wallet::submit_initial(&rpc, &p, &wire, |_, _, _| panic!("expired before journal"))
-            .is_err()
-    );
+    assert!(owner_wallet::submit_initial(&rpc, &p, &wire, |_, _, _| Ok(true)).is_err());
     rpc.done();
-    let rpc = Mock::new(vec![
-        network(&p),
-        (
-            "getBlockHeight",
-            json!([{"commitment":"finalized","minContextSlot":100}]),
-            Ok(json!(499)),
-        ),
-    ]);
+    let rpc = Mock::new(vec![]);
     assert!(
         owner_wallet::submit_initial(&rpc, &p, &wire, |_, _, _| Err(Error::config(
             "journal CAS refused"
@@ -294,5 +284,127 @@ fn simulation_refusal_fee_overrun_and_rollback_stop_before_signing() {
         .is_err()
     );
     assert!(journaled);
+    rpc.done();
+}
+#[test]
+fn every_post_journal_error_is_uncertain() {
+    let (_, p, wire) = fixture();
+    for failure in [
+        Error::config("already processed"),
+        Error::denied("blockhash not found"),
+        Error::uncertain("response lost"),
+    ] {
+        let rpc = Mock::new(vec![
+            network(&p),
+            (
+                "getBlockHeight",
+                json!([{"commitment":"finalized","minContextSlot":100}]),
+                Ok(json!(499)),
+            ),
+            (
+                "sendTransaction",
+                json!([STANDARD.encode(&wire),{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","minContextSlot":100,"maxRetries":0}]),
+                Err(failure),
+            ),
+        ]);
+        let mut saved = false;
+        let error = owner_wallet::submit_initial(&rpc, &p, &wire, |_, _, _| {
+            saved = true;
+            Ok(true)
+        })
+        .unwrap_err();
+        assert!(saved);
+        assert_eq!(error.code, 5);
+        rpc.done();
+    }
+    let rpc = Mock::new(vec![(
+        "getGenesisHash",
+        json!([]),
+        Ok(json!(Key([4; 32]).to_string())),
+    )]);
+    assert_eq!(
+        owner_wallet::submit_initial(&rpc, &p, &wire, |_, _, _| Ok(true))
+            .unwrap_err()
+            .code,
+        5
+    );
+    rpc.done();
+}
+#[test]
+fn simulation_requires_present_null_error_and_coherent_slot() {
+    let (_, p, _) = fixture();
+    for value in [json!({"err":"failed"}), json!({}), json!(null)] {
+        let rpc = Mock::new(vec![
+            network(&p),
+            (
+                "getLatestBlockhash",
+                json!([{"commitment":"finalized"}]),
+                Ok(
+                    json!({"context":{"slot":99},"value":{"blockhash":p.blockhash.to_string(),"lastValidBlockHeight":500}}),
+                ),
+            ),
+            (
+                "getFeeForMessage",
+                json!([STANDARD.encode(p.transaction().unwrap().message),{"commitment":"finalized","minContextSlot":99}]),
+                Ok(json!({"context":{"slot":100},"value":5000})),
+            ),
+            (
+                "simulateTransaction",
+                json!([STANDARD.encode(p.unsigned_bytes().unwrap()),{"encoding":"base64","commitment":"finalized","minContextSlot":100,"sigVerify":false,"replaceRecentBlockhash":false}]),
+                Ok(json!({"context":{"slot":101},"value":value})),
+            ),
+        ]);
+        assert!(owner_wallet::prepare(&rpc, p.intent.clone()).is_err());
+        rpc.done();
+    }
+}
+#[test]
+fn inconsistent_receipt_stays_unresolved() {
+    let (_, p, wire) = fixture();
+    let sig = p.verify_signed(&wire).unwrap();
+    for tx in [
+        json!(null),
+        json!({"slot":111,"transaction":[STANDARD.encode(&wire),"base64"],"meta":{"fee":5000,"err":null}}),
+        json!({"slot":110,"transaction":[STANDARD.encode(&wire),"base64"],"meta":{"fee":5500,"err":null}}),
+        json!({"slot":110,"transaction":[STANDARD.encode(&wire),"base64"],"meta":{"fee":5000,"err":"failed"}}),
+    ] {
+        let missing = tx.is_null();
+        let rpc = Mock::new(vec![
+            network(&p),
+            (
+                "getSignatureStatuses",
+                json!([[sig],{"searchTransactionHistory":true}]),
+                Ok(
+                    json!({"context":{"slot":120},"value":[{"slot":110,"confirmationStatus":"finalized","err":null}]}),
+                ),
+            ),
+            (
+                "getTransaction",
+                json!([sig,{"encoding":"base64","commitment":"finalized","maxSupportedTransactionVersion":0}]),
+                Ok(tx),
+            ),
+        ]);
+        let r = owner_wallet::reconcile(&rpc, &p, &wire);
+        if missing {
+            assert_eq!(r.unwrap(), Settlement::Unknown);
+        } else {
+            assert!(r.is_err());
+        }
+        rpc.done();
+    }
+    let rpc = Mock::new(vec![
+        network(&p),
+        (
+            "getSignatureStatuses",
+            json!([[sig],{"searchTransactionHistory":true}]),
+            Ok(
+                json!({"context":{"slot":120},"value":[{"slot":110,"confirmationStatus":"confirmed","err":null}]}),
+            ),
+        ),
+    ]);
+    assert_eq!(
+        owner_wallet::reconcile(&rpc, &p, &wire).unwrap(),
+        Settlement::Unknown
+    );
     rpc.done();
 }

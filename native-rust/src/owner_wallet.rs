@@ -192,23 +192,26 @@ pub fn submit_initial(
     journal: impl FnOnce(&Prepared, &[u8], &str) -> Result<bool>,
 ) -> Result<String> {
     let signature = prepared.verify_signed(wire)?;
-    check_network(rpc, prepared.intent.genesis)?;
+    // Retain signed liability even if the first RPC observation fails or the
+    // packet arrives after expiry: the wallet may already have broadcast it.
+    if !journal(prepared, wire, &signature)? {
+        return Ok(signature);
+    }
+    let uncertain =
+        || Error::uncertain("The signed owner transfer outcome is unknown; retain its journal");
+    check_network(rpc, prepared.intent.genesis).map_err(|_| uncertain())?;
     let height = rpc
         .call(
             "getBlockHeight",
             json!([{"commitment":"finalized","minContextSlot":prepared.context_slot}]),
-        )?
+        )
+        .map_err(|_| uncertain())?
         .as_u64()
-        .ok_or_else(|| Error::config("Invalid finalized block height"))?;
+        .ok_or_else(uncertain)?;
     if height > prepared.last_valid_block_height {
-        return Err(Error::denied(
-            "The original owner transfer expired; retain its journal",
-        ));
+        return Err(uncertain());
     }
-    if !journal(prepared, wire, &signature)? {
-        return Ok(signature);
-    }
-    let result=rpc.call("sendTransaction",json!([STANDARD.encode(wire),{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","minContextSlot":prepared.context_slot,"maxRetries":0}]))?;
+    let result=rpc.call("sendTransaction",json!([STANDARD.encode(wire),{"encoding":"base64","skipPreflight":false,"preflightCommitment":"finalized","minContextSlot":prepared.context_slot,"maxRetries":0}])).map_err(|_| uncertain())?;
     if result.as_str() != Some(signature.as_str()) {
         return Err(Error::uncertain(
             "RPC did not confirm the original transaction signature; retain its journal",
