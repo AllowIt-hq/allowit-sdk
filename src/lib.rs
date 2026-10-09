@@ -17,7 +17,7 @@ pub mod paysh {
         _input_key: &str,
         _max_payment_units: u64,
         _max_swap_lamports: u64,
-        _max_service_fee_lamports: u64,
+        _max_service_fee_lamports_per_execution: u64,
     ) -> bool {
         false
     }

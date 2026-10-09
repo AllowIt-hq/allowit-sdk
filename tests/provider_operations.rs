@@ -11,6 +11,7 @@ fn source(body: &str) -> String {
 }
 fn context() -> Context {
     let mut ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
+    ctx.amount_units = 1000;
     ctx.provider_call_input = Some(ProviderCallInput {
         service_id: "air-quality".into(),
         input_key: "request".into(),
@@ -41,7 +42,7 @@ fn qualified_operation_retains_typed_args_requirements_and_executed_effect() {
         (
             effect.max_payment_units,
             effect.max_swap_lamports,
-            effect.max_service_fee_lamports
+            effect.max_service_fee_lamports_per_execution
         ),
         (1000, 5000000, 100000)
     );
@@ -191,4 +192,101 @@ fn new_operations_cannot_claim_legacy_registry_metadata() {
     let rejected = evaluate(&policy, Profile::Oracle, &context());
     assert_eq!(rejected.code, "INVALID_ARTIFACT");
     assert!(rejected.system_operations.is_empty());
+}
+
+#[test]
+fn guarded_exact_payment_is_within_static_ceiling_and_metadata_cannot_be_forged() {
+    let mut policy = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
+    assert_eq!(policy.provider_call_requirements.len(), 1);
+    assert_eq!(policy.provider_call_requirements[0].max_payment_units, 1000);
+    for amount in [1, 499, 1000] {
+        let mut ctx = context();
+        ctx.amount_units = amount;
+        let result = evaluate(&policy, Profile::Oracle, &ctx);
+        assert_eq!(result.outcome, "pass");
+        assert_eq!(result.system_operations[0].payment_units, amount);
+        assert_eq!(result.system_operations[0].max_payment_units, 1000);
+    }
+    for amount in [0, 1001] {
+        let mut ctx = context();
+        ctx.amount_units = amount;
+        let result = evaluate(&policy, Profile::Oracle, &ctx);
+        assert_eq!(result.outcome, "fail");
+        assert!(result.system_operations.is_empty());
+    }
+    policy.provider_call_requirements[0].max_payment_units = 2000;
+    assert_eq!(
+        evaluate(&policy, Profile::Oracle, &context()).code,
+        "INVALID_ARTIFACT"
+    );
+}
+#[test]
+fn dynamic_source_caps_reject_and_constructor_constants_are_projected() {
+    for value in ["ctx.amount_units", "context_u64(ctx, \"fee\")?"] {
+        assert!(
+            compile(&source(&format!(
+                "let admitted=paysh::call(\"air-quality\",\"request\",1000,5000000,{value}); Ok(())"
+            )))
+            .is_err()
+        );
+    }
+    let src = "use allowit::v1::prelude::*; struct PolicyParams {max_units:u64} fn new()->PolicyParams{PolicyParams{max_units:1000}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { if !paysh::call(\"air-quality\",\"request\",params.max_units,5000000,100000){return allowit::fail(\"Unavailable\");} Ok(()) }";
+    let compiled = compile(src).unwrap();
+    assert_eq!(
+        compiled.provider_call_requirements[0].max_payment_units,
+        1000
+    );
+    assert_eq!(
+        evaluate(&compiled, Profile::Oracle, &context()).outcome,
+        "pass"
+    );
+}
+#[test]
+fn deserializers_cannot_set_trusted_provider_binding() {
+    let mut wire = serde_json::to_value(context()).unwrap();
+    assert!(serde_json::from_value::<Context>(wire.clone()).is_err());
+    wire.as_object_mut().unwrap().remove("provider_call_input");
+    let decoded: Context = serde_json::from_value(wire).unwrap();
+    assert!(decoded.provider_call_input.is_none());
+    let policy = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
+    assert_eq!(
+        evaluate(&policy, Profile::Oracle, &decoded).code,
+        "PROVIDER_INPUT_REQUIRED"
+    );
+}
+#[test]
+fn forged_ir_aliases_duplicate_calls_and_legacy_hidden_calls_fail_closed() {
+    let policy = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
+    for alias in ["call", "paysh::pay", "paysh::swap", "other::call"] {
+        let mut forged = policy.ir.clone();
+        if let allowit_sdk::Statement::Let {
+            value: allowit_sdk::Expr::Call { name, .. },
+            ..
+        } = &mut forged.statements[1]
+        {
+            *name = alias.into();
+        } else {
+            panic!("Expected typed call");
+        }
+        assert!(allowit_sdk::validate_program(&forged).is_err());
+        assert!(
+            allowit_sdk::evaluate_ir(&forged, Profile::Oracle, &context())
+                .system_operations
+                .is_empty()
+        );
+    }
+    let mut duplicate = policy.ir.clone();
+    duplicate
+        .statements
+        .insert(2, duplicate.statements[1].clone());
+    assert!(allowit_sdk::validate_program(&duplicate).is_err());
+    let mut hidden = compile(&source(&format!(
+        "if false {{ let admitted = {CALL}; }} Ok(())"
+    )))
+    .unwrap();
+    hidden.registry_version = "1.2.0".into();
+    assert_eq!(
+        evaluate(&hidden, Profile::Oracle, &context()).code,
+        "INVALID_ARTIFACT"
+    );
 }

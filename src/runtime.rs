@@ -262,8 +262,14 @@ impl Evaluator<'_> {
                         }
                         let max_payment_units = integer(&values, 2)?;
                         let max_swap_lamports = integer(&values, 3)?;
-                        let max_service_fee_lamports = integer(&values, 4)?;
-                        if max_payment_units == 0 {
+                        let max_service_fee_lamports_per_execution = integer(&values, 4)?;
+                        if self.context.amount_units > max_payment_units {
+                            return Err(failure(
+                                "PROVIDER_PAYMENT_UNBOUND",
+                                "The exact guarded payment exceeds the source payment ceiling.",
+                            ));
+                        }
+                        if self.context.amount_units == 0 || max_payment_units == 0 {
                             return Err(failure(
                                 "PROVIDER_INVALID_PAYMENT",
                                 "A paid call requires a positive payment ceiling.",
@@ -274,9 +280,10 @@ impl Evaluator<'_> {
                             service_id,
                             input_key,
                             request_digest: binding.request_digest.clone(),
+                            payment_units: self.context.amount_units,
                             max_payment_units,
                             max_swap_lamports,
-                            max_service_fee_lamports,
+                            max_service_fee_lamports_per_execution,
                         });
                         Value::Boolean(true)
                     }
@@ -777,7 +784,10 @@ fn validate_artifact(
     if policy.language != crate::LANGUAGE
         || !crate::supported_registry_version(&policy.registry_version)
         || (crate::validation::provider_call_required(&policy.ir)
-            && policy.registry_version != crate::REGISTRY_VERSION)
+            && matches!(
+                policy.registry_version.as_str(),
+                "1.0.0" | "1.1.0" | "1.2.0"
+            ))
         || digest(policy.source.as_bytes()) != policy.source_hash
         || canonical_ir_hash(&policy.ir).ok().as_ref() != Some(&policy.ir_hash)
     {
@@ -792,6 +802,7 @@ fn validate_artifact(
         || compiled.limit != policy.limit
         || compiled.token != policy.token
         || compiled.execution_requirements != policy.execution_requirements
+        || compiled.provider_call_requirements != policy.provider_call_requirements
     {
         return Err(failure(
             "INVALID_ARTIFACT",

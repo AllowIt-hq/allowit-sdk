@@ -156,3 +156,12 @@ assert.deepEqual(pendingTrace.trace.steps.map(s => s.status), ['verifying', 'ina
 assert.equal(invoke({...traceRequest, profile: 'contract', trace: true}).error.code, 'INVALID_REQUEST');
 assert.equal(invoke({...traceRequest, trace: 'true'}).error.code, 'INVALID_REQUEST');
 console.log('Opt-in oracle workflow traces preserve actual execution, source bindings and contract isolation.');
+
+const providerSource = fs.readFileSync('tests/fixtures/provider-call-policy.rs', 'utf8');
+const providerCompiled = invoke({operation: 'compile', source: providerSource});
+assert.equal(providerCompiled.ok, true);
+assert.ok(providerCompiled.policy.calls.some(call => call.name === 'paysh::call'));
+assert.ok(providerCompiled.policy.execution_requirements.features.includes('provider_call'));
+const forgedProvider = invoke({operation: 'evaluate', source: providerSource, profile: 'oracle', context: {...context, provider_call_input: {service_id: 'air-quality', input_key: 'canonical-service-input', request_digest: 'a'.repeat(64)}}});
+assert.equal(forgedProvider.error.code, 'INVALID_CONTEXT');
+console.log('Registered provider source compiles; public Wasm evaluation rejects forged host input.');

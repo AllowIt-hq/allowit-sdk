@@ -308,6 +308,16 @@ impl Validator {
                     )));
                 }
                 if name == "paysh::call" {
+                    if !matches!(args.first(), Some(Expr::String { .. }))
+                        || !matches!(args.get(1), Some(Expr::String { .. }))
+                        || args[2..]
+                            .iter()
+                            .any(|arg| !matches!(arg, Expr::Integer { .. }))
+                    {
+                        return Err(bad(
+                            "Provider operation arguments must be source literals or initialized constructor constants.",
+                        ));
+                    }
                     self.provider_call_count += 1;
                     if self.provider_call_count > 1 {
                         return Err(bad("Declare at most one provider call per policy."));
@@ -472,7 +482,11 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
                 expressions.push(left);
                 expressions.push(right);
             }
-            _ => {}
+            Expr::String { .. }
+            | Expr::Integer { .. }
+            | Expr::Boolean { .. }
+            | Expr::Unit
+            | Expr::Variable { .. } => {}
         }
     }
     false
@@ -518,7 +532,11 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
                 expressions.push(left);
                 expressions.push(right);
             }
-            _ => {}
+            Expr::String { .. }
+            | Expr::Integer { .. }
+            | Expr::Boolean { .. }
+            | Expr::Unit
+            | Expr::Variable { .. } => {}
         }
     }
     false

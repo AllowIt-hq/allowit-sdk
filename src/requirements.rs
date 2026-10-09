@@ -8,6 +8,7 @@ struct Collector {
     features: BTreeSet<ExecutionFeature>,
     keys: BTreeSet<String>,
     dynamic: bool,
+    provider_calls: Vec<crate::ProviderCallRequirement>,
 }
 
 impl Collector {
@@ -16,6 +17,34 @@ impl Collector {
             Expr::Call { name, args, .. } => {
                 let feature = match name.as_str() {
                     "paysh::call" => {
+                        let [
+                            Expr::String { value: service_id },
+                            Expr::String { value: input_key },
+                            Expr::Integer {
+                                value: max_payment_units,
+                            },
+                            Expr::Integer {
+                                value: max_swap_lamports,
+                            },
+                            Expr::Integer {
+                                value: max_service_fee_lamports_per_execution,
+                            },
+                        ] = args.as_slice()
+                        else {
+                            return Err(CompileError::new(
+                                "UNSUPPORTED_REQUIREMENT",
+                                "Provider requirements require validated source constants.",
+                            ));
+                        };
+                        self.provider_calls.push(crate::ProviderCallRequirement {
+                            operation: name.clone(),
+                            service_id: service_id.clone(),
+                            input_key: input_key.clone(),
+                            max_payment_units: *max_payment_units,
+                            max_swap_lamports: *max_swap_lamports,
+                            max_service_fee_lamports_per_execution:
+                                *max_service_fee_lamports_per_execution,
+                        });
                         self.features.insert(ExecutionFeature::PaidHttpCall);
                         self.features.insert(ExecutionFeature::NativeSettlement);
                         Some(ExecutionFeature::ProviderCall)
@@ -113,6 +142,14 @@ pub(crate) fn extract(program: &Program) -> Result<ExecutionRequirements, Compil
         context_u64_keys: collector.keys.into_iter().collect(),
         dynamic_context_keys: collector.dynamic,
     })
+}
+
+pub(crate) fn provider_calls(
+    program: &Program,
+) -> Result<Vec<crate::ProviderCallRequirement>, CompileError> {
+    let mut collector = Collector::default();
+    collector.block(&program.statements)?;
+    Ok(collector.provider_calls)
 }
 
 #[cfg(test)]

@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
 pub const REGISTRY_VERSION: &str = "1.3.0";
-/// Canonical operation schema. Source-only aliases do not change this version.
+/// Canonical expression schema. New registered host operations use the source registry
+/// version and explicit target-profile admission without changing the expression encoding.
 pub const IR_VERSION: &str = "1.0.0";
-/// Both registries use the same canonical operations and artifact semantics.
+/// Previously supported guard registries retain their artifact semantics.
 pub fn supported_registry_version(version: &str) -> bool {
     matches!(version, "1.0.0" | "1.1.0" | "1.2.0" | REGISTRY_VERSION)
 }
@@ -178,6 +179,8 @@ pub struct CompiledPolicy {
     pub ir_hash: String,
     pub registry_version: String,
     pub execution_requirements: ExecutionRequirements,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_call_requirements: Vec<ProviderCallRequirement>,
     pub limit: String,
     pub token: String,
     pub source: String,
@@ -279,6 +282,18 @@ pub struct ProviderCallInput {
     pub request_digest: String,
 }
 
+/// Source-bound provider requirements, extracted from validated folded IR before funding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderCallRequirement {
+    pub operation: String,
+    pub service_id: String,
+    pub input_key: String,
+    pub max_payment_units: u64,
+    pub max_swap_lamports: u64,
+    pub max_service_fee_lamports_per_execution: u64,
+}
+
 /// A source-admitted provider effect. This is neither a payment nor a delivery receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -287,15 +302,18 @@ pub struct ProviderCallPlan {
     pub service_id: String,
     pub input_key: String,
     pub request_digest: String,
+    /// Exact trusted amount checked by the policy and required for native settlement.
+    pub payment_units: u64,
     pub max_payment_units: u64,
     pub max_swap_lamports: u64,
-    pub max_service_fee_lamports: u64,
+    pub max_service_fee_lamports_per_execution: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_deserializing)]
     pub provider_call_input: Option<ProviderCallInput>,
     /// Trusted current native account state. Adapters must overwrite caller-supplied values.
     #[serde(default, skip_serializing_if = "Option::is_none")]

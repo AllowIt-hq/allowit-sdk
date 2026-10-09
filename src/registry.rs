@@ -65,7 +65,7 @@ pub fn registry() -> Vec<FunctionInfo> {
     result.push(FunctionInfo {
         name: "paysh::call".into(), title: "Paid provider call".into(),
         description: "Admits one call using authenticated run input and exact payment, swap and service-fee ceilings. True means admitted plan, not payment or delivery. The host settles through the selected native wallet and provider adapter after every policy guard passes.".into(),
-        signature: "paysh::call(service_id: &str, input_key: &str, max_payment_units: u64, max_swap_lamports: u64, max_service_fee_lamports: u64) -> bool".into(),
+        signature: "paysh::call(service_id: &str, input_key: &str, max_payment_units: u64, max_swap_lamports: u64, max_service_fee_lamports_per_execution: u64) -> bool".into(),
         effect: "provider_call".into(),
     });
     result
