@@ -14733,6 +14733,58 @@
       ]
     },
     {
+      "name": "unicode-normalization",
+      "version": "0.1.25",
+      "crateSha256": "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8",
+      "crateUrl": "https://static.crates.io/crates/unicode-normalization/unicode-normalization-0.1.25.crate",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "declaredLicenseFile": null,
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+          "source": "https://static.crates.io/crates/unicode-normalization/unicode-normalization-0.1.25.crate",
+          "originalPath": "LICENSE-APACHE"
+        },
+        {
+          "path": "licenses/dependencies/texts/7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0.txt",
+          "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0",
+          "source": "https://static.crates.io/crates/unicode-normalization/unicode-normalization-0.1.25.crate",
+          "originalPath": "LICENSE-MIT"
+        }
+      ]
+    },
+    {
+      "name": "unicode-script",
+      "version": "0.5.8",
+      "crateSha256": "383ad40bb927465ec0ce7720e033cb4ca06912855fc35db31b5755d0de75b1ee",
+      "crateUrl": "https://static.crates.io/crates/unicode-script/unicode-script-0.5.8.crate",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "declaredLicenseFile": null,
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/7cbb56d1b5d83d735056b363ab20958524120afafc4ad8206e6be98cdec5d737.txt",
+          "sha256": "7cbb56d1b5d83d735056b363ab20958524120afafc4ad8206e6be98cdec5d737",
+          "source": "https://static.crates.io/crates/unicode-script/unicode-script-0.5.8.crate",
+          "originalPath": "LICENSE-APACHE"
+        },
+        {
+          "path": "licenses/dependencies/texts/7ad3ea8ca3caf894db98c3f31d5d4949173ffa93c883ef19a9e529ad48960f8c.txt",
+          "sha256": "7ad3ea8ca3caf894db98c3f31d5d4949173ffa93c883ef19a9e529ad48960f8c",
+          "source": "https://static.crates.io/crates/unicode-script/unicode-script-0.5.8.crate",
+          "originalPath": "LICENSE-MIT"
+        }
+      ]
+    },
+    {
       "name": "universal-hash",
       "version": "0.5.1",
       "crateSha256": "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea",

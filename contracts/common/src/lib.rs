@@ -33,6 +33,10 @@ pub fn validate_chain_artifact(mandate: &Mandate, bytes: &[u8]) -> Result<(), Er
 }
 
 fn validate_chain_program(program: &Program) -> Result<(), Error> {
+    // Authenticated host workflow handles are not executable by this chain profile.
+    if program.version != "1.0.0" {
+        return Err(Error::InvalidArtifact);
+    }
     use allowit_sdk::{Expr, Statement};
     enum Node<'a> {
         S(&'a Statement),
@@ -82,6 +86,8 @@ fn validate_chain_program(program: &Program) -> Result<(), Error> {
             Node::E(Expr::Array { values } | Expr::Call { args: values, .. }) => {
                 pending.extend(values.iter().map(|e| (Node::E(e), next)))
             }
+            Node::S(Statement::IfSome { .. } | Statement::ForEach { .. })
+            | Node::E(Expr::Borrow { .. }) => return Err(Error::InvalidArtifact),
             Node::E(_) => {}
         }
     }
@@ -488,6 +494,7 @@ fn prepare_execution_with(
         confidence,
         original_intent: artifact.original_intent,
         runtime_context,
+        ..Context::default()
     };
     let decision = evaluate_ir(&artifact.ir, Profile::Contract, &context);
     if decision.outcome != "pass" {

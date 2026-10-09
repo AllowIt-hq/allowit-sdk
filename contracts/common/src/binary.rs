@@ -106,6 +106,9 @@ impl Encoder {
     }
     fn statement(&mut self, value: &Statement) -> Result<(), Error> {
         match value {
+            Statement::IfSome { .. } | Statement::ForEach { .. } => {
+                return Err(Error::InvalidArtifact);
+            }
             Statement::Let {
                 name,
                 value,
@@ -160,6 +163,7 @@ impl Encoder {
     }
     fn expr(&mut self, value: &Expr) -> Result<(), Error> {
         match value {
+            Expr::Borrow { .. } => return Err(Error::InvalidArtifact),
             Expr::String { value } => {
                 self.byte(0);
                 self.string(value)?;
