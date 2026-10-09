@@ -4,6 +4,7 @@ pub mod error;
 pub mod journal;
 pub mod lifecycle;
 pub mod native;
+pub mod owner_wallet;
 pub mod paysh;
 pub mod policy;
 pub mod rpc;
