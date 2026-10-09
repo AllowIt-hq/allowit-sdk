@@ -691,3 +691,106 @@ fn logical_head_cannot_be_substituted_reinitialized_or_used_to_skip_revisions() 
     f.initialize_revision();
     Fixture::error(f.activate(true), Error::BindingMismatch);
 }
+
+#[test]
+fn private_namespaced_handler_runs_in_compiled_sbf() {
+    let source = support::SIMPLE
+        .replace("pub async fn evaluate", "async fn _execute")
+        .replace("set_cap(", "allowit::set_cap(")
+        .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
+        .replace("allow_actions(", "allowit::allow_actions(");
+    let mut f = Fixture::ready(&source, false);
+    let request = support::request(&f.state, 10_000_000);
+    let result = f.execute(request.clone(), false);
+    assert_eq!(result.program_result, ProgramResult::Success);
+    assert_eq!(f.balance(), 10_000_000);
+    Fixture::error(f.execute(request, false), Error::Replay);
+    Fixture::error(
+        f.execute(support::request(&f.read_state(), 10_000_001), false),
+        Error::PolicyDenied,
+    );
+    assert_eq!(f.balance(), 10_000_000);
+}
+
+#[test]
+fn generated_policy_executes_exact_source_in_compiled_sbf() {
+    let source = include_str!("../../../tests/fixtures/generated-small-payments.rs");
+    let mut f = Fixture::ready(source, false);
+    Fixture::error(
+        f.execute(support::request(&f.state, 2_000_001), false),
+        Error::PolicyDenied,
+    );
+    assert_eq!(f.balance(), 0);
+    let first = support::request(&f.state, 2_000_000);
+    assert_eq!(
+        f.execute(first.clone(), false).program_result,
+        ProgramResult::Success
+    );
+    Fixture::error(f.execute(first, false), Error::Replay);
+    assert_eq!(
+        f.execute(support::request(&f.read_state(), 2_000_000), false)
+            .program_result,
+        ProgramResult::Success
+    );
+    Fixture::error(
+        f.execute(support::request(&f.read_state(), 2_000_000), false),
+        Error::PolicyDenied,
+    );
+    assert_eq!(f.balance(), 4_000_000);
+}
+
+#[test]
+fn generated_invoice_checks_exact_recipient_amount_and_once_only_spending_in_sbf() {
+    use std::str::FromStr;
+    let source = include_str!("../../../tests/fixtures/generated-invoice.rs");
+    let mut state = support::fixture(source);
+    state.mandate.recipient = LegacyKey::from_str("GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB")
+        .unwrap()
+        .to_bytes();
+    state.mandate.allocation_units = 200_000_000;
+    let mut f = Fixture::with_policy(state, false);
+    // Keep native custody authority larger than the source cap, so the second
+    // payment proves policy accounting rather than an exhausted SPL allowance.
+    let account = f.accounts.get_mut(&f.source).unwrap();
+    let mut token = TokenAccount::unpack(&account.data).unwrap();
+    token.delegated_amount = 200_000_000;
+    TokenAccount::pack(token, &mut account.data).unwrap();
+    f.initialize();
+    assert_eq!(f.activate(true).program_result, ProgramResult::Success);
+    let mut wrong_recipient = support::request(&f.state, 100_000_000);
+    wrong_recipient.recipient = [99; 32];
+    Fixture::error(f.execute(wrong_recipient, false), Error::BindingMismatch);
+    Fixture::error(
+        f.execute(support::request(&f.state, 50_000_000), false),
+        Error::PolicyDenied,
+    );
+    assert_eq!(f.balance(), 0);
+    let first = support::request(&f.state, 100_000_000);
+    assert_eq!(
+        f.execute(first.clone(), false).program_result,
+        ProgramResult::Success
+    );
+    Fixture::error(f.execute(first, false), Error::Replay);
+    Fixture::error(
+        f.execute(support::request(&f.read_state(), 100_000_000), false),
+        Error::PolicyDenied,
+    );
+    assert_eq!(f.balance(), 100_000_000);
+}
+
+#[test]
+fn generated_owner_review_cannot_bypass_input_in_sbf() {
+    let source = include_str!("../../../tests/fixtures/generated-owner-review.rs");
+    let mut f = Fixture::ready(source, false);
+    Fixture::error(
+        f.execute(support::request(&f.state, 4_000_000), false),
+        Error::UserInputRequired,
+    );
+    assert_eq!(f.balance(), 0);
+    assert_eq!(
+        f.execute(support::request(&f.state, 3_000_000), false)
+            .program_result,
+        ProgramResult::Success
+    );
+    assert_eq!(f.balance(), 3_000_000);
+}

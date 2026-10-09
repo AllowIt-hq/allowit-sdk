@@ -473,6 +473,7 @@ fn prepare_execution_with(
         return Err(Error::InvalidMandate);
     }
     let context = Context {
+        native_policy_storage: None,
         amount_units: request.amount_units / divisor,
         allocation_units: m.allocation_units / divisor,
         spent_units: state.spent_units / divisor,

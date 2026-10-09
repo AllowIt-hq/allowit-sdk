@@ -24,7 +24,7 @@ pub mod prelude {
     pub fn auto(direction: &'static str) -> Threshold {
         Threshold::Default(direction)
     }
-    fn threshold(
+    pub(crate) fn threshold(
         value: Threshold,
         direction: &str,
     ) -> Result<(bool, alloc::string::String), PolicyError> {
@@ -60,7 +60,7 @@ pub mod prelude {
     }
     /// Version 1 Jev checks with decimal preference thresholds.
     pub mod jev {
-        pub use super::check_preference;
         pub use crate::prelude::semantic;
+        pub use crate::primitives::{check_preference, preference_evidence};
     }
 }

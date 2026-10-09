@@ -9,3 +9,5 @@
 # Task evidence belongs to the main project wiki.
 /artifacts/
 /evidence/
+
+/templates/policy/target/

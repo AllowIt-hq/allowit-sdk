@@ -46,3 +46,34 @@ fn purchase_tiers_require_the_ledger_feature_before_evaluation() {
             .any(|f| f.name == "cap_purchase_tiers")
     );
 }
+
+#[test]
+fn native_storage_fields_require_the_trusted_host_profile() {
+    let program = Program {
+        version: IR_VERSION.into(),
+        statements: vec![
+            Statement::Let {
+                name: "limit".into(),
+                annotation: None,
+                value: Expr::Field {
+                    object: Box::new(Expr::Variable { name: "ctx".into() }),
+                    name: "native_daily_limit".into(),
+                },
+                span: SourceSpan::default(),
+            },
+            Statement::Expression {
+                value: Expr::Call {
+                    name: "Ok".into(),
+                    args: vec![Expr::Unit],
+                    span: SourceSpan::default(),
+                },
+                semicolon: false,
+                span: SourceSpan::default(),
+            },
+        ],
+    };
+    #[cfg(not(feature = "std"))]
+    assert!(validate_program(&program).is_err());
+    #[cfg(feature = "std")]
+    assert!(validate_program(&program).is_ok());
+}

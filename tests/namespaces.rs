@@ -113,8 +113,28 @@ mod native_facade {
     use allowit_sdk as allowit;
     use allowit_sdk::prelude::*;
     pub async fn check(ctx: &Context) -> PolicyResult {
-        allowit::set_cap(ctx, "100", "USDC")?;
-        jev::check_preference(ctx, "Research?", false, "85", false, "40").await?;
+        allowit::set_cap(
+            ctx.spent_units,
+            ctx.amount_units,
+            &ctx.token,
+            100_000_000,
+            "USDC",
+            6,
+        )?;
+        jev::check_preference(
+            jev::preference_evidence(ctx, "Research?"),
+            "Research?",
+            None,
+            None,
+        )
+        .await?;
+        allowit::check_preference(
+            allowit::preference_evidence(ctx, "Research?"),
+            "Research?",
+            None,
+            None,
+        )
+        .await?;
         Ok(())
     }
 }
@@ -122,8 +142,28 @@ mod versioned_facade {
     use allowit_sdk as allowit;
     use allowit_sdk::v1::prelude::*;
     pub async fn check(ctx: &Context) -> PolicyResult {
-        allowit::set_cap(ctx, "100", "USDC")?;
-        jev::check_preference(ctx, "Research?", None, auto("approve")).await?;
+        allowit::set_cap(
+            ctx.spent_units,
+            ctx.amount_units,
+            &ctx.token,
+            100_000_000,
+            "USDC",
+            6,
+        )?;
+        jev::check_preference(
+            jev::preference_evidence(ctx, "Research?"),
+            "Research?",
+            None,
+            auto("approve"),
+        )
+        .await?;
+        allowit::check_preference(
+            allowit::preference_evidence(ctx, "Research?"),
+            "Research?",
+            None,
+            auto("approve"),
+        )
+        .await?;
         Ok(())
     }
 }
@@ -147,7 +187,7 @@ fn every_registered_core_alias_compiles_to_its_bounded_operation() {
         "allowit::require_recipient(ctx, \"recipient\")?;",
         "let evidence = allowit::confidence(ctx, \"source\")?;",
         "let fit = allowit::semantic(ctx, \"Research?\")?;",
-        "allowit::check_preference(ctx, \"Research?\", true, \"85\", true, \"40\").await?;",
+        "allowit::check_preference(ctx, \"Research?\", auto(\"deny\"), auto(\"approve\")).await?;",
         "let risk = allowit::context_u64(ctx, \"risk\")?;",
         "allowit::require_user_input(ctx, \"Proceed?\").await?;",
         "return allowit::fail(\"Denied\");",
@@ -192,8 +232,8 @@ fn runtime_artifacts_require_canonical_operation_names() {
 fn registry_minor_version_advertises_aliases_without_changing_ir_schema() {
     let source = source("set_cap(ctx, \"100\", \"USDC\")?; Ok(())");
     let mut policy = compile(&source).unwrap();
-    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.1.0");
-    assert_eq!(policy.registry_version, "1.1.0");
+    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.2.0");
+    assert_eq!(policy.registry_version, "1.2.0");
     assert_eq!(policy.ir.version, "1.0.0");
     let hash = policy.ir_hash.clone();
     policy.registry_version = "1.0.0".into();
@@ -202,9 +242,30 @@ fn registry_minor_version_advertises_aliases_without_changing_ir_schema() {
         "pass"
     );
     assert_eq!(allowit_sdk::canonical_ir_hash(&policy.ir).unwrap(), hash);
-    policy.registry_version = "1.2.0".into();
+    policy.registry_version = "1.3.0".into();
     assert_eq!(
         evaluate(&policy, Profile::Oracle, &context()).code,
         "INVALID_ARTIFACT"
     );
+}
+
+#[test]
+fn qualified_preference_signature_matches_the_rust_facade() {
+    for namespace in ["allowit", "jev"] {
+        assert!(compile(&source(&format!(r#"{namespace}::check_preference(ctx, "Research?", true, "85", true, "40").await?; Ok(())"#))).is_err());
+    }
+}
+
+#[test]
+fn namespace_spacing_does_not_relax_exact_path_resolution() {
+    for call in ["allowit :: set_cap", "allowit::/* comment */set_cap"] {
+        assert!(compile(&source(&format!("{call}(ctx, \"5\", \"USDC\")?; Ok(())"))).is_ok());
+    }
+    for call in [
+        "r#allowit::set_cap",
+        "allowit::r#set_cap",
+        "jev::jev::semantic",
+    ] {
+        assert!(compile(&source(&format!("{call}(ctx, \"5\", \"USDC\")?; Ok(())"))).is_err());
+    }
 }

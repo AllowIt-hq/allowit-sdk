@@ -16,28 +16,39 @@ pub fn purchase_band(amount: u64, maximum: u64) -> Option<usize> {
 // Matches the public evaluator's small, fixed-size decision record.
 #[allow(clippy::result_large_err)]
 pub fn check_tiers(ctx: &Context, maximum: u64, first_count: u64) -> Result<(), Decision> {
+    check_tier_values(
+        ctx.amount_units,
+        ctx.purchase_counts.as_deref(),
+        maximum,
+        first_count,
+    )
+}
+
+#[allow(clippy::result_large_err)]
+pub fn check_tier_values(
+    amount_units: u64,
+    purchase_counts: Option<&[u64]>,
+    maximum: u64,
+    first_count: u64,
+) -> Result<(), Decision> {
     if maximum > 1_000_000_000_000 || first_count == 0 || first_count > 1_000_000 {
         return Err(Decision::fail(
             "INVALID_POLICY",
             "Invalid purchase-tier limits.",
         ));
     }
-    let band = purchase_band(ctx.amount_units, maximum).ok_or_else(|| {
+    let band = purchase_band(amount_units, maximum).ok_or_else(|| {
         Decision::fail(
             "PURCHASE_CAP_EXCEEDED",
             "The purchase exceeds its price ceiling.",
         )
     })?;
-    let counts = ctx
-        .purchase_counts
-        .as_ref()
-        .filter(|v| v.len() == 40)
-        .ok_or_else(|| {
-            Decision::fail(
-                "LEDGER_REQUIRED",
-                "Authoritative purchase counts are required.",
-            )
-        })?;
+    let counts = purchase_counts.filter(|v| v.len() == 40).ok_or_else(|| {
+        Decision::fail(
+            "LEDGER_REQUIRED",
+            "Authoritative purchase counts are required.",
+        )
+    })?;
     let limit = first_count
         .checked_shl(band as u32)
         .ok_or_else(|| Decision::fail("INVALID_POLICY", "The purchase-tier count is too large."))?;

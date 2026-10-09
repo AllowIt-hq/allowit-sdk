@@ -403,12 +403,38 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
     };
     let wasm = std::fs::read(path).unwrap();
     let named = support::SIMPLE
+        .replace("pub async fn evaluate", "async fn _execute")
         .replace("set_cap(", "allowit::set_cap(")
         .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
         .replace("allow_actions(", "allowit::allow_actions(");
+    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap"));
     for (label, policy, input_required, evidence) in [
         ("pass", support::fixture(support::SIMPLE), false, false),
         ("qualified-pass", support::fixture(&named), false, false),
+        (
+            "generated-small",
+            support::fixture(include_str!(
+                "../../../tests/fixtures/generated-small-payments.rs"
+            )),
+            false,
+            false,
+        ),
+        (
+            "generated-review",
+            support::fixture(include_str!(
+                "../../../tests/fixtures/generated-owner-review.rs"
+            )),
+            true,
+            false,
+        ),
+        (
+            "generated-review-under",
+            support::fixture(include_str!(
+                "../../../tests/fixtures/generated-owner-review.rs"
+            )),
+            false,
+            false,
+        ),
         ("user-input", support::fixture(support::INPUT), true, false),
         (
             "maximum-semantic",
@@ -472,7 +498,13 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
             wasm.len()
         );
         let before = f.client().state(&id);
-        let mut request = support::request(&f.policy, 100_000_000);
+        let amount = match label {
+            "generated-small" => 20_000_000,
+            "generated-review" => 40_000_000,
+            "generated-review-under" => 30_000_000,
+            _ => 100_000_000,
+        };
+        let mut request = support::request(&f.policy, amount);
         if evidence {
             f.env.budget().reset_default();
             request.runtime_context = r#"{"risk":2}"#.into();
@@ -504,7 +536,40 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
             assert_eq!(f.client().state(&id), before);
             assert_eq!(f.balance(), 0);
         } else {
-            assert_eq!(f.balance(), 100_000_000);
+            assert_eq!(f.balance(), i128::from(amount));
+        }
+        if label == "generated-small" {
+            f.env.budget().reset_default();
+            assert_eq!(
+                f.client().try_execute(&id, &request),
+                Err(Ok(Error::Replay))
+            );
+            let mut next = support::request(&f.policy, 20_000_010);
+            next.nonce = 1;
+            f.env.budget().reset_default();
+            assert_eq!(
+                f.client().try_execute(
+                    &id,
+                    &Bytes::from_slice(&f.env, &borsh::to_vec(&next).unwrap())
+                ),
+                Err(Ok(Error::PolicyDenied))
+            );
+            next.amount_units = 20_000_000;
+            f.env.budget().reset_default();
+            f.client().execute(
+                &id,
+                &Bytes::from_slice(&f.env, &borsh::to_vec(&next).unwrap()),
+            );
+            next.nonce = 2;
+            f.env.budget().reset_default();
+            assert_eq!(
+                f.client().try_execute(
+                    &id,
+                    &Bytes::from_slice(&f.env, &borsh::to_vec(&next).unwrap())
+                ),
+                Err(Ok(Error::PolicyDenied))
+            );
+            assert_eq!(f.balance(), 40_000_000);
         }
     }
 }
@@ -549,9 +614,11 @@ fn stellar_rejects_artifacts_above_its_canonical_size_profile() {
 #[test]
 fn qualified_checks_authorize_the_same_stellar_asset_transfer() {
     let named = support::SIMPLE
+        .replace("pub async fn evaluate", "async fn _execute")
         .replace("set_cap(", "allowit::set_cap(")
         .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
         .replace("allow_actions(", "allowit::allow_actions(");
+    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap"));
     let f = Fixture::new(&named);
     let id = f.client().activate(&f.activation);
     assert_eq!(
