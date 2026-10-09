@@ -15,6 +15,82 @@ name = "allowit"
 path = "src/bin/allowit.rs"
 required-features = ["compiler"]
 
+[[test]]
+name = "adversarial"
+required-features = ["compiler"]
+
+[[test]]
+name = "certificate_policy"
+required-features = ["compiler"]
+
+[[test]]
+name = "cli"
+required-features = ["compiler"]
+
+[[test]]
+name = "core"
+required-features = ["compiler"]
+
+[[test]]
+name = "decision_trace"
+required-features = ["compiler"]
+
+[[test]]
+name = "execution_requirements"
+required-features = ["compiler"]
+
+[[test]]
+name = "lsp"
+required-features = ["compiler"]
+
+[[test]]
+name = "namespaces"
+required-features = ["compiler"]
+
+[[test]]
+name = "parameter_edits"
+required-features = ["compiler"]
+
+[[test]]
+name = "preference"
+required-features = ["compiler"]
+
+[[test]]
+name = "primitive_params"
+required-features = ["compiler"]
+
+[[test]]
+name = "private_execute"
+required-features = ["compiler"]
+
+[[test]]
+name = "provider_operations"
+required-features = ["compiler"]
+
+[[test]]
+name = "readability"
+required-features = ["compiler"]
+
+[[test]]
+name = "semantic"
+required-features = ["compiler"]
+
+[[test]]
+name = "typed_workflow"
+required-features = ["compiler"]
+
+[[test]]
+name = "workflow_trace"
+required-features = ["compiler"]
+
+[[test]]
+name = "facade"
+required-features = ["std"]
+
+[[test]]
+name = "typed_facade"
+required-features = ["std", "typed-workflow"]
+
 [features]
 default = ["std", "compiler", "oracle-ledger"]
 oracle-ledger = []
