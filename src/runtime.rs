@@ -992,7 +992,6 @@ fn validate_context(
         || ctx.confidence.len() > 32
         || ctx.confidence.keys().any(|s| s.is_empty() || s.len() > 128)
         || ctx.answers.keys().any(|s| s.len() != 64)
-        || ctx.confidence.keys().any(|s| s.is_empty() || s.len() > 128)
         || ctx.original_intent.len() > 16384
     {
         return Err(failure(

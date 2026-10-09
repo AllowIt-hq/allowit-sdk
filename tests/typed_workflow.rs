@@ -845,3 +845,49 @@ fn decoded_message_native_coverage_and_native_fee_presence_are_mandatory() {
         "WORKFLOW_ZERO_FEE_EVIDENCE_REQUIRED"
     );
 }
+
+#[derive(Debug)]
+struct MissingPaymentFees;
+impl WorkflowHost for MissingPaymentFees {
+    fn execution_request_validate(
+        &self,
+        request: &ExecutionRequest,
+        binding: &WorkflowBinding,
+    ) -> Result<ValidatedExecutionRequest, WorkflowError> {
+        host().execution_request_validate(request, binding)
+    }
+    fn payment_request_from_curl(
+        &self,
+        outcome: &CurlOutcome,
+        request: &CurlRequest,
+        binding: &WorkflowBinding,
+    ) -> Result<Option<PaymentRequest>, WorkflowError> {
+        let mut payment = host().payment_request_from_curl(outcome, request, binding)?;
+        if let Some(payment) = &mut payment {
+            payment.fee_bounds = None;
+        }
+        Ok(payment)
+    }
+}
+#[test]
+fn final_authorization_rejects_missing_fees_even_without_source_fee_refusal() {
+    for (source, is_payment) in [(EXEC, false), (PAYMENT, true)] {
+        let source = source.replace(
+            "return allowit::fail(\"Fees are unresolved\");",
+            "let unresolved = true;",
+        );
+        let policy = compile(&source).unwrap();
+        let (_, mut context) = if is_payment { payment() } else { execution() };
+        let environment = context.workflow.as_mut().unwrap();
+        environment.binding = binding(&policy);
+        if is_payment {
+            environment.host = Arc::new(MissingPaymentFees);
+        } else {
+            environment.execution_request.as_mut().unwrap().fee_bounds = None;
+        }
+        freeze(&mut context);
+        let decision = evaluate(&policy, Profile::Oracle, &context);
+        assert_eq!(decision.code, "WORKFLOW_FEES_UNRESOLVED");
+        assert_eq!(decision.outcome, "fail");
+    }
+}
