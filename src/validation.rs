@@ -17,6 +17,7 @@ enum Type {
     Context,
     Interval,
     Strings,
+    Workflow(crate::typed_workflow::WorkflowType),
     Result(Box<Type>),
     Future(Box<Type>),
 }
@@ -71,6 +72,11 @@ struct Validator {
     config_count: usize,
     provider_call_count: usize,
     provider_profile: bool,
+    loop_depth: usize,
+    typed_nodes: Vec<crate::typed_workflow::TypedWorkflowNode>,
+    typed_only: bool,
+    budgets: Vec<crate::typed_workflow::TypedBudgetRequirement>,
+    binding_states: BTreeMap<String, String>,
     #[cfg(feature = "oracle-ledger")]
     tier_count: usize,
 }
@@ -103,7 +109,10 @@ impl Validator {
                     annotation,
                     ..
                 } => {
-                    if name == "ctx" || env.contains_key(name) || !valid_name(name) {
+                    if name == "ctx"
+                        || env.contains_key(name)
+                        || !(valid_name(name) || (self.typed_only && valid_typed_name(name)))
+                    {
                         return Err(bad(
                             "Variables must have distinct names and cannot replace ctx.",
                         ));
@@ -117,6 +126,7 @@ impl Validator {
                             | Type::Integer
                             | Type::Boolean
                             | Type::Interval
+                            | Type::Workflow(_)
                     ) {
                         return Err(bad(
                             "A variable must contain an immutable string, integer, boolean or confidence interval.",
@@ -134,6 +144,27 @@ impl Validator {
                             return Err(bad("Variable type does not match its value."));
                         }
                     }
+                    if let Some(last) = self.typed_nodes.last_mut()
+                        && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call {span,..} if *span==last.span))
+                    {
+                        last.output_binding = Some(name.clone());
+                        last.output_state = "via_try".into();
+                        if let crate::typed_workflow::WorkflowType::Result(inner) =
+                            &last.output_type
+                        {
+                            last.output_value_type = (**inner).clone();
+                        }
+                    }
+                    let state = match unborrow(value) {
+                        Expr::Try { .. } => "via_try".into(),
+                        Expr::Variable { name } => self
+                            .binding_states
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| "bound".into()),
+                        _ => "bound".into(),
+                    };
+                    self.binding_states.insert(name.clone(), state);
                     env.insert(name.clone(), ty);
                 }
                 Statement::Expression {
@@ -158,10 +189,68 @@ impl Validator {
                     }
                 }
                 Statement::Return { value, .. } => {
+                    if self.loop_depth > 0 && !matches!(value,Expr::Call{name,..} if name=="fail") {
+                        return Err(bad(
+                            "A bounded loop can only return a refusal; it must check every entry before allowing.",
+                        ));
+                    }
                     if self.expr(value, env, depth + 1, false)? != result(Type::Unit) {
                         return Err(bad("A return must be Ok(()) or fail(\"reason\")."));
                     }
                     terminal = true;
+                }
+                Statement::IfSome {
+                    name,
+                    value,
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    if env.contains_key(name)
+                        || !(valid_name(name) || (self.typed_only && valid_typed_name(name)))
+                    {
+                        return Err(bad("Some bindings must be distinct immutable variables."));
+                    }
+                    let Type::Workflow(crate::typed_workflow::WorkflowType::Option(inner)) =
+                        self.expr(value, env, depth + 1, false)?
+                    else {
+                        return Err(bad("Some extraction requires a typed optional value."));
+                    };
+                    let mut branch = env.clone();
+                    branch.insert(name.clone(), Type::Workflow(*inner));
+                    let states = self.binding_states.clone();
+                    self.binding_states
+                        .insert(name.clone(), "after_some".into());
+                    let a = self.block(then_branch, &mut branch, depth + 1, false)?;
+                    self.binding_states = states.clone();
+                    let b = self.block(else_branch, &mut env.clone(), depth + 1, false)?;
+                    self.binding_states = states;
+                    terminal = a && b;
+                }
+                Statement::ForEach {
+                    name, values, body, ..
+                } => {
+                    if self.loop_depth != 0 {
+                        return Err(bad("Nested loops are not supported."));
+                    }
+                    if env.contains_key(name)
+                        || !(valid_name(name) || (self.typed_only && valid_typed_name(name)))
+                    {
+                        return Err(bad("Loop bindings must be distinct immutable variables."));
+                    }
+                    let Type::Workflow(crate::typed_workflow::WorkflowType::Vec(inner)) =
+                        self.expr(values, env, depth + 1, false)?
+                    else {
+                        return Err(bad("Loops require a bounded typed workflow collection."));
+                    };
+                    let mut branch = env.clone();
+                    branch.insert(name.clone(), Type::Workflow(*inner));
+                    let states = self.binding_states.clone();
+                    self.loop_depth += 1;
+                    let result = self.block(body, &mut branch, depth + 1, false);
+                    self.loop_depth -= 1;
+                    self.binding_states = states;
+                    result?;
                 }
                 Statement::If {
                     condition,
@@ -172,8 +261,11 @@ impl Validator {
                     if self.expr(condition, env, depth + 1, false)? != Type::Boolean {
                         return Err(bad("An if condition must be boolean."));
                     }
+                    let states = self.binding_states.clone();
                     let a = self.block(then_branch, &mut env.clone(), depth + 1, false)?;
+                    self.binding_states = states.clone();
                     let b = self.block(else_branch, &mut env.clone(), depth + 1, false)?;
+                    self.binding_states = states;
                     if a && b && !else_branch.is_empty() {
                         terminal = true;
                     }
@@ -206,14 +298,47 @@ impl Validator {
                 .ok_or_else(|| bad(format!("Unknown variable: {name}")))?,
             Expr::Field { object, name } => match self.expr(object, env, depth + 1, false)? {
                 Type::Context => match name.as_str() {
+                    "amount_units"
+                    | "allocation_units"
+                    | "spent_units"
+                    | "token"
+                    | "network"
+                    | "action"
+                    | "merchant"
+                    | "recipient"
+                    | "native_daily_limit"
+                    | "native_action_limit"
+                        if self.typed_only =>
+                    {
+                        return Err(bad(
+                            "Typed request policies must guard authenticated typed amounts and assets, not legacy scalar token observations.",
+                        ));
+                    }
                     "amount_units" | "allocation_units" | "spent_units" | "now" => Type::Integer,
                     #[cfg(feature = "std")]
                     "native_daily_limit" | "native_action_limit" => Type::Integer,
+                    "execution_request" => {
+                        Type::Workflow(crate::typed_workflow::WorkflowType::Option(Box::new(
+                            crate::typed_workflow::WorkflowType::named("ExecutionRequest"),
+                        )))
+                    }
+                    "curl_request" => Type::Workflow(crate::typed_workflow::WorkflowType::Option(
+                        Box::new(crate::typed_workflow::WorkflowType::named("CurlRequest")),
+                    )),
+                    "curl_outcome" => Type::Workflow(crate::typed_workflow::WorkflowType::Option(
+                        Box::new(crate::typed_workflow::WorkflowType::named("CurlOutcome")),
+                    )),
                     "action" | "merchant" | "recipient" | "token" | "network" => {
                         Type::ContextString
                     }
                     _ => return Err(bad(format!("Unsupported context field: {name}"))),
                 },
+                Type::Workflow(crate::typed_workflow::WorkflowType::Named(ref ty)) => {
+                    Type::Workflow(
+                        crate::typed_workflow::field_type(ty, name)
+                            .ok_or_else(|| bad("Unsupported typed record field."))?,
+                    )
+                }
                 Type::Interval if name == "lower_bps" || name == "upper_bps" => Type::Integer,
                 _ => return Err(bad("This value has no supported field with that name.")),
             },
@@ -229,8 +354,28 @@ impl Validator {
                 Type::Strings
             }
             Expr::Binary { op, left, right } => {
-                let a = self.expr(left, env, depth + 1, false)?;
-                let b = self.expr(right, env, depth + 1, false)?;
+                let a = scalar_type(self.expr(left, env, depth + 1, false)?);
+                let b = scalar_type(self.expr(right, env, depth + 1, false)?);
+                if matches!(op.as_str(), "==" | "!=" | ">" | ">=" | "<" | "<=")
+                    && ((a == Type::Workflow(crate::typed_workflow::WorkflowType::Amount256)
+                        && b == Type::Integer)
+                        || (b == Type::Workflow(crate::typed_workflow::WorkflowType::Amount256)
+                            && a == Type::Integer)
+                        || (a == b
+                            && a == Type::Workflow(crate::typed_workflow::WorkflowType::Amount256)))
+                {
+                    return Ok(Type::Boolean);
+                }
+                if matches!(op.as_str(), "==" | "!=")
+                    && a == b
+                    && matches!(
+                        a,
+                        Type::Workflow(crate::typed_workflow::WorkflowType::Named(_))
+                            | Type::Workflow(crate::typed_workflow::WorkflowType::Digest)
+                    )
+                {
+                    return Ok(Type::Boolean);
+                }
                 match op.as_str() {
                     "+" | "-" | "*" | "/" | "%" if a == Type::Integer && b == Type::Integer => {
                         Type::Integer
@@ -259,6 +404,22 @@ impl Validator {
                 }
                 Type::Boolean
             }
+            Expr::Borrow { value } => {
+                let ty = self.expr(value, env, depth + 1, false)?;
+                if !matches!(
+                    &ty,
+                    Type::Workflow(
+                        crate::typed_workflow::WorkflowType::Named(_)
+                            | crate::typed_workflow::WorkflowType::Option(_)
+                            | crate::typed_workflow::WorkflowType::Vec(_)
+                    )
+                ) {
+                    return Err(bad(
+                        "Only immutable typed workflow records and collections support this borrow.",
+                    ));
+                }
+                ty
+            }
             Expr::Try { value } => match self.expr(value, env, depth + 1, config)? {
                 Type::Result(inner) => *inner,
                 _ => return Err(bad("? requires a predefined function result.")),
@@ -267,7 +428,7 @@ impl Validator {
                 Type::Future(inner) => *inner,
                 _ => return Err(bad("Only require_user_input supports .await.")),
             },
-            Expr::Call { name, args, .. } => {
+            Expr::Call { name, args, span } => {
                 #[cfg(not(feature = "oracle-ledger"))]
                 if name == "cap_purchase_tiers" {
                     return Err(CompileError::new(
@@ -280,6 +441,30 @@ impl Validator {
                     .map(|a| self.expr(a, env, depth + 1, false))
                     .collect::<Result<Vec<_>, _>>()?;
                 let expected = match name.as_str() {
+                    "allowit::execution_request_validate" => alloc::vec![Type::Workflow(
+                        crate::typed_workflow::WorkflowType::named("ExecutionRequest")
+                    )],
+                    "paysh::payment_request_from_curl" => alloc::vec![
+                        Type::Workflow(crate::typed_workflow::WorkflowType::named("CurlOutcome")),
+                        Type::Workflow(crate::typed_workflow::WorkflowType::named("CurlRequest"))
+                    ],
+                    "allowit::execution_request_cap" | "allowit::payment_request_cap" => {
+                        alloc::vec![
+                            Type::Workflow(crate::typed_workflow::WorkflowType::named(
+                                if name == "allowit::execution_request_cap" {
+                                    "ValidatedExecutionRequest"
+                                } else {
+                                    "PaymentRequest"
+                                }
+                            )),
+                            Type::String,
+                            Type::String,
+                            Type::Integer,
+                            Type::Integer,
+                            Type::Integer,
+                            Type::Integer
+                        ]
+                    }
                     "paysh::call" => alloc::vec![
                         Type::String,
                         Type::String,
@@ -308,7 +493,117 @@ impl Validator {
                         "Arguments do not match the signature of {name}."
                     )));
                 }
+                if [
+                    "allowit::execution_request_cap",
+                    "allowit::payment_request_cap",
+                ]
+                .contains(&name.as_str())
+                {
+                    let [
+                        _,
+                        Expr::String { value: budget_id },
+                        Expr::String { value: asset_id },
+                        Expr::Integer { value: decimals },
+                        Expr::Integer { value: total },
+                        Expr::Integer { value: debit },
+                        Expr::Integer { value: fee },
+                    ] = args.as_slice()
+                    else {
+                        return Err(bad(
+                            "Typed budgets require source literals or constructor-folded constants.",
+                        ));
+                    };
+                    if self.loop_depth > 0
+                        || budget_id.is_empty()
+                        || budget_id.len() > 128
+                        || crate::typed_workflow::asset_from_identity(asset_id).is_none()
+                        || *decimals > 18
+                        || *total == 0
+                        || debit.checked_add(*fee).is_none_or(|v| v == 0 || v > *total)
+                        || self
+                            .budgets
+                            .iter()
+                            .any(|b| b.budget_id == *budget_id || b.asset_id == *asset_id)
+                        || self.budgets.len() >= 16
+                    {
+                        return Err(bad(
+                            "Declare distinct exact-asset budgets with positive total and bounded debit/fee ceilings, outside loops.",
+                        ));
+                    }
+                    self.budgets
+                        .push(crate::typed_workflow::TypedBudgetRequirement {
+                            operation: name.clone(),
+                            budget_id: budget_id.clone(),
+                            asset_id: asset_id.clone(),
+                            decimals: *decimals as u8,
+                            total_budget_units: *total,
+                            max_debit_units: *debit,
+                            max_fee_units: *fee,
+                        });
+                }
+                if let Some(signature) = crate::typed_workflow::signature(name) {
+                    if signature.effect == "pure_validation"
+                        && (self.loop_depth != 0
+                            || self.typed_nodes.iter().any(|node| {
+                                matches!(
+                                    node.operation.as_str(),
+                                    "allowit::execution_request_validate"
+                                        | "paysh::payment_request_from_curl"
+                                )
+                            }))
+                    {
+                        return Err(bad(
+                            "One producing workflow node is supported per run, outside loops.",
+                        ));
+                    }
+                    self.typed_nodes
+                        .push(crate::typed_workflow::TypedWorkflowNode {
+                            operation: name.clone(),
+                            span: *span,
+                            span_encoding: "utf8_bytes".into(),
+                            inputs: signature
+                                .parameters
+                                .iter()
+                                .zip(args)
+                                .map(|(p, a)| crate::typed_workflow::TypedWorkflowPort {
+                                    name: p.name.clone(),
+                                    value_type: p.value_type.clone(),
+                                    binding: a.clone(),
+                                    state: match unborrow(a) {
+                                        Expr::String { .. }
+                                        | Expr::Integer { .. }
+                                        | Expr::Boolean { .. } => "literal".into(),
+                                        Expr::Variable { name } => self
+                                            .binding_states
+                                            .get(name)
+                                            .cloned()
+                                            .unwrap_or_else(|| "bound".into()),
+                                        _ => "bound".into(),
+                                    },
+                                })
+                                .collect(),
+                            output_type: signature.result.clone(),
+                            output_value_type: signature.result.clone(),
+                            output_state: "result".into(),
+                            output_binding: None,
+                        });
+                    return Ok(match signature.result {
+                        crate::typed_workflow::WorkflowType::Result(inner) => {
+                            if *inner == crate::typed_workflow::WorkflowType::named("Unit") {
+                                result(Type::Unit)
+                            } else {
+                                result(Type::Workflow(*inner))
+                            }
+                        }
+                        _ => return Err(bad("Invalid typed signature.")),
+                    });
+                }
                 if name == "paysh::call" {
+                    if self.loop_depth > 0 {
+                        return Err(bad(
+                            "Effectful calls are not supported inside bounded loops.",
+                        ));
+                    }
                     if !matches!(args.first(), Some(Expr::String { .. }))
                         || !matches!(args.get(1), Some(Expr::String { .. }))
                         || args[2..]
@@ -330,6 +625,23 @@ impl Validator {
                     if self.provider_call_count > 1 {
                         return Err(bad("Declare at most one provider call per policy."));
                     }
+                }
+                if self.typed_only
+                    && [
+                        "set_cap",
+                        "cap_per_transaction",
+                        "cap_purchase_tiers",
+                        "require_recipient",
+                        "require_merchant",
+                        "allow_actions",
+                        "context_u64",
+                        "native_storage",
+                    ]
+                    .contains(&name.as_str())
+                {
+                    return Err(bad(
+                        "Typed request policies use typed effect and fee guards; scalar token limits cannot represent native assets.",
+                    ));
                 }
                 if name == "set_cap" {
                     self.config_count += 1;
@@ -445,12 +757,21 @@ fn valid_name(s: &str) -> bool {
 /// Validate every branch of an IR program, including unreachable code.
 /// This is also required when a contract receives serialized IR.
 pub fn validate_program(program: &Program) -> Result<(), CompileError> {
-    if program.version != IR_VERSION {
+    if (crate::typed_workflow::required(program) && provider_call_required(program))
+        || (!crate::typed_workflow::required(program) && program.version != IR_VERSION)
+        || ![IR_VERSION, crate::TYPED_IR_VERSION].contains(&program.version.as_str())
+        || (crate::typed_workflow::required(program) && program.version != crate::TYPED_IR_VERSION)
+    {
         return Err(bad("Unsupported canonical IR version."));
     }
     let mut env = BTreeMap::new();
     env.insert("ctx".to_string(), Type::Context);
     let mut validator = Validator {
+        loop_depth: 0,
+        typed_nodes: Vec::new(),
+        budgets: Vec::new(),
+        binding_states: BTreeMap::new(),
+        typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
         provider_call_count: 0,
         provider_profile: provider_call_required(program),
         nodes: 0,
@@ -511,10 +832,20 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
                 then_branch,
                 else_branch,
                 ..
+            }
+            | Statement::IfSome {
+                value: condition,
+                then_branch,
+                else_branch,
+                ..
             } => {
                 expressions.push(condition);
                 statements.extend(then_branch);
                 statements.extend(else_branch);
+            }
+            Statement::ForEach { values, body, .. } => {
+                expressions.push(values);
+                statements.extend(body);
             }
         }
     }
@@ -527,9 +858,10 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
                 expressions.push(object);
             }
             Expr::Call { args, .. } | Expr::Array { values: args } => expressions.extend(args),
-            Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
-                expressions.push(value)
-            }
+            Expr::Borrow { value }
+            | Expr::Try { value }
+            | Expr::Await { value }
+            | Expr::Not { value } => expressions.push(value),
             Expr::Binary { left, right, .. } => {
                 expressions.push(left);
                 expressions.push(right);
@@ -558,10 +890,20 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
                 then_branch,
                 else_branch,
                 ..
+            }
+            | Statement::IfSome {
+                value: condition,
+                then_branch,
+                else_branch,
+                ..
             } => {
                 expressions.push(condition);
                 statements.extend(then_branch);
                 statements.extend(else_branch);
+            }
+            Statement::ForEach { values, body, .. } => {
+                expressions.push(values);
+                statements.extend(body);
             }
         }
     }
@@ -577,9 +919,10 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
                 expressions.extend(args);
             }
             Expr::Array { values } => expressions.extend(values),
-            Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
-                expressions.push(value)
-            }
+            Expr::Borrow { value }
+            | Expr::Try { value }
+            | Expr::Await { value }
+            | Expr::Not { value } => expressions.push(value),
             Expr::Binary { left, right, .. } => {
                 expressions.push(left);
                 expressions.push(right);
@@ -592,4 +935,93 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
         }
     }
     false
+}
+
+fn scalar_type(ty: Type) -> Type {
+    match ty {
+        Type::Workflow(crate::typed_workflow::WorkflowType::U64) => Type::Integer,
+        Type::Workflow(crate::typed_workflow::WorkflowType::Bool) => Type::Boolean,
+        Type::Workflow(crate::typed_workflow::WorkflowType::String) => Type::String,
+        other => other,
+    }
+}
+
+#[cfg(feature = "compiler")]
+pub(crate) fn typed_nodes(
+    program: &Program,
+) -> Result<Vec<crate::typed_workflow::TypedWorkflowNode>, CompileError> {
+    validate_program(program)?;
+    let mut validator = Validator {
+        loop_depth: 0,
+        typed_nodes: Vec::new(),
+        budgets: Vec::new(),
+        binding_states: BTreeMap::new(),
+        typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
+        provider_call_count: 0,
+        provider_profile: provider_call_required(program),
+        nodes: 0,
+        config_count: 0,
+        #[cfg(feature = "oracle-ledger")]
+        tier_count: 0,
+    };
+    let mut env = BTreeMap::new();
+    env.insert("ctx".into(), Type::Context);
+    validator.block(&program.statements, &mut env, 0, true)?;
+    Ok(validator.typed_nodes)
+}
+
+#[cfg(feature = "compiler")]
+pub(crate) fn typed_budgets(
+    program: &Program,
+) -> Result<Vec<crate::typed_workflow::TypedBudgetRequirement>, CompileError> {
+    validate_program(program)?;
+    let mut v = Validator {
+        loop_depth: 0,
+        typed_nodes: Vec::new(),
+        budgets: Vec::new(),
+        binding_states: BTreeMap::new(),
+        typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
+        provider_call_count: 0,
+        provider_profile: provider_call_required(program),
+        nodes: 0,
+        config_count: 0,
+        #[cfg(feature = "oracle-ledger")]
+        tier_count: 0,
+    };
+    let mut env = BTreeMap::new();
+    env.insert("ctx".into(), Type::Context);
+    v.block(&program.statements, &mut env, 0, true)?;
+    Ok(v.budgets)
+}
+
+fn unborrow(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Borrow { value } => unborrow(value),
+        _ => expr,
+    }
+}
+
+fn valid_typed_name(s: &str) -> bool {
+    use unicode_normalization::UnicodeNormalization;
+    use unicode_script::{Script, UnicodeScript};
+    let mut script = None;
+    for c in s.chars() {
+        let current = c.script();
+        if matches!(current, Script::Common | Script::Inherited) {
+            continue;
+        }
+        if script.is_some_and(|prior| prior != current) {
+            return false;
+        }
+        script = Some(current);
+    }
+    if !s.nfc().eq(s.chars()) {
+        return false;
+    }
+    let mut chars = s.chars();
+    chars
+        .next()
+        .is_some_and(|c| unicode_ident::is_xid_start(c) || c == '_')
+        && chars.all(unicode_ident::is_xid_continue)
+        && s.len() <= 64
 }

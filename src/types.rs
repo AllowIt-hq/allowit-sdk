@@ -3,13 +3,17 @@ use serde::{Deserialize, Serialize};
 
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
-pub const REGISTRY_VERSION: &str = "1.3.0";
+pub const REGISTRY_VERSION: &str = "1.4.0";
 /// Canonical expression schema. New registered host operations use the source registry
 /// version and explicit target-profile admission without changing the expression encoding.
 pub const IR_VERSION: &str = "1.0.0";
+pub const TYPED_IR_VERSION: &str = "1.1.0";
 /// Previously supported guard registries retain their artifact semantics.
 pub fn supported_registry_version(version: &str) -> bool {
-    matches!(version, "1.0.0" | "1.1.0" | "1.2.0" | REGISTRY_VERSION)
+    matches!(
+        version,
+        "1.0.0" | "1.1.0" | "1.2.0" | "1.3.0" | REGISTRY_VERSION
+    )
 }
 pub const MAX_SOURCE_BYTES: usize = 32768;
 pub const MAX_NODES: usize = 2048;
@@ -87,6 +91,9 @@ pub enum Expr {
         args: Vec<Expr>,
         span: SourceSpan,
     },
+    Borrow {
+        value: alloc::boxed::Box<Expr>,
+    },
     Try {
         value: alloc::boxed::Box<Expr>,
     },
@@ -113,6 +120,19 @@ pub enum Statement {
         value: Expr,
         span: SourceSpan,
     },
+    IfSome {
+        name: String,
+        value: Expr,
+        then_branch: Vec<Statement>,
+        else_branch: Vec<Statement>,
+        span: SourceSpan,
+    },
+    ForEach {
+        name: String,
+        values: Expr,
+        body: Vec<Statement>,
+        span: SourceSpan,
+    },
     If {
         condition: Expr,
         then_branch: Vec<Statement>,
@@ -126,7 +146,9 @@ impl Statement {
             Self::Let { span, .. }
             | Self::Expression { span, .. }
             | Self::Return { span, .. }
-            | Self::If { span, .. } => *span,
+            | Self::If { span, .. }
+            | Self::IfSome { span, .. }
+            | Self::ForEach { span, .. } => *span,
         }
     }
 }
@@ -181,6 +203,10 @@ pub struct CompiledPolicy {
     pub execution_requirements: ExecutionRequirements,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_call_requirements: Vec<ProviderCallRequirement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_workflow_requirements: Vec<crate::typed_workflow::TypedWorkflowNode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed_budget_requirements: Vec<crate::typed_workflow::TypedBudgetRequirement>,
     pub limit: String,
     pub token: String,
     pub source: String,
@@ -213,6 +239,7 @@ pub enum ExecutionFeature {
     ProviderCall,
     PaidHttpCall,
     NativeSettlement,
+    TypedWorkflow,
 }
 
 /// Oracle-only execution evidence for the compiler's source-bound workflow.
@@ -324,6 +351,14 @@ pub struct ProviderCallPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
+    #[serde(skip)]
+    pub workflow: Option<crate::typed_workflow::WorkflowEnvironment>,
+    #[serde(skip)]
+    pub execution_request: Option<crate::typed_workflow::ExecutionRequest>,
+    #[serde(skip)]
+    pub curl_request: Option<crate::typed_workflow::CurlRequest>,
+    #[serde(skip)]
+    pub curl_outcome: Option<crate::typed_workflow::CurlOutcome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(skip_deserializing)]
     pub provider_call_input: Option<ProviderCallInput>,
@@ -355,9 +390,22 @@ pub struct Context {
 fn empty_runtime_context() -> serde_json::Value {
     serde_json::Value::Object(serde_json::Map::new())
 }
+impl Context {
+    /// Install authenticated host objects together. JSON cannot install this binding.
+    pub fn install_workflow(&mut self, environment: crate::typed_workflow::WorkflowEnvironment) {
+        self.execution_request = environment.execution_request.clone();
+        self.curl_request = environment.curl_request.clone();
+        self.curl_outcome = environment.curl_outcome.clone();
+        self.workflow = Some(environment);
+    }
+}
 impl Default for Context {
     fn default() -> Self {
         Self {
+            workflow: None,
+            execution_request: None,
+            curl_request: None,
+            curl_outcome: None,
             provider_call_input: None,
             native_policy_storage: None,
             amount_units: 0,
@@ -381,6 +429,10 @@ impl Default for Context {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Decision {
+    #[serde(default, skip_serializing_if = "Vec::is_empty", skip_deserializing)]
+    pub workflow_outputs: Vec<crate::typed_workflow::WorkflowOutput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty", skip_deserializing)]
+    pub typed_budget_plans: Vec<crate::typed_workflow::TypedBudgetPlan>,
     /// Only effects on the successful evaluated path. Empty on failure or owner/evidence pauses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(skip_deserializing)]
@@ -405,6 +457,8 @@ pub struct Decision {
 impl Decision {
     pub fn fail(code: &str, reason: impl Into<String>) -> Self {
         Self {
+            workflow_outputs: Vec::new(),
+            typed_budget_plans: Vec::new(),
             system_operations: Vec::new(),
             outcome: "fail".into(),
             code: code.into(),
@@ -419,6 +473,8 @@ impl Decision {
     }
     pub fn pass() -> Self {
         Self {
+            workflow_outputs: Vec::new(),
+            typed_budget_plans: Vec::new(),
             system_operations: Vec::new(),
             outcome: "pass".into(),
             code: "PASS".into(),

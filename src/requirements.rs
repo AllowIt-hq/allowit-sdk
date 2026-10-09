@@ -50,6 +50,10 @@ impl Collector {
                         self.features.insert(ExecutionFeature::NativeSettlement);
                         Some(ExecutionFeature::ProviderCall)
                     }
+                    "allowit::execution_request_validate"
+                    | "paysh::payment_request_from_curl"
+                    | "allowit::execution_request_cap"
+                    | "allowit::payment_request_cap" => Some(ExecutionFeature::TypedWorkflow),
                     "semantic" => Some(ExecutionFeature::SemanticEvidence),
                     "confidence" => Some(ExecutionFeature::ConfidenceEvidence),
                     "require_user_input" => Some(ExecutionFeature::OwnerInput),
@@ -85,9 +89,10 @@ impl Collector {
                     self.expr(arg)?;
                 }
             }
-            Expr::Try { value } | Expr::Await { value } | Expr::Not { value } => {
-                self.expr(value)?
-            }
+            Expr::Borrow { value }
+            | Expr::Try { value }
+            | Expr::Await { value }
+            | Expr::Not { value } => self.expr(value)?,
             Expr::Field { object, name } => {
                 if name == "native_daily_limit" || name == "native_action_limit" {
                     self.features.insert(ExecutionFeature::NativePolicyStorage);
@@ -123,10 +128,20 @@ impl Collector {
                     then_branch,
                     else_branch,
                     ..
+                }
+                | Statement::IfSome {
+                    value: condition,
+                    then_branch,
+                    else_branch,
+                    ..
                 } => {
                     self.expr(condition)?;
                     self.block(then_branch)?;
                     self.block(else_branch)?;
+                }
+                Statement::ForEach { values, body, .. } => {
+                    self.expr(values)?;
+                    self.block(body)?;
                 }
             }
         }

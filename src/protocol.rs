@@ -40,7 +40,7 @@ pub fn process_value(request: Value) -> Value {
         );
     }
     if operation == "registry" {
-        return json!({"ok":true,"language":crate::LANGUAGE,"registry_version":crate::REGISTRY_VERSION,"functions":crate::registry()});
+        return json!({"ok":true,"language":crate::LANGUAGE,"registry_version":crate::REGISTRY_VERSION,"functions":crate::registry(),"type_declarations":crate::typed_workflow::type_declarations()});
     }
     #[cfg(feature = "compiler")]
     {
