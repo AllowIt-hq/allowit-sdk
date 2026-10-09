@@ -32,7 +32,7 @@ fn bad(message: impl Into<String>) -> CompileError {
 pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
     if amount.is_empty() || amount.len() > 24 || amount.starts_with('.') || amount.ends_with('.') {
         return Err(bad(
-            "Amounts must be positive decimal strings with at most six decimal places.",
+            "Use positive decimal amounts with at most six decimal places.",
         ));
     }
     let mut parts = amount.split('.');
@@ -43,9 +43,7 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
         || !whole.bytes().all(|b| b.is_ascii_digit())
         || !fraction.bytes().all(|b| b.is_ascii_digit())
     {
-        return Err(bad(
-            "Amounts must use decimal digits and at most six decimal places.",
-        ));
+        return Err(bad("Amounts need digits and at most six decimal places."));
     }
     let whole = whole
         .parse::<u64>()
@@ -718,7 +716,7 @@ impl Validator {
                     self.config_count += 1;
                     if !config || self.config_count > 1 {
                         return Err(bad(
-                            "set_cap must occur exactly once or not at all, as an unconditional top-level call with literal arguments.",
+                            "Declare set_cap at most once, unconditionally at top level, with literal arguments.",
                         ));
                     }
                     match (args.get(1), args.get(2)) {
@@ -734,7 +732,7 @@ impl Validator {
                         }
                         _ => {
                             return Err(bad(
-                                "set_cap requires a positive amount literal and the token \"USDC\".",
+                                "set_cap requires a positive amount literal and USDC.",
                             ));
                         }
                     }

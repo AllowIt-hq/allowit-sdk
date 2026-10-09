@@ -122,6 +122,10 @@ The [agent skill](skills/allowit/SKILL.md) includes JSON-context instructions, s
 
 ## Embedding and wire protocol
 
+Host workflow evaluation and registered provider calls require the `typed-workflow` feature. The compiler enables it automatically. A host without the compiler enables it explicitly, including with `no_std`. Scalar chain interpreters use no default features and reject host workflow IR and provider calls.
+
+With this feature, the public `Context.workflow`, `execution_request`, `curl_request` and `curl_outcome` fields are `Option<Box<T>>`. Direct construction requires `Box::new`. `install_workflow` accepts an unboxed `WorkflowEnvironment` and installs its authenticated records together. Public JSON cannot install these records. Builds without this feature omit these fields, `provider_call_input`, and the host effect fields of `Decision`.
+
 Native callers use `process_value(serde_json::Value) -> serde_json::Value` or `process_json(&str) -> String`. The JSON API always compiles source before evaluation and rejects externally supplied executable IR.
 
 Compiler output includes versioned [execution requirements](docs/execution-requirements.md), a conservative inventory of policy dependencies used by host skill assemblers. It does not grant permissions or assert that a dependency is reachable.
@@ -247,4 +251,3 @@ any policy with this compiler; older readers reject registry 1.3 artifacts.
 
 AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.
 
-Host workflow evaluation uses the `typed-workflow` feature. The compiler enables it automatically. A host without the compiler can enable it explicitly, including with `no_std`. Scalar chain interpreters use no default features and reject host workflow IR. Host-only context objects use heap storage; public JSON cannot install them.

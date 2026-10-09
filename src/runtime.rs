@@ -339,10 +339,28 @@ impl Evaluator<'_> {
                         let (Value::Integer(a), Value::Integer(b)) = (a, b) else {
                             return Err(invalid());
                         };
-                        match op.as_str(){
-                            ">"=>Value::Boolean(a>b),">="=>Value::Boolean(a>=b),"<"=>Value::Boolean(a<b),"<="=>Value::Boolean(a<=b),
-                            "+"|"-"|"*"|"/"|"%"=>Value::Integer(match op.as_str(){"+"=>a.checked_add(b),"-"=>a.checked_sub(b),"*"=>a.checked_mul(b),"/"=>a.checked_div(b),"%"=>a.checked_rem(b),_=>None}.ok_or_else(||failure("ARITHMETIC_ERROR","A policy calculation overflowed, underflowed or divided by zero."))?),
-                            _=>return Err(invalid()),
+                        match op.as_str() {
+                            ">" => Value::Boolean(a > b),
+                            ">=" => Value::Boolean(a >= b),
+                            "<" => Value::Boolean(a < b),
+                            "<=" => Value::Boolean(a <= b),
+                            "+" | "-" | "*" | "/" | "%" => Value::Integer(
+                                match op.as_str() {
+                                    "+" => a.checked_add(b),
+                                    "-" => a.checked_sub(b),
+                                    "*" => a.checked_mul(b),
+                                    "/" => a.checked_div(b),
+                                    "%" => a.checked_rem(b),
+                                    _ => None,
+                                }
+                                .ok_or_else(|| {
+                                    failure(
+                                        "ARITHMETIC_ERROR",
+                                        "Calculation overflowed, underflowed or divided by zero.",
+                                    )
+                                })?,
+                            ),
+                            _ => return Err(invalid()),
                         }
                     }
                 }
@@ -812,7 +830,7 @@ impl Evaluator<'_> {
                         if is_semantic && self.context.original_intent.trim().is_empty() {
                             return Err(failure(
                                 "ORIGINAL_INTENT_REQUIRED",
-                                "The original policy instructions are required for a preference assessment.",
+                                "Preference assessment requires original policy instructions.",
                             ));
                         }
                         let key = if is_semantic {
@@ -1033,7 +1051,7 @@ fn validate_context(
     {
         return Err(failure(
             "INVALID_CONTEXT",
-            "The request context is missing required values or exceeds its size limit.",
+            "Request context lacks required values or exceeds its size limit.",
         ));
     }
     validate_runtime_context(&ctx.runtime_context)?;
@@ -1055,7 +1073,7 @@ fn validate_runtime_context(value: &serde_json::Value) -> Result<(), alloc::boxe
     let invalid = || {
         failure(
             "INVALID_CONTEXT",
-            "Runtime context must be an object of at most 16 KiB, depth 8 and 128 entries.",
+            "Runtime context requires an object: at most 16 KiB, depth 8 and 128 entries.",
         )
     };
     if !value.is_object() {
