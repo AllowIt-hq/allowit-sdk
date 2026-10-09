@@ -396,11 +396,13 @@ impl Validator {
                     if let Some(Expr::String { value }) = args.get(1) {
                         amount_units(value)?;
                     }
-                    if let Some(Expr::String { value }) = args.get(2)
-                        && value != "USDC"
-                        && !self.provider_profile
-                    {
-                        return Err(bad("Version 1 supports six-decimal USDC only."));
+                    if let Some(Expr::String { value }) = args.get(2) {
+                        if self.provider_profile && (value.is_empty() || value.len() > 128) {
+                            return Err(bad("Provider asset identifiers require 1 to 128 bytes."));
+                        }
+                        if value != "USDC" && !self.provider_profile {
+                            return Err(bad("Version 1 supports six-decimal USDC only."));
+                        }
                     }
                 }
                 if [
@@ -461,9 +463,11 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
             "Every policy path must return Ok(()) or fail(\"reason\").",
         ));
     }
-    if validator.provider_profile && provider_asset_id(program).is_none() {
+    if validator.provider_profile
+        && provider_asset_id(program).is_none_or(|asset| ["USDC", "SOL"].contains(&asset))
+    {
         return Err(bad(
-            "Provider policies require one unconditional set_cap with a literal payment asset.",
+            "Provider policies require one unconditional set_cap with a literal asset identifier, not a currency symbol.",
         ));
     }
     Ok(())

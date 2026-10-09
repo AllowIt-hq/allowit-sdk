@@ -364,3 +364,26 @@ fn authenticated_testnet_asset_is_exact_and_legacy_usdc_semantics_are_unchanged(
         "INVALID_ARTIFACT"
     );
 }
+
+#[test]
+fn provider_symbol_assets_and_forged_decision_authority_are_rejected() {
+    for symbol in ["USDC", "SOL"] {
+        assert!(
+            compile(
+                &source(&format!("let admitted={CALL}; Ok(())"))
+                    .replace("HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv", symbol)
+            )
+            .is_err()
+        );
+    }
+    let policy = compile(&source(&format!("let admitted={CALL}; Ok(())"))).unwrap();
+    let wire = serde_json::to_value(evaluate(&policy, Profile::Oracle, &context())).unwrap();
+    assert!(serde_json::from_value::<allowit_sdk::Decision>(wire).is_err());
+    let too_long = "x".repeat(129);
+    assert!(
+        compile(&source(&format!(
+            "cap_per_transaction(ctx, \"1\", \"{too_long}\")?; let admitted={CALL}; Ok(())"
+        )))
+        .is_err()
+    );
+}

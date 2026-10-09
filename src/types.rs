@@ -383,6 +383,7 @@ impl Default for Context {
 pub struct Decision {
     /// Only effects on the successful evaluated path. Empty on failure or owner/evidence pauses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_deserializing)]
     pub system_operations: Vec<ProviderCallPlan>,
     pub outcome: String,
     pub code: String,
