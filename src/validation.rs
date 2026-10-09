@@ -43,7 +43,9 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
         || !whole.bytes().all(|b| b.is_ascii_digit())
         || !fraction.bytes().all(|b| b.is_ascii_digit())
     {
-        return Err(bad("Amounts need digits and at most six decimal places."));
+        return Err(bad(
+            "Amounts need decimal digits and at most six decimal places.",
+        ));
     }
     let whole = whole
         .parse::<u64>()
@@ -732,7 +734,7 @@ impl Validator {
                         }
                         _ => {
                             return Err(bad(
-                                "set_cap requires a positive amount literal and USDC.",
+                                "set_cap requires a positive amount literal and the string \"USDC\".",
                             ));
                         }
                     }

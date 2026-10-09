@@ -59,11 +59,18 @@ jobs:
           # Normalize diagnostic paths so host checkout/cache names do not
           # consume the fixed Wasm upload budget.
           path_flags="--remap-path-prefix=$GITHUB_WORKSPACE=."
-          for registry_path in "$CARGO_HOME"/registry/src/*; do
+          cargo_cache_root="${CARGO_HOME:-$HOME/.cargo}"
+          registry_sources=0
+          for registry_path in "$cargo_cache_root"/registry/src/*; do
             if [ -d "$registry_path" ]; then
               path_flags+=" --remap-path-prefix=$registry_path=registry"
+              registry_sources=$((registry_sources + 1))
             fi
           done
+          # The preceding host tests fetch these sources. Refuse a reordered
+          # workflow that would leave cache-specific index paths in the Wasm.
+          test "$registry_sources" -gt 0
+          path_flags+=" --remap-path-prefix=$cargo_cache_root/git/checkouts=git"
           smallest=999999999
           for rust_opt in z s; do
             RUSTFLAGS="${RUSTFLAGS:-} $path_flags" CARGO_PROFILE_RELEASE_OPT_LEVEL="$rust_opt" cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee -a contracts/dist/stellar-build.log

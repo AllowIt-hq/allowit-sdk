@@ -151,7 +151,9 @@ fn compiler_free_host_evaluates_authentic_typed_ir_and_protected_budget() {
     exhausted.workflow.as_mut().unwrap().budgets[0].reserved_units = 50_000_000.into();
     let refused = evaluate_ir(&ir, Profile::Oracle, &exhausted);
     assert_eq!(refused.code, "WORKFLOW_BUDGET_EXCEEDED");
+    assert_ne!(refused.outcome, "pass");
     assert!(refused.workflow_outputs.is_empty());
+    assert!(refused.typed_budget_plans.is_empty());
     let mut substituted = context.clone();
     substituted
         .workflow
@@ -159,10 +161,37 @@ fn compiler_free_host_evaluates_authentic_typed_ir_and_protected_budget() {
         .unwrap()
         .binding
         .request_digest = [99; 32];
-    assert_eq!(
-        evaluate_ir(&ir, Profile::Oracle, &substituted).code,
-        "WORKFLOW_BINDING"
-    );
+    let refused = evaluate_ir(&ir, Profile::Oracle, &substituted);
+    assert_eq!(refused.code, "WORKFLOW_BINDING");
+    assert_ne!(refused.outcome, "pass");
+    assert!(refused.workflow_outputs.is_empty());
+    assert!(refused.typed_budget_plans.is_empty());
+    let mut wrong_ir = context.clone();
+    wrong_ir.workflow.as_mut().unwrap().binding.ir_hash = [99; 32];
+    let refused = evaluate_ir(&ir, Profile::Oracle, &wrong_ir);
+    assert_eq!(refused.code, "WORKFLOW_BINDING");
+    assert_ne!(refused.outcome, "pass");
+    assert!(refused.workflow_outputs.is_empty());
+    assert!(refused.typed_budget_plans.is_empty());
+    for field in ["limit", "decimals", "asset"] {
+        let mut mismatched = context.clone();
+        let budget = &mut mismatched.workflow.as_mut().unwrap().budgets[0];
+        match field {
+            "limit" => budget.limit_units = 50_000_001.into(),
+            "decimals" => budget.decimals = 6,
+            "asset" => {
+                budget.asset = WorkflowAsset::Native {
+                    chain: Chain::Solana,
+                    network: [99; 32],
+                }
+            }
+            _ => unreachable!(),
+        }
+        let refused = evaluate_ir(&ir, Profile::Oracle, &mismatched);
+        assert_ne!(refused.outcome, "pass", "{field}: {refused:?}");
+        assert!(refused.workflow_outputs.is_empty());
+        assert!(refused.typed_budget_plans.is_empty());
+    }
 }
 #[cfg(feature = "compiler")]
 #[test]
