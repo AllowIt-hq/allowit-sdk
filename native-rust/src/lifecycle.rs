@@ -247,13 +247,52 @@ impl NativeOperations for NativeClient {
 /// Hosts must persist the exact validated record before any broadcast and commit
 /// this returned observation atomically in their own storage. This function never
 /// signs, broadcasts, replaces a proof, or trusts a status without receipt checks.
-/// Imported records must discard caller-supplied status and `extra` observations;
-/// those fields are trusted host journal metadata, not signed transaction fields.
+/// Caller-supplied status and `extra` observations are discarded. They are not
+/// signed transaction fields and cannot establish settlement or nonexecution.
+/// Imported validity heights cannot establish expiry. Without a final network
+/// result, imported proofs stay uncertain even when a node lacks their blockhash.
 pub fn reconcile_record(
     sdk: &dyn NativeOperations,
     mut record: Record,
     policy: &Policy,
     owner: Key,
+) -> Result<Record> {
+    record.status = "uncertain".into();
+    record.extra.clear();
+    reconcile_saved_record(sdk, record, policy, owner, false)
+}
+
+/// Reconcile using a host-owned upper bound on the signed blockhash's validity.
+/// The host must derive this bound from its own preparation or a positive chain
+/// witness. Never use a bound supplied by the browser, executor, or imported record.
+/// This clears imported status and absence metadata, then checks current finalized
+/// chain evidence and unchanged execution state before declaring nonexecution.
+/// It never signs or broadcasts. The returned record preserves the original height.
+pub fn reconcile_record_with_expiry_bound(
+    sdk: &dyn NativeOperations,
+    mut record: Record,
+    policy: &Policy,
+    owner: Key,
+    expiry_bound: u64,
+) -> Result<Record> {
+    safe_height(&json!(expiry_bound))?;
+    let original_height = record.last_valid_block_height;
+    record.status = "uncertain".into();
+    record.extra.clear();
+    record.last_valid_block_height = expiry_bound;
+    let mut observed = reconcile_saved_record(sdk, record, policy, owner, true)?;
+    observed.last_valid_block_height = original_height;
+    Ok(observed)
+}
+
+// Private journals may retain validity heights and durable absence observations.
+
+fn reconcile_saved_record(
+    sdk: &dyn NativeOperations,
+    mut record: Record,
+    policy: &Policy,
+    owner: Key,
+    trusted_journal: bool,
 ) -> Result<Record> {
     record.extra.remove("error");
     record.extra.remove("replayed");
@@ -271,7 +310,7 @@ pub fn reconcile_record(
         return Ok(record);
     }
     let mut result = sdk.status(&record.signature)?;
-    if result["status"] == "uncertain" {
+    if trusted_journal && result["status"] == "uncertain" {
         let height = safe_height(
             &sdk.client()
                 .rpc
@@ -390,6 +429,9 @@ impl<'a> PolicyLifecycle<'a> {
     pub fn reconcile(&self, record: Record, policy: &Policy, owner: Key) -> Result<Record> {
         reconcile_record(self.sdk, record, policy, owner)
     }
+    fn reconcile_saved(&self, record: Record, policy: &Policy, owner: Key) -> Result<Record> {
+        reconcile_saved_record(self.sdk, record, policy, owner, true)
+    }
     pub fn submit(
         &self,
         policy: &Policy,
@@ -410,7 +452,7 @@ impl<'a> PolicyLifecycle<'a> {
             let mut superseded = BTreeMap::<String, Record>::new();
             if let Some(prior)=self.journal.read::<Record>(&name)? {
                 if prior.id!=id||prior.intent!=canonical{return Err(Error::config("Request ID conflict; recover the original request"));}
-                let mut result=self.reconcile(prior,policy,owner)?;self.journal.write(&name,&result)?;
+                let mut result=self.reconcile_saved(prior,policy,owner)?;self.journal.write(&name,&result)?;
                 if result.final_status(){if self.journal.read::<Value>("execute-slot")?.is_some_and(|s|s["id"]==id){self.journal.clear("execute-slot")?;}}
                 else if self.block_height()?<=result.last_valid_block_height{let _=self.broadcast(&result);}
                 result.extra.insert("replayed".into(),json!(true));return Ok(result);
@@ -420,7 +462,7 @@ impl<'a> PolicyLifecycle<'a> {
                     let previous=slot["id"].as_str().ok_or_else(||Error::config("Execution journal inconsistency"))?;valid_id(previous)?;
                     let old=self.journal.read::<Record>(&format!("request-{previous}"))?.ok_or_else(||Error::config("Execution journal inconsistency"))?;
                     if old.id!=previous||old.method!="execute" {return Err(Error::config("Execution journal inconsistency"));}
-                    let reconciled=self.reconcile(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
+                    let reconciled=self.reconcile_saved(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
                     if !reconciled.final_status(){return Err(Error::config(format!("Execution {previous} is uncertain; recover it before a new spend")));}
                     self.journal.clear("execute-slot")?;
                 }
@@ -431,7 +473,7 @@ impl<'a> PolicyLifecycle<'a> {
                     let old=self.journal.read::<Record>(&format!("request-{previous}"))?.ok_or_else(||Error::config("Owner journal inconsistency"))?;
                     if old.id!=previous||old.method!=method{return Err(Error::config("Owner journal inconsistency"));}
                     if !self.superseded_owner(&old,policy,owner)? {
-                        let reconciled=self.reconcile(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
+                        let reconciled=self.reconcile_saved(old,policy,owner)?;self.journal.write(&format!("request-{previous}"),&reconciled)?;
                         if !(reconciled.final_status()||reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
                         if !reconciled.final_status(){superseded.insert(previous.into(),reconciled);}
                     }
@@ -442,7 +484,7 @@ impl<'a> PolicyLifecycle<'a> {
                 // proofs from that crash window also block owner operations.
                 for old in self.journal.entries::<Record>()? {
                     if old.method==method&&!old.final_status()&&!self.superseded_owner(&old,policy,owner)? {
-                        let previous=old.id.clone();let reconciled=self.reconcile(old,policy,owner)?;
+                        let previous=old.id.clone();let reconciled=self.reconcile_saved(old,policy,owner)?;
                         self.journal.write(&format!("request-{previous}"),&reconciled)?;
                         if !(reconciled.final_status()||reconciled.expired()&&options.additional_owner_operation){return Err(Error::config(format!("Earlier {method} is uncertain; recover it first. After verified expiry, explicitly authorize an additional owner operation while retaining the old proof.")));}
                         if !reconciled.final_status(){superseded.insert(previous,reconciled);}
@@ -509,7 +551,7 @@ impl<'a> PolicyLifecycle<'a> {
                         "Request ID conflict; recover the original request",
                     ));
                 }
-                let mut result = self.reconcile(prior, policy, owner)?;
+                let mut result = self.reconcile_saved(prior, policy, owner)?;
                 self.journal.write(&name, &result)?;
                 if result.final_status()
                     && self
@@ -538,7 +580,7 @@ impl<'a> PolicyLifecycle<'a> {
                 if old.id != previous || old.method != "execute" {
                     return Err(Error::config("Execution journal inconsistency"));
                 }
-                let reconciled = self.reconcile(old, policy, owner)?;
+                let reconciled = self.reconcile_saved(old, policy, owner)?;
                 self.journal
                     .write(&format!("request-{previous}"), &reconciled)?;
                 if !reconciled.final_status() {
@@ -553,7 +595,7 @@ impl<'a> PolicyLifecycle<'a> {
             for old in self.journal.entries::<Record>()? {
                 if old.method == "execute" && !old.final_status() {
                     let previous = old.id.clone();
-                    let reconciled = self.reconcile(old, policy, owner)?;
+                    let reconciled = self.reconcile_saved(old, policy, owner)?;
                     self.journal
                         .write(&format!("request-{previous}"), &reconciled)?;
                     if !reconciled.final_status() {
@@ -608,6 +650,29 @@ impl<'a> PolicyLifecycle<'a> {
                 || authorized.revision != state.revision
             {
                 return Err(Error::config("Server approval or vault state changed"));
+            }
+            // Use the live tip, not lagging finality, before requesting a signature.
+            // Both bounds need enough remaining lifetime for signing and submission.
+            let floor = safe_height(&json!(authorized.simulation.context_slot))?;
+            let slot = safe_height(&self.sdk.client().rpc.call("getSlot",
+                json!([{"commitment":"processed", "minContextSlot":floor}]))?)?;
+            if slot < floor {
+                return Err(Error::config("The authorization observation is stale. Request a fresh authorization; no executor proof was signed."));
+            }
+            let height = safe_height(&self.sdk.client().rpc.call("getBlockHeight",
+                json!([{"commitment":"processed", "minContextSlot":slot}]))?)?;
+            let now = safe_height(&self.sdk.client().rpc.call("getBlockTime", json!([slot]))?)?;
+            if authorized.last_valid_block_height.checked_sub(height).is_none_or(|remaining| remaining < 32)
+                || authorized.approval.expires_at.checked_sub(now).is_none_or(|remaining| remaining < 30)
+            {
+                return Err(Error::config("The unsigned execution approval lacks a safe signing window. Request a fresh authorization; no executor proof was signed."));
+            }
+            let validity = self.sdk.client().rpc.call("isBlockhashValid",
+                json!([authorized.blockhash,{"commitment":"processed", "minContextSlot":slot}]))?;
+            if validity["value"].as_bool() != Some(true)
+                || safe_height(&validity["context"]["slot"])? < slot
+            {
+                return Err(Error::config("The authorization blockhash is unavailable at the live tip. Request a fresh authorization; no executor proof was signed."));
             }
             let options = authorized.approval.options()?;
             let intent = intent_for(self.sdk.client(), policy, owner, "execute", &options)?;
@@ -721,7 +786,7 @@ impl<'a> PolicyLifecycle<'a> {
             if prior.id != id {
                 return Err(Error::config("Operation journal ID mismatch"));
             }
-            let result = self.reconcile(prior, policy, owner)?;
+            let result = self.reconcile_saved(prior, policy, owner)?;
             self.journal.write(&name, &result)?;
             Ok(result)
         })

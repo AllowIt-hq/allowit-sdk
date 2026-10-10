@@ -122,6 +122,10 @@ The [agent skill](skills/allowit/SKILL.md) includes JSON-context instructions, s
 
 ## Embedding and wire protocol
 
+Host workflow evaluation and registered provider calls require the `typed-workflow` feature. The compiler enables it automatically. A host without the compiler enables it explicitly, including with `no_std`. Scalar chain interpreters use no default features and reject host workflow IR and provider calls.
+
+With this feature, the public `Context.workflow`, `execution_request`, `curl_request` and `curl_outcome` fields are `Option<Box<T>>`. Direct construction requires `Box::new`. `install_workflow` accepts an unboxed `WorkflowEnvironment` and installs its authenticated records together. Public JSON cannot install these records. Builds without this feature omit these fields, `provider_call_input`, and the host effect fields of `Decision`.
+
 Native callers use `process_value(serde_json::Value) -> serde_json::Value` or `process_json(&str) -> String`. The JSON API always compiles source before evaluation and rejects externally supplied executable IR.
 
 Compiler output includes versioned [execution requirements](docs/execution-requirements.md), a conservative inventory of policy dependencies used by host skill assemblers. It does not grant permissions or assert that a dependency is reachable.
@@ -152,6 +156,8 @@ The trace records actual execution, including `set_cap` and `cap_purchase_tiers`
 Hosts must bind each trace to the request, evaluation attempt and approved revision, verify both hashes and node IDs, and replace it after reevaluation rather than merge results across contexts. A host-level rejection has no policy node unless the host possesses an exact source binding. Trace status describes a policy check, never chain settlement or a transfer receipt. Displaying a previous run's trace must not imply that its checks passed for a newer request.
 
 Contract adapters use `default-features = false`, `validate_program`, `canonical_ir_hash` and `evaluate_ir`. The contract must authenticate the IR artifact during owner activation and bind it to the action, owner, network, asset, current budget, original intent, runtime-context digest and authority. The `no_std` evaluator validates the complete IR but does not contain the source parser; it does not claim to recompile source on chain. Source digests are owner-bound metadata there. Native `evaluate` recompiles source to reject a forged source/IR correspondence and is available only with the compiler feature.
+
+The registered `paysh::call(service_id, input_key, max_payment_units, max_swap_lamports, max_service_fee_lamports_per_execution) -> bool` admits a paid provider plan. Its five arguments use two strings and three integer ceilings, each written as a literal or initialized constructor constant. The admitted plan binds `payment_units` to the trusted amount evaluated by policy guards; that amount must be positive and within the source ceiling. Supply `Context.provider_call_input` only from an authenticated typed host adapter, with the canonical input digest. Public JSON evaluation rejects this binding. `CompiledPolicy.provider_call_requirements` exposes source constants from validated IR before funding. `evaluate_with_trace` returns `Decision.system_operations` only after all executed policy checks pass. Owner/evidence pauses and refusals expose no effects. The adapter must bind the plan to the authenticated run and settle exactly `payment_units`, enforce its ceilings and native wallet limits, deduplicate settlement by run and canonical input digest, and record payment and delivery separately. The fifth argument limits each native settlement execution fee. The current native adapter uses at most two settlement executions, and the owner-signed envelope binds their actual count and total fee; native period fee and total SOL caps still apply. One provider call is supported per policy. Contract evaluation rejects this host operation; a fixed native wallet settles the adapter's signed bounded request rather than executing arbitrary Rust. The direct Rust source facade returns false because it has no authenticated host adapter.
 
 ## WebAssembly
 
@@ -226,6 +232,22 @@ The default `oracle-ledger` feature includes host purchase counters. Contract bu
 Builds without `oracle-ledger` reject purchase-tier IR during validation with `LEDGER_REQUIRED`, before any evaluation. The registry still describes the function so callers can identify this unsupported feature. The public `spending` module is available only with `oracle-ledger`. Default SDK WASM and host builds include it; contract builds exclude it.
 
 
+Provider policies declare their exact payment asset in one unconditional `set_cap`
+guard. The compiler projects that literal into `CompiledPolicy.token` and
+`provider_call_requirements[].payment_asset_id`. The authenticated host sets
+`Context.token` to this mint and supplies `ProviderCallInput.payment_asset`
+with the verified network, mint and six decimals. A source guard for `USDC`
+does not accept the Testnet demo token. Legacy policies keep their USDC profile.
+Provider binding cannot round-trip through JSON; the host assigns it through the
+typed API after authenticating the canonical run input. Execute effects only from
+an in-process successful evaluation, never from a deserialized decision. Hosts
+must deduplicate by canonical run/input identity and verify all native authority
+and settlement bounds. `evaluate_ir` also requires the host to choose and enforce
+the supported execution profile. Deploy registry 1.3 readers before authoring
+any policy with this compiler; older readers reject registry 1.3 artifacts.
+
+
 ## License
 
 AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.
+
