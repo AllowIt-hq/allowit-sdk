@@ -72,7 +72,7 @@ struct Validator {
     nodes: usize,
     config_count: usize,
     #[cfg(feature = "typed-workflow")]
-    provider_call_count: usize,
+    provider_call_ids: Vec<String>,
     #[cfg(feature = "typed-workflow")]
     provider_profile: bool,
     #[cfg(feature = "typed-workflow")]
@@ -687,14 +687,20 @@ impl Validator {
                     }
                     for arg in &args[..2] {
                         if let Expr::String { value } = arg
-                            && (value.trim().is_empty() || value.len() > 128)
+                            && (value.trim().is_empty() || value.len() > 200)
                         {
-                            return Err(bad("Provider identifiers require 1 to 128 bytes."));
+                            return Err(bad("Provider identifiers require 1 to 200 bytes."));
                         }
                     }
-                    self.provider_call_count += 1;
-                    if self.provider_call_count > 1 {
-                        return Err(bad("Declare at most one provider call per policy."));
+                    if let Expr::String { value } = &args[0] {
+                        if self.provider_call_ids.len() >= 8
+                            || self.provider_call_ids.contains(value)
+                        {
+                            return Err(bad(
+                                "Declare at most eight distinct provider services per policy.",
+                            ));
+                        }
+                        self.provider_call_ids.push(value.clone());
                     }
                 }
                 if self.typed_only()
@@ -858,7 +864,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
             && crate::typed_workflow::required(program)
             && !provider_call_required(program),
         #[cfg(feature = "typed-workflow")]
-        provider_call_count: 0,
+        provider_call_ids: Vec::new(),
         #[cfg(feature = "typed-workflow")]
         provider_profile: cfg!(feature = "typed-workflow") && provider_call_required(program),
         nodes: 0,
@@ -1074,7 +1080,7 @@ pub(crate) fn typed_nodes(
         #[cfg(feature = "typed-workflow")]
         typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
         #[cfg(feature = "typed-workflow")]
-        provider_call_count: 0,
+        provider_call_ids: Vec::new(),
         #[cfg(feature = "typed-workflow")]
         provider_profile: provider_call_required(program),
         nodes: 0,
@@ -1105,7 +1111,7 @@ pub(crate) fn typed_budgets(
         #[cfg(feature = "typed-workflow")]
         typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
         #[cfg(feature = "typed-workflow")]
-        provider_call_count: 0,
+        provider_call_ids: Vec::new(),
         #[cfg(feature = "typed-workflow")]
         provider_profile: provider_call_required(program),
         nodes: 0,

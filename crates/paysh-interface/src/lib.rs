@@ -1,11 +1,12 @@
 //! Minimal bounded PaySH profile. Borsh bytes are the signed protocol.
+pub mod allowlist;
 use borsh::{BorshDeserialize, BorshSerialize};
 use sha2::{Digest, Sha256};
-pub const DOMAIN: &[u8] = b"allowit-paysh-request-v1";
-pub const POLICY_SEED: &[u8] = b"paysh-policy-v1";
-pub const SOL_SEED: &[u8] = b"paysh-sol-v1";
-pub const RECEIPT_SEED: &[u8] = b"paysh-receipt-v1";
-pub const BUDGET_SEED: &[u8] = b"paysh-budget-v1";
+pub const DOMAIN: &[u8] = b"allowit-paysh-request-v2";
+pub const POLICY_SEED: &[u8] = b"paysh-policy-v2";
+pub const SOL_SEED: &[u8] = b"paysh-sol-v2";
+pub const RECEIPT_SEED: &[u8] = b"paysh-receipt-v2";
+pub const BUDGET_SEED: &[u8] = b"paysh-budget-v2";
 pub const POLICY_BYTES: usize = 1024;
 pub const RECEIPT_BYTES: usize = 73;
 pub const BUDGET_BYTES: usize = 40;
@@ -44,6 +45,8 @@ pub struct Config {
     pub max_age_seconds: u64,
     pub policy_expires_timestamp: i64,
     pub owner_only: bool,
+    /// Zero denies every service. Committed by the owner at initialization.
+    pub service_allowlist_root: [u8; 32],
 }
 #[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
 pub enum Action {
@@ -74,6 +77,8 @@ pub struct Request {
     pub expires_timestamp: i64,
     pub service_fee_lamports: u64,
     pub action: Action,
+    pub service_hash: [u8; 32],
+    pub service_proof: Vec<[u8; 32]>,
 }
 impl Request {
     pub fn signed_message(&self) -> Vec<u8> {
@@ -139,18 +144,20 @@ mod tests {
             expires_timestamp: 3661,
             service_fee_lamports: 1000,
             action: Action::PayUsdc { amount: 1_000_000 },
+            service_hash: [10; 32],
+            service_proof: vec![],
         };
         let b = borsh::to_vec(&r).unwrap();
-        assert_eq!(b.len(), 337);
+        assert_eq!(b.len(), 373);
         let hex = |b: &[u8]| b.iter().map(|v| format!("{v:02x}")).collect::<String>();
         assert_eq!(
             hex(&Sha256::digest(&b)),
-            "25f8336a9bd38a60e45329d909fcd1c915bff6fc4c2efd446253da9e66c07873"
+            "e72846d82451c2f9b51ee4ce1cef61f2328ac50507a79bef50eca65aebbf344b"
         );
         assert_eq!(r.signed_message().len(), 56);
         assert_eq!(
             hex(&Sha256::digest(r.signed_message())),
-            "471619df8b715557596e009e83a1e96324b7842cf39ae5338fc165e5e5009549"
+            "9781ded0f32e4f7b39c3eb3f2e854a6852c3d760fcbc68531987b7297ddd7ec7"
         );
     }
 }

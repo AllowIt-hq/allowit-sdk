@@ -387,3 +387,35 @@ fn provider_symbol_assets_and_forged_decision_authority_are_rejected() {
         .is_err()
     );
 }
+
+#[test]
+fn service_allowlist_branches_compile_but_only_one_exact_effect_can_execute() {
+    let body = "if ctx.merchant == \"air-quality\" { if !paysh::call(\"air-quality\",\"request\",1000,5000000,100000) { return fail(\"Unavailable\"); } } else if ctx.merchant == \"weather\" { if !paysh::call(\"weather\",\"weather\",1000,5000000,100000) { return fail(\"Unavailable\"); } } else { return fail(\"Service not allowed\"); } Ok(())";
+    let policy = compile(&source(body)).unwrap();
+    assert_eq!(policy.provider_call_requirements.len(), 2);
+    for (service, input) in [("air-quality", "request"), ("weather", "weather")] {
+        let mut ctx = context();
+        ctx.merchant = service.into();
+        let binding = ctx.provider_call_input.as_mut().unwrap();
+        binding.service_id = service.into();
+        binding.input_key = input.into();
+        let decision = evaluate(&policy, Profile::Oracle, &ctx);
+        assert_eq!(decision.outcome, "pass");
+        assert_eq!(decision.system_operations.len(), 1);
+        assert_eq!(decision.system_operations[0].service_id, service);
+    }
+    let mut ctx = context();
+    ctx.merchant = "unknown".into();
+    assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, "fail");
+    let two=compile(&source("let a=paysh::call(\"air-quality\",\"request\",1000,5000000,100000); let b=paysh::call(\"weather\",\"weather\",1000,5000000,100000); Ok(())")).unwrap();
+    assert_eq!(
+        evaluate(&two, Profile::Oracle, &context()).code,
+        "PROVIDER_CALL_LIMIT"
+    );
+    let nine = (0..9)
+        .map(|i| {
+            format!("let a{i}=paysh::call(\"service-{i}\",\"input-{i}\",1000,5000000,100000);")
+        })
+        .collect::<String>();
+    assert!(compile(&source(&(nine + "Ok(())"))).is_err());
+}

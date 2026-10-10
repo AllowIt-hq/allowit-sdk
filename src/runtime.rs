@@ -658,9 +658,9 @@ impl Evaluator<'_> {
                                 )
                             })?;
                         if service_id.is_empty()
-                            || service_id.len() > 128
+                            || service_id.len() > 200
                             || input_key.is_empty()
-                            || input_key.len() > 128
+                            || input_key.len() > 200
                             || service_id != binding.service_id
                             || input_key != binding.input_key
                             || binding.request_digest.len() != 64

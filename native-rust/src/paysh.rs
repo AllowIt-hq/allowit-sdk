@@ -505,6 +505,7 @@ impl PayShClient {
         Ok(true)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draft(
         &self,
         policy: Key,
@@ -513,12 +514,28 @@ impl PayShClient {
         nonce: [u8; 32],
         challenge_hash: [u8; 32],
         evidence_hash: [u8; 32],
+        service_hash: [u8; 32],
+        service_proof: Vec<[u8; 32]>,
     ) -> Result<Request> {
         self.verify_deployment()?;
         let p = self.policy(policy)?;
         let (slot, timestamp) = self.clock()?;
         if p.paused || timestamp >= p.config.policy_expires_timestamp {
             return Err(Error::denied("PaySH policy is paused or expired"));
+        }
+        if !interface::allowlist::verify(
+            &p.config.service_allowlist_root,
+            interface::allowlist::leaf(
+                &p.config.network,
+                &p.config.usdc_mint,
+                &p.config.vendor_usdc,
+                &service_hash,
+            ),
+            &service_proof,
+        ) {
+            return Err(Error::denied(
+                "Service is not in the owner-approved allowlist",
+            ));
         }
         let seconds = p.config.max_age_seconds.min(60);
         Ok(Request {
@@ -531,6 +548,8 @@ impl PayShClient {
             nonce,
             challenge_hash,
             evidence_hash,
+            service_hash,
+            service_proof,
             signing_slot: slot,
             signing_timestamp: timestamp,
             expires_slot: slot
@@ -558,7 +577,16 @@ impl PayShClient {
         self.verify_deployment()?;
         let policy = Key(request.policy);
         let p = self.policy(policy)?;
-        if evaluator.public_key().0 != p.config.evaluator
+        if !interface::allowlist::verify(
+            &p.config.service_allowlist_root,
+            interface::allowlist::leaf(
+                &p.config.network,
+                &p.config.usdc_mint,
+                &p.config.vendor_usdc,
+                &request.service_hash,
+            ),
+            &request.service_proof,
+        ) || evaluator.public_key().0 != p.config.evaluator
             || request.network != p.config.network
             || request.program != self.deployment.program.0
             || request.owner != p.owner
@@ -602,8 +630,13 @@ impl PayShClient {
         if account(&*self.rpc, receipt, None)?.is_some_and(|a| !unallocated(&a)) {
             return Err(Error::denied("Request nonce was already consumed"));
         }
-        let spent = if let Some(a) = account(&*self.rpc, budget, None)? {
-            if a.owner != self.deployment.program || a.data.len() != interface::BUDGET_BYTES {
+        // The contract allocates an empty System-owned PDA even if it was prefunded.
+        let spent = if let Some(a) = account(&*self.rpc, budget, None)?.filter(|a| !unallocated(a))
+        {
+            if a.owner != self.deployment.program
+                || a.executable
+                || a.data.len() != interface::BUDGET_BYTES
+            {
                 return Err(Error::config("Invalid budget account"));
             }
             let b = Budget::try_from_slice(&a.data)
@@ -1822,7 +1855,7 @@ pub fn transaction_message(
     out.extend(readonly.iter().map(|x| x.0));
     if out.len() + 65 > 1232 {
         return Err(Error::config(
-            "PaySH versioned transaction exceeds packet size",
+            "PaySH versioned transaction exceeds packet size; configure lookup coverage for the selected pool tick arrays",
         ));
     }
     Ok(out)
@@ -2162,6 +2195,8 @@ mod tests {
             expires_timestamp: 3661,
             service_fee_lamports: 1000,
             action: Action::PayUsdc { amount: 1000 },
+            service_hash: [12; 32],
+            service_proof: vec![],
         };
         let receipt = Key::find_program_address(
             &[RECEIPT_SEED, &request.policy, &request.nonce],
@@ -2431,29 +2466,169 @@ mod tests {
     }
     impl RecoveryFixture {
         fn new() -> Self {
-            // Public packets captured from the finalized Testnet relayer-race
-            // regression. No signing secrets or live RPC calls are required.
+            // Synthetic v2 packets signed only with deterministic test keys; no RPC.
             let deployment: Deployment = serde_json::from_str(r#"{"computeLimit":900000,"genesis":"4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY","lookupTable":"H7YaW5WvJekYrQxMAxTvUQbi5ofp5Dx6Ffmm11RKNdJd","moduleDigest":[219,159,224,2,254,58,128,163,7,138,167,61,245,149,171,29,105,42,45,138,47,45,199,179,87,3,207,6,181,252,253,104],"poolProgram":"7vNu5JwjiDSvyDaVv5eykQvXjHeXh24iAFCSq21sBkg3","poolProgramArtifact":[31,74,161,0,195,208,39,191,181,112,186,113,238,146,238,246,215,190,210,16,176,147,180,120,88,57,201,228,238,68,206,104],"poolUpgradeAuthority":"5LRTaca6jgPzTSgG9vV5YonL7VmFpKBTbLBSBKUPRALX","program":"CLaqn7vJ2VQyaLBLWyj3YgynVo7jcG8eoy21mJT6nYe6","programArtifact":[165,108,123,214,82,41,144,230,78,250,115,218,5,187,99,194,224,2,187,31,60,67,73,250,29,128,131,189,190,67,90,199],"upgradeAuthority":"7a6zuZXTVaNcrY8BkoTeRasuqj7qmQkZWgd8xH7RYSg2"}"#).unwrap();
-            let original: PreparedExecution = serde_json::from_str(r#"{"expiresSlot":449830346,"expiresTimestamp":1791419275,"payer":"DM34nWejgGkuj51F8jrfCvWAXJrsj9PiEY7uAMS4vuqG","policy":"Bbe81FrevbMKmo1Gbt2GQJwPTXCQbp8xGvRSu9MQZqHx","receipt":"6x6XGeY3DEmt9ZveDwRqDPHM3ACKKinWvD36vaahtDd3","requestBytes":"OhMuzhAwXsGDByVQL6K35+uBV+kSPUwfZUpxeHFh3CGodNsPP1aBN4E4wW0/veQVDHWdxYKOOh30pzQr9I2+m510luAFFvv2t7ONIAjr8NtltFepGC3TaW91QDNtclWHYaESFi79/A83XgaZth9TgCGW3+r/1RsEPmT+MqNmz/Pbn+AC/jqAoweKpz31lasdaSotii8tx7NXA88Gtfz9aCkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKiorKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKywsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsFt3PGgAAAABP48ZqAAAAAMrdzxoAAAAAi+PGagAAAADoAwAAAAAAAAABAAAAAAAAAA==","requestHash":[5,91,229,250,237,182,1,200,66,94,76,101,162,82,31,126,81,169,212,186,77,32,97,130,221,147,39,149,146,219,140,157],"signature":"4PU2pk1yiXS4HhdgH2DspAcUHfG6YvK4mPtCCmsE4fWCEnP4AtNUx1MTghMuNtkcYXwGnymYJ1Pxg8hFmrh7zPsR","signedBytes":"AalsxGYx/wEdFr+n8qqXKk1mFXS4e6nBrG5YyAqcoXBYUvN5EtE9yCOB7BiG0n1ltjWbkm385yLwYxWs0EX0EQwBAAcQt24xyeLF6lGBQukDx40uMieiqLo5yER1yC435d49g9dAaHApQexteBeFXE3+ChFNrcdmHVk8JT+MmR0ZSfWoMFhnn2zdneA5RfauOjq32uKIsi18hlgKkHk38RJZE+uyYEzhuiuf93TQ5t7hC9cmxX1OaRKaLXEwISeSGTW8LTeAVDe/19PrSSevU7s9HTmyo8olE8SKViRuafZTr8OOm510luAFFvv2t7ONIAjr8NtltFepGC3TaW91QDNtclWHotZ35m/yVZpg3d226HMfI1fK7e3NAHqImdleJvp33PrTwXXGnvdBPirMkVSxtuee1gmnhSNg/Rk09k5Ocl3sBvAW37ZcQJp3ArNj5VdfkWHlf/RkFp+KZRp7Ch+v6C3TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACodNsPP1aBN4E4wW0/veQVDHWdxYKOOh30pzQr9I2+mwMGRm/lIRcy/+ytunLDm+e8jOW7xfcSayxDmzpAAAAAA31G1nyT+74S+UKPg41A/wVwdEkn9Ipk/MpwRIAAAADzKTpjc+b3MwD3QOwtEiVkzIDEpiH+2d1Puq93rd8NgQan1RcYe9FmNdrUBFX9wsDBJMaPIVZ1pdu6y18IAAAABt324ddloZPZy+FGzut5rBy0he1fWzeROoz1hX7/AKlCyLfq4SAAbbMxDitb98Lcl6KKJMDpUWkShUG30AojKwMLAAUCoLsNAAwAqAEBADAA//8QAP//cAA4AP//VYzzAmKP/48GOza+ZXe23DS7puEyRivupM4Vc7ojWdCXY0IZT86g2rfMDk1Uy3dwwzsdZhomJEa0t0Mpv3BldqI6l3w50+dWzk2sSCypEUoZmO56Lvm2vTUC9Tp1UAkJYWxsb3dpdC1wYXlzaC1yZXF1ZXN0LXYx8QfbFFc9skuC7qUGhJFm4j019453R1quJYLDPoAJFo0KDQUAAgcBCAYEDQ8JDgPSAgE6Ey7OEDBewYMHJVAvorfn64FX6RI9TB9lSnF4cWHcIah02w8/VoE3gTjBbT+95BUMdZ3Fgo46HfSnNCv0jb6bnXSW4AUW+/a3s40gCOvw22W0V6kYLdNpb3VAM21yVYdhoRIWLv38DzdeBpm2H1OAIZbf6v/VGwQ+ZP4yo2bP89uf4AL+OoCjB4qnPfWVqx1pKi2KLy3Hs1cDzwa1/P1oKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKisrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwW3c8aAAAAAE/jxmoAAAAAyt3PGgAAAACL48ZqAAAAAOgDAAAAAAAAAAEAAAAAAAAA"}"#).unwrap();
-            let alternative: PreparedExecution = serde_json::from_str(r#"{"expiresSlot":449830346,"expiresTimestamp":1791419275,"payer":"7a6zuZXTVaNcrY8BkoTeRasuqj7qmQkZWgd8xH7RYSg2","policy":"Bbe81FrevbMKmo1Gbt2GQJwPTXCQbp8xGvRSu9MQZqHx","receipt":"6x6XGeY3DEmt9ZveDwRqDPHM3ACKKinWvD36vaahtDd3","requestBytes":"OhMuzhAwXsGDByVQL6K35+uBV+kSPUwfZUpxeHFh3CGodNsPP1aBN4E4wW0/veQVDHWdxYKOOh30pzQr9I2+m510luAFFvv2t7ONIAjr8NtltFepGC3TaW91QDNtclWHYaESFi79/A83XgaZth9TgCGW3+r/1RsEPmT+MqNmz/Pbn+AC/jqAoweKpz31lasdaSotii8tx7NXA88Gtfz9aCkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKiorKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKywsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsFt3PGgAAAABP48ZqAAAAAMrdzxoAAAAAi+PGagAAAADoAwAAAAAAAAABAAAAAAAAAA==","requestHash":[5,91,229,250,237,182,1,200,66,94,76,101,162,82,31,126,81,169,212,186,77,32,97,130,221,147,39,149,146,219,140,157],"signature":"2NwsGigyduazGcCqMnfhfk6cYoCG9HViuobmqQ7xyEdbckg3F7RYL76STsWY9J9te9GGBsWSDHdx9NV447ECDWKh","signedBytes":"AUTxP57xrQVo4LwkjlKmJIVKlHhmOi3eltvyBHUNpD+ZGmTNqLK7eyQ6BsxTVTXE9HFAhNlrEDkYBftYlURUKAABAAcQYaESFi79/A83XgaZth9TgCGW3+r/1RsEPmT+MqNmz/NAaHApQexteBeFXE3+ChFNrcdmHVk8JT+MmR0ZSfWoMFhnn2zdneA5RfauOjq32uKIsi18hlgKkHk38RJZE+uyYEzhuiuf93TQ5t7hC9cmxX1OaRKaLXEwISeSGTW8LTeAVDe/19PrSSevU7s9HTmyo8olE8SKViRuafZTr8OOm510luAFFvv2t7ONIAjr8NtltFepGC3TaW91QDNtclWHotZ35m/yVZpg3d226HMfI1fK7e3NAHqImdleJvp33PrTwXXGnvdBPirMkVSxtuee1gmnhSNg/Rk09k5Ocl3sBvAW37ZcQJp3ArNj5VdfkWHlf/RkFp+KZRp7Ch+v6C3TAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACodNsPP1aBN4E4wW0/veQVDHWdxYKOOh30pzQr9I2+mwMGRm/lIRcy/+ytunLDm+e8jOW7xfcSayxDmzpAAAAAA31G1nyT+74S+UKPg41A/wVwdEkn9Ipk/MpwRIAAAADzKTpjc+b3MwD3QOwtEiVkzIDEpiH+2d1Puq93rd8NgQan1RcYe9FmNdrUBFX9wsDBJMaPIVZ1pdu6y18IAAAABt324ddloZPZy+FGzut5rBy0he1fWzeROoz1hX7/AKnFkLmRhbKlzLBIjykmcWjW+Tr9ci1tjChTSyU20udRGQMLAAUCoLsNAAwAqAEBADAA//8QAP//cAA4AP//VYzzAmKP/48GOza+ZXe23DS7puEyRivupM4Vc7ojWdCXY0IZT86g2rfMDk1Uy3dwwzsdZhomJEa0t0Mpv3BldqI6l3w50+dWzk2sSCypEUoZmO56Lvm2vTUC9Tp1UAkJYWxsb3dpdC1wYXlzaC1yZXF1ZXN0LXYx8QfbFFc9skuC7qUGhJFm4j019453R1quJYLDPoAJFo0KDQUAAgcBCAYEDQ8JDgPSAgE6Ey7OEDBewYMHJVAvorfn64FX6RI9TB9lSnF4cWHcIah02w8/VoE3gTjBbT+95BUMdZ3Fgo46HfSnNCv0jb6bnXSW4AUW+/a3s40gCOvw22W0V6kYLdNpb3VAM21yVYdhoRIWLv38DzdeBpm2H1OAIZbf6v/VGwQ+ZP4yo2bP89uf4AL+OoCjB4qnPfWVqx1pKi2KLy3Hs1cDzwa1/P1oKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkqKioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKisrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwW3c8aAAAAAE/jxmoAAAAAyt3PGgAAAACL48ZqAAAAAOgDAAAAAAAAAAEAAAAAAAAA"}"#).unwrap();
-            let config: interface::Config = borsh::from_slice(&STANDARD.decode("PlQnvUCF43GQvMfeVVfeywMFy0ok0TBHAnRY9gz/RuE6Ey7OEDBewYMHJVAvorfn64FX6RI9TB9lSnF4cWHcIduf4AL+OoCjB4qnPfWVqx1pKi2KLy3Hs1cDzwa1/P1oVYzzAmKP/48GOza+ZXe23DS7puEyRivupM4Vc7ojWdBAaHApQexteBeFXE3+ChFNrcdmHVk8JT+MmR0ZSfWoMPMpOmNz5vczAPdA7C0SJWTMgMSmIf7Z3U+6r3et3w2B8BbftlxAmncCs2PlV1+RYeV/9GQWn4plGnsKH6/oLdOi1nfmb/JVmmDd3bbocx8jV8rt7c0AeoiZ2V4m+nfc+oBUN7/X0+tJJ69Tuz0dObKjyiUTxIpWJG5p9lOvw46bZtKqFfSwLvpOOqM2mHXq1G5fiqwhKPnpacjHCcwe9dSseu0XUCaTYTsV64+8wTL+raFAiQnL09VibW252Qi4tpdNgkpsKM6oMAxqxnPxYoJHcuHLziawRQwNzZp7mEcSsX/R5LYnljofiWMjIyiyNk7GZfN7jrQnLQf4JJTf0gb8fFKEc7HD+BI+2JGSOw/t35fSleX8EHKDRAWrKuN/TRAOAAAAAAAAUMMAAAAAAADAxi0AAAAAABAnAAAAAAAAQEtMAAAAAADAxi0AAAAAAMDGLQAAAAAAQEtMAAAAAADoAwAAAAAAAAASegAAAAAACgAAAAAAAAC0AAAAAAAAADwAAAAAAAAAGvHGagAAAAAA").unwrap()).unwrap();
-            let request: Request =
-                borsh::from_slice(&STANDARD.decode(&original.request_bytes).unwrap()).unwrap();
+            let mut config: interface::Config = borsh::from_slice(&STANDARD.decode("PlQnvUCF43GQvMfeVVfeywMFy0ok0TBHAnRY9gz/RuE6Ey7OEDBewYMHJVAvorfn64FX6RI9TB9lSnF4cWHcIduf4AL+OoCjB4qnPfWVqx1pKi2KLy3Hs1cDzwa1/P1oVYzzAmKP/48GOza+ZXe23DS7puEyRivupM4Vc7ojWdBAaHApQexteBeFXE3+ChFNrcdmHVk8JT+MmR0ZSfWoMPMpOmNz5vczAPdA7C0SJWTMgMSmIf7Z3U+6r3et3w2B8BbftlxAmncCs2PlV1+RYeV/9GQWn4plGnsKH6/oLdOi1nfmb/JVmmDd3bbocx8jV8rt7c0AeoiZ2V4m+nfc+oBUN7/X0+tJJ69Tuz0dObKjyiUTxIpWJG5p9lOvw46bZtKqFfSwLvpOOqM2mHXq1G5fiqwhKPnpacjHCcwe9dSseu0XUCaTYTsV64+8wTL+raFAiQnL09VibW252Qi4tpdNgkpsKM6oMAxqxnPxYoJHcuHLziawRQwNzZp7mEcSsX/R5LYnljofiWMjIyiyNk7GZfN7jrQnLQf4JJTf0gb8fFKEc7HD+BI+2JGSOw/t35fSleX8EHKDRAWrKuN/TRAOAAAAAAAAUMMAAAAAAADAxi0AAAAAABAnAAAAAAAAQEtMAAAAAADAxi0AAAAAAMDGLQAAAAAAQEtMAAAAAADoAwAAAAAAAAASegAAAAAACgAAAAAAAAC0AAAAAAAAADwAAAAAAAAAGvHGagAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap()).unwrap();
+            let signer = |n| {
+                LocalSigner::from_secret(
+                    &ed25519_dalek::SigningKey::from_bytes(&[n; 32]).to_keypair_bytes(),
+                )
+                .unwrap()
+            };
+            let evaluator = signer(81);
+            let sponsor = signer(82);
+            let other = signer(83);
+            let owner = Key([84; 32]);
+            config.evaluator = evaluator.public_key().0;
+            let ids = vec!["airquality".into()];
+            config.service_allowlist_root = interface::allowlist::root(
+                &ids,
+                &config.network,
+                &config.usdc_mint,
+                &config.vendor_usdc,
+            )
+            .unwrap();
             let (policy_key, bump) = Key::find_program_address(
-                &[interface::POLICY_SEED, &request.owner, &config.instance_id],
+                &[interface::POLICY_SEED, &owner.0, &config.instance_id],
                 deployment.program,
             )
             .unwrap();
-            assert_eq!(policy_key, original.policy);
+            let token = Key::parse(TOKEN).unwrap();
+            let ata = Key::parse("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL").unwrap();
+            config.vault_usdc =
+                Key::find_program_address(&[&policy_key.0, &token.0, &config.usdc_mint], ata)
+                    .unwrap()
+                    .0
+                    .0;
+            config.vault_wsol = Key::find_program_address(
+                &[
+                    &policy_key.0,
+                    &token.0,
+                    &Key::parse("So11111111111111111111111111111111111111112")
+                        .unwrap()
+                        .0,
+                ],
+                ata,
+            )
+            .unwrap()
+            .0
+            .0;
             let policy = Policy {
                 version: 1,
                 bump,
-                owner: request.owner,
+                owner: owner.0,
                 paused: false,
                 total_swap_lamports: 0,
                 total_sol_debits: 0,
                 config,
             };
+            let request = Request {
+                network: deployment.genesis.0,
+                program: deployment.program.0,
+                policy: policy_key.0,
+                owner: owner.0,
+                module_digest: policy.config.module_digest,
+                operation_id: [41; 32],
+                nonce: [42; 32],
+                challenge_hash: [43; 32],
+                evidence_hash: [44; 32],
+                signing_slot: 449830166,
+                signing_timestamp: 1791419215,
+                expires_slot: 449830346,
+                expires_timestamp: 1791419275,
+                service_fee_lamports: 1000,
+                action: Action::PayUsdc { amount: 1 },
+                service_hash: interface::allowlist::service_hash("airquality").unwrap(),
+                service_proof: vec![],
+            };
+            let receipt = Key::find_program_address(
+                &[RECEIPT_SEED, &request.policy, &request.nonce],
+                deployment.program,
+            )
+            .unwrap()
+            .0;
+            let budget = Key::find_program_address(
+                &[
+                    BUDGET_SEED,
+                    &request.policy,
+                    &((request.signing_timestamp as u64) / policy.config.period_seconds)
+                        .to_le_bytes(),
+                ],
+                deployment.program,
+            )
+            .unwrap()
+            .0;
+            let accounts = execute_accounts(
+                &policy,
+                deployment.program,
+                policy_key,
+                sponsor.public_key(),
+                receipt,
+                budget,
+                &request.action,
+            )
+            .unwrap();
+            let table = LookupTable {
+                key: deployment.lookup_table.unwrap(),
+                addresses: accounts
+                    .iter()
+                    .filter(|m| !m.signer)
+                    .map(|m| m.key)
+                    .collect(),
+            };
+            let packet = |payer: &LocalSigner| {
+                let message = request.signed_message();
+                let mut data = vec![2];
+                data.extend(deployment.compute_limit.to_le_bytes());
+                let instructions = vec![
+                    Instruction {
+                        program: Key::parse("ComputeBudget111111111111111111111111111111").unwrap(),
+                        accounts: vec![],
+                        data,
+                    },
+                    ed25519_instruction(evaluator.public_key(), &message, evaluator.sign(&message))
+                        .unwrap(),
+                    Instruction {
+                        program: deployment.program,
+                        accounts: execute_accounts(
+                            &policy,
+                            deployment.program,
+                            policy_key,
+                            payer.public_key(),
+                            receipt,
+                            budget,
+                            &request.action,
+                        )
+                        .unwrap(),
+                        data: borsh::to_vec(&interface::Instruction::Execute(request.clone()))
+                            .unwrap(),
+                    },
+                ];
+                let tx = transaction_message(
+                    payer.public_key(),
+                    Key([85; 32]),
+                    &instructions,
+                    Some(&table),
+                )
+                .unwrap();
+                let signature = payer.sign(&tx);
+                let mut raw = vec![1];
+                raw.extend(signature);
+                raw.extend(tx);
+                PreparedExecution {
+                    signature: bs58::encode(signature).into_string(),
+                    signed_bytes: STANDARD.encode(raw),
+                    request_bytes: STANDARD.encode(borsh::to_vec(&request).unwrap()),
+                    request_hash: Sha256::digest(message).into(),
+                    receipt,
+                    policy: policy_key,
+                    payer: payer.public_key(),
+                    expires_slot: request.expires_slot,
+                    expires_timestamp: request.expires_timestamp,
+                }
+            };
+            let original = packet(&sponsor);
+            let alternative = packet(&other);
             Self {
                 deployment,
                 policy,
@@ -2472,6 +2647,7 @@ mod tests {
                 signing_timestamp: self.request.signing_timestamp,
             };
             RecoveryRpc {
+                request_bytes: self.original.request_bytes.clone(),
                 deployment: self.deployment.clone(),
                 policy_key: self.original.policy,
                 policy_bytes,
@@ -2503,7 +2679,94 @@ mod tests {
                         ).into_string()}]}}})
         }
     }
+    #[test]
+    fn maximum_service_proof_pay_and_swap_fit_real_lookup_packets() {
+        let f = RecoveryFixture::new();
+        let evaluator = LocalSigner::from_secret(
+            &ed25519_dalek::SigningKey::from_bytes(&[81; 32]).to_keypair_bytes(),
+        )
+        .unwrap();
+        let payer = f.original.payer;
+        for action in [
+            Action::PayUsdc { amount: 1000 },
+            Action::SwapSolToUsdc {
+                amount_in_lamports: 100000,
+                min_out_usdc: 1000,
+                sqrt_price_limit: 1,
+                tick_arrays: [[91; 32], [92; 32], [93; 32]],
+            },
+        ] {
+            let mut request = f.request.clone();
+            request.action = action;
+            request.service_proof = vec![[1; 32]; 3];
+            let period = (request.signing_timestamp as u64) / f.policy.config.period_seconds;
+            let budget = Key::find_program_address(
+                &[BUDGET_SEED, &request.policy, &period.to_le_bytes()],
+                f.deployment.program,
+            )
+            .unwrap()
+            .0;
+            let accounts = execute_accounts(
+                &f.policy,
+                f.deployment.program,
+                f.original.policy,
+                payer,
+                f.original.receipt,
+                budget,
+                &request.action,
+            )
+            .unwrap();
+            let mut addresses = accounts
+                .iter()
+                .filter(|m| !m.signer && m.key != f.original.receipt && m.key != budget)
+                .map(|m| m.key)
+                .collect::<Vec<_>>();
+            addresses.sort_by_key(|k| k.0);
+            addresses.dedup();
+            let table = LookupTable {
+                key: f.deployment.lookup_table.unwrap(),
+                addresses,
+            };
+            let mut data = vec![2];
+            data.extend(f.deployment.compute_limit.to_le_bytes());
+            let instructions = vec![
+                Instruction {
+                    program: Key::parse("ComputeBudget111111111111111111111111111111").unwrap(),
+                    accounts: vec![],
+                    data,
+                },
+                ed25519_instruction(
+                    evaluator.public_key(),
+                    &request.signed_message(),
+                    evaluator.sign(&request.signed_message()),
+                )
+                .unwrap(),
+                Instruction {
+                    program: f.deployment.program,
+                    accounts,
+                    data: borsh::to_vec(&interface::Instruction::Execute(request)).unwrap(),
+                },
+            ];
+            let message =
+                transaction_message(payer, Key([85; 32]), &instructions, Some(&table)).unwrap();
+            assert!(message.len() + 65 <= 1232, "{}", message.len() + 65);
+            let mut fixed_only = table.clone();
+            fixed_only
+                .addresses
+                .retain(|key| ![[91; 32], [92; 32], [93; 32]].contains(&key.0));
+            let partial =
+                transaction_message(payer, Key([85; 32]), &instructions, Some(&fixed_only));
+            // The swap's three dynamic accounts can exceed the packet cap
+            // with the maximum proof. Reject before producing signed bytes.
+            if fixed_only.addresses.len() < table.addresses.len() {
+                assert!(partial.is_err());
+            } else {
+                assert!(partial.is_ok());
+            }
+        }
+    }
     struct RecoveryRpc {
+        request_bytes: String,
         deployment: Deployment,
         policy_key: Key,
         policy_bytes: Vec<u8>,
@@ -2538,6 +2801,41 @@ mod tests {
                     if key == self.policy_key {
                         Ok(
                             json!({"context":{"slot":self.slot},"value":value(self.deployment.program,&self.policy_bytes)}),
+                        )
+                    } else if Some(key) == self.deployment.lookup_table {
+                        let p = Policy::deserialize(&mut &self.policy_bytes[..]).unwrap();
+                        let request: Request =
+                            borsh::from_slice(&STANDARD.decode(&self.request_bytes).unwrap())
+                                .unwrap();
+                        let budget = Key::find_program_address(
+                            &[
+                                BUDGET_SEED,
+                                &request.policy,
+                                &((request.signing_timestamp as u64) / p.config.period_seconds)
+                                    .to_le_bytes(),
+                            ],
+                            self.deployment.program,
+                        )
+                        .unwrap()
+                        .0;
+                        let accounts = execute_accounts(
+                            &p,
+                            self.deployment.program,
+                            self.policy_key,
+                            Key([0; 32]),
+                            self.receipt_key,
+                            budget,
+                            &request.action,
+                        )
+                        .unwrap();
+                        let mut data = vec![0; 56];
+                        data[..4].copy_from_slice(&1u32.to_le_bytes());
+                        data[4..12].copy_from_slice(&u64::MAX.to_le_bytes());
+                        for m in accounts.iter().filter(|m| !m.signer) {
+                            data.extend(m.key.0);
+                        }
+                        Ok(
+                            json!({"context":{"slot":self.slot},"value":value(Key::parse(LOOKUP).unwrap(),&data)}),
                         )
                     } else if key
                         == Key::parse("SysvarC1ock11111111111111111111111111111111").unwrap()
