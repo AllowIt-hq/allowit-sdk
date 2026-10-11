@@ -92,7 +92,7 @@ impl Record {
             for (k, v) in obj {
                 match k.as_str() {
                     "status" => self.status = v.as_str().unwrap_or("uncertain").into(),
-                    "signature" | "transactionUrl" => (),
+                    "signature" | "transactionUrl" | "finalizedSlot" => (),
                     _ => {
                         self.extra.insert(k.clone(), v.clone());
                     }
@@ -407,12 +407,20 @@ fn reconcile_saved_record(
         }
     }
     if result["status"] == "settled" {
+        // Imported or historical metadata is not finality evidence. Publish a
+        // slot only after verifying this exact signed proof in the chain receipt.
+        record.extra.remove("finalizedSlot");
         let receipt=sdk.client().rpc.call("getTransaction",json!([record.signature,{"commitment":"finalized","maxSupportedTransactionVersion":0,"encoding":"base64"}]))?;
         if receipt.is_null() {
             record.status = "uncertain".into();
             return Ok(record);
         }
         verify_receipt(&receipt, &proof, &record, sdk.client(), policy, owner)?;
+        if let Some(slot) = receipt.get("slot").filter(|slot| !slot.is_null()) {
+            record
+                .extra
+                .insert("finalizedSlot".into(), json!(safe_height(slot)?));
+        }
     }
     record.update(result);
     Ok(record)
@@ -431,6 +439,84 @@ impl<'a> PolicyLifecycle<'a> {
     }
     fn reconcile_saved(&self, record: Record, policy: &Policy, owner: Key) -> Result<Record> {
         reconcile_saved_record(self.sdk, record, policy, owner, true)
+    }
+    /// Resolve a close's instance without mistaking an already closed vault for
+    /// an undeployed policy. An absent vault permits only the latest matching
+    /// close's verified settled receipt; this never signs or broadcasts.
+    pub fn close_options(
+        &self,
+        policy: &Policy,
+        owner: Key,
+        request_id: Option<&str>,
+    ) -> Result<Options> {
+        policy.validate()?;
+        if let Some(id) = request_id {
+            valid_id(id)?;
+        }
+        if let Some(state) = self.sdk.state(policy, owner, true, None)? {
+            let options = Options {
+                instance_slot: Some(number(&state.instance_slot)?),
+                ..Options::default()
+            };
+            let canonical = intent_for(self.sdk.client(), policy, owner, "close", &options)?;
+            let id = request_id
+                .map(str::to_owned)
+                .unwrap_or_else(|| digest(canonical.as_bytes()));
+            self.journal.locked(|| {
+                let name = format!("request-{id}");
+                if let Some(prior) = self.journal.read::<Record>(&name)? {
+                    if prior.id == id && prior.method == "close" && prior.intent == canonical {
+                        let observed = self.reconcile_saved(prior, policy, owner)?;
+                        self.journal.write(&name, &observed)?;
+                        if observed.status == "settled" {
+                            return Err(Error::config(
+                                "The saved close already settled but a vault is live; use a fresh request ID for this vault instance",
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+            return Ok(options);
+        }
+        self.journal.locked(|| {
+            let missing = || Error::config("Deploy the native policy first");
+            let pointer = self.journal.read::<Value>("owner-slot-close")?;
+            let latest = pointer.as_ref().and_then(|pointer| pointer["id"].as_str());
+            let id = request_id.or(latest).ok_or_else(missing)?;
+            valid_id(id)?;
+            if latest != Some(id) {
+                return Err(Error::config(
+                    "Close request is not the latest vault close; recover its original status",
+                ));
+            }
+            let name = format!("request-{id}");
+            let prior = self.journal.read::<Record>(&name)?.ok_or_else(missing)?;
+            if prior.id != id || prior.method != "close" {
+                return Err(Error::config("Close operation journal inconsistency"));
+            }
+            if request_id.is_none() && prior.id != digest(prior.intent.as_bytes()) {
+                return Err(Error::config(
+                    "Retain the original close request ID to replay its receipt",
+                ));
+            }
+            let observed = self.reconcile_saved(prior, policy, owner)?;
+            self.journal.write(&name, &observed)?;
+            if observed.status != "settled" {
+                return Err(Error::config(
+                    "Saved close is not finalized; retain its proof and recover its status",
+                ));
+            }
+            Ok(Options {
+                instance_slot: Some(number(
+                    observed
+                        .instance_slot
+                        .as_deref()
+                        .ok_or_else(|| Error::config("Saved close has no vault instance"))?,
+                )?),
+                ..Options::default()
+            })
+        })
     }
     pub fn submit(
         &self,
@@ -654,19 +740,19 @@ impl<'a> PolicyLifecycle<'a> {
             // Use the live tip, not lagging finality, before requesting a signature.
             // Both bounds need enough remaining lifetime for signing and submission.
             let floor = safe_height(&json!(authorized.simulation.context_slot))?;
+            let observed_at = std::time::Instant::now();
             let slot = safe_height(&self.sdk.client().rpc.call("getSlot",
                 json!([{"commitment":"processed", "minContextSlot":floor}]))?)?;
             if slot < floor {
                 return Err(Error::config("The authorization observation is stale. Request a fresh authorization; no executor proof was signed."));
             }
+            let now = safe_height(&self.sdk.client().rpc.call("getBlockTime", json!([slot]))?)?;
+            // Block time may briefly lag this tip. Read height after resolving
+            // it, so waiting cannot age the 32-block signing margin unnoticed.
             let height = safe_height(&self.sdk.client().rpc.call("getBlockHeight",
                 json!([{"commitment":"processed", "minContextSlot":slot}]))?)?;
-            let now = safe_height(&self.sdk.client().rpc.call("getBlockTime", json!([slot]))?)?;
-            if authorized.last_valid_block_height.checked_sub(height).is_none_or(|remaining| remaining < 32)
-                || authorized.approval.expires_at.checked_sub(now).is_none_or(|remaining| remaining < 30)
-            {
-                return Err(Error::config("The unsigned execution approval lacks a safe signing window. Request a fresh authorization; no executor proof was signed."));
-            }
+            signing_window(authorized.last_valid_block_height, height,
+                authorized.approval.expires_at, now, observed_at.elapsed().as_secs())?;
             let validity = self.sdk.client().rpc.call("isBlockhashValid",
                 json!([authorized.blockhash,{"commitment":"processed", "minContextSlot":slot}]))?;
             if validity["value"].as_bool() != Some(true)
@@ -707,6 +793,12 @@ impl<'a> PolicyLifecycle<'a> {
                     "Server response must contain only its authority signature",
                 ));
             }
+            // Validity checks and proof validation also take time. Charge actual
+            // monotonic waiting against expiry and reobserve height before signing.
+            let height = safe_height(&self.sdk.client().rpc.call("getBlockHeight",
+                json!([{"commitment":"processed", "minContextSlot":slot}]))?)?;
+            signing_window(authorized.last_valid_block_height, height,
+                authorized.approval.expires_at, now, observed_at.elapsed().as_secs())?;
             let raw = transaction.add_signature(
                 &authorized.partial_transaction,
                 binding.executor,
@@ -808,6 +900,27 @@ impl<'a> PolicyLifecycle<'a> {
         Ok(())
     }
 }
+fn signing_window(
+    last_valid_height: u64,
+    height: u64,
+    expires_at: u64,
+    observed_time: u64,
+    elapsed_seconds: u64,
+) -> Result<()> {
+    if last_valid_height
+        .checked_sub(height)
+        .is_none_or(|remaining| remaining < 32)
+        || expires_at
+            .checked_sub(observed_time)
+            .and_then(|remaining| remaining.checked_sub(elapsed_seconds))
+            .is_none_or(|remaining| remaining < 30)
+    {
+        return Err(Error::config(
+            "The unsigned execution approval lacks a safe signing window. Request a fresh authorization; no executor proof was signed.",
+        ));
+    }
+    Ok(())
+}
 fn valid_id(id: &str) -> Result<()> {
     if !(8..=100).contains(&id.len())
         || !id
@@ -820,6 +933,7 @@ fn valid_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
+
 fn verify_receipt(
     receipt: &Value,
     proof: &Signed,
@@ -909,4 +1023,20 @@ fn verify_receipt(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod signing_window_tests {
+    use super::signing_window;
+
+    #[test]
+    fn monotonic_wait_reduces_the_exact_expiry_margin_without_wall_clock_time() {
+        assert!(signing_window(100, 68, 200, 170, 0).is_ok());
+        assert!(signing_window(100, 68, 200, 163, 7).is_ok());
+        assert!(signing_window(100, 68, 200, 164, 7).is_err());
+        assert!(signing_window(100, 69, 200, 163, 7).is_err());
+        assert!(signing_window(100, 101, 200, 100, 0).is_err());
+        assert!(signing_window(100, 68, 200, 201, 0).is_err());
+        assert!(signing_window(100, 68, 200, 100, u64::MAX).is_err());
+    }
 }
