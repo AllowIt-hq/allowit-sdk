@@ -721,14 +721,13 @@ impl Validator {
                         "Typed request policies use typed effect and fee guards; scalar token limits cannot represent native assets.",
                     ));
                 }
-                if name == "require_asset" {
-                    if !config
-                        || !matches!(args.get(1),Some(Expr::String{value}) if !value.trim().is_empty() && value.len()<=128)
-                    {
-                        return Err(bad(
-                            "Declare require_asset unconditionally at top level with a literal asset identifier.",
-                        ));
-                    }
+                if name == "require_asset"
+                    && (!config
+                        || !matches!(args.get(1),Some(Expr::String{value}) if !value.trim().is_empty() && value.len()<=128))
+                {
+                    return Err(bad(
+                        "Declare require_asset unconditionally at top level with a literal asset identifier.",
+                    ));
                 }
                 if name == "set_cap_per_day" {
                     self.config_count += 1;
@@ -894,10 +893,10 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         ));
     }
     #[cfg(feature = "typed-workflow")]
-    if let Some(first) = provider_asset_id(program) {
-        if asset_declarations(program).any(|asset| asset != first) {
-            return Err(bad("Payment asset declarations must agree."));
-        }
+    if let Some(first) = provider_asset_id(program)
+        && asset_declarations(program).any(|asset| asset != first)
+    {
+        return Err(bad("Payment asset declarations must agree."));
     }
     Ok(())
 }

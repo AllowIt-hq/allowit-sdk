@@ -16,6 +16,8 @@ fn denomination(token: &str, currency: &str, decimals: u64) -> PolicyResult {
     }
     Ok(())
 }
+// Keep each authenticated accounting field explicit in the policy ABI.
+#[allow(clippy::too_many_arguments)]
 pub fn set_cap_per_day(
     daily_spent_units: Option<u64>,
     spent_day: Option<u64>,

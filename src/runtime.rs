@@ -1171,6 +1171,7 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_inner(
     ir: &Program,
     profile: Profile,
