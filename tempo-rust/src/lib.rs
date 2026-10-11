@@ -313,7 +313,6 @@ pub fn validate_prepared(c: &Config, p: &Policy, tx: &Transaction) -> Result<()>
             || words.len() != 13
             || words[..12] != expected
             || number(&words[12])? == 0
-            || number(&words[12])? > units(&p.total_limit)?
         {
             return Err("Changed Tempo deployment".into());
         }
@@ -594,6 +593,72 @@ mod tests {
         changed = tx;
         changed.chain_id = 42431;
         assert!(validate_prepared(&domain, &moved, &changed).is_err());
+    }
+    fn deployment(c: &Config, p: &Policy, amount: u64) -> Transaction {
+        let mut words = vec![
+            digest(&p.id).unwrap(),
+            account(&p.token).unwrap(),
+            account(&p.executor).unwrap(),
+            account(&p.authority).unwrap(),
+        ];
+        words.extend(terms(p).unwrap());
+        words.push(word(amount));
+        let mut data = keccak(format!(
+            "createVault(bytes32,address,address,address,{TERMS},uint256)"
+        ))[..4]
+            .to_vec();
+        data.extend(words.concat());
+        Transaction {
+            chain_id: p.chain_id,
+            from: p.owner.clone(),
+            to: p.factory.clone(),
+            data: hex(&data),
+            value: "0x0".into(),
+            fee_token: c.fee_token.clone(),
+        }
+    }
+    #[test]
+    fn deposit_can_exceed_spending_caps_but_cannot_change_the_asset_or_selected_terms() {
+        let (c, mut p, _) = fixture();
+        // Owner chooses these caps at the first deposit, without changing policy source.
+        let source_digest = p.policy_digest.clone();
+        p.action_limit = "2".into();
+        p.daily_limit = "8".into();
+        p.total_limit = "10".into();
+        let tx = deployment(&c, &p, 50_000_000);
+        assert!(validate_prepared(&c, &p, &tx).is_ok());
+        assert_eq!(p.policy_digest, source_digest);
+        assert!(validate_prepared(&c, &p, &deployment(&c, &p, 0)).is_err());
+        for index in [1, 4, 5, 6, 7, 8] {
+            let mut changed = tx.clone();
+            let mut bytes = unhex(&changed.data).unwrap();
+            bytes[4 + index * 32 + 31] ^= 1;
+            changed.data = hex(&bytes);
+            assert!(
+                validate_prepared(&c, &p, &changed).is_err(),
+                "changed word {index}"
+            );
+        }
+        let mut other_terms = p.clone();
+        other_terms.daily_limit = "9".into();
+        assert!(validate_prepared(&c, &other_terms, &tx).is_err());
+    }
+    #[test]
+    fn top_up_can_exceed_spending_caps_and_requires_the_bound_vault() {
+        let (c, p, _) = fixture();
+        let mut data = keccak("fund(uint256)")[..4].to_vec();
+        data.extend(word(100_000_000));
+        let mut tx = Transaction {
+            chain_id: p.chain_id,
+            from: p.owner.clone(),
+            to: p.vault.clone(),
+            data: hex(&data),
+            value: "0x0".into(),
+            fee_token: c.fee_token.clone(),
+        };
+        assert!(validate_prepared(&c, &p, &tx).is_ok());
+        tx.to = hex(&[99; 20]);
+        assert!(validate_prepared(&c, &p, &tx).is_err());
     }
     #[test]
     fn exact_amounts() {
