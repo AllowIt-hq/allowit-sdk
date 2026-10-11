@@ -25,9 +25,10 @@ Prepare owner operations with `/api/tempo/prepare`: `approve_deploy`, `deploy`,
 `approve_fund`, `fund`, `tune`, `revoke`, `withdraw`. Approvals name only the factory
 or vault and the exact funding amount. Setup uses approval then atomic
 create-and-fund. First-deposit options include `amount`, `token` and optional
-`totalLimit`. The cumulative limit must be at least the daily limit. The
-wallet validates the final policy returned by preparation against the exact
-transaction. Deposits can exceed spending caps. A different token is rejected.
+`totalLimit`; the cumulative limit defaults to the deposit amount. Native daily
+and action limits are bounded by that cumulative limit. The optional source
+daily cap stays unchanged. The wallet validates the final policy returned by
+preparation against the exact transaction. Deposits can exceed spending caps. A different token is rejected.
 Further deposits preserve caps, spend, nonce and revision. Tuning
 preserves cumulative and daily usage. Revocation is permanent; withdrawal returns
 the full remaining balance to the owner and revokes spending.
