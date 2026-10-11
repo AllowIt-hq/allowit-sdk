@@ -240,3 +240,15 @@ pub(crate) fn daily_spend(
     }
     Ok(if day == spent_day { spent } else { 0 })
 }
+
+/// Bind the authenticated payment asset without declaring a monetary limit.
+pub fn require_asset(token: &str, required: &str) -> PolicyResult {
+    if token == required && !required.is_empty() {
+        Ok(())
+    } else {
+        Err(denied(
+            "TOKEN_MISMATCH",
+            "The payment asset does not match the policy.",
+        ))
+    }
+}

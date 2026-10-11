@@ -37,7 +37,7 @@ assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'pa
 const registryResponse = invoke({ operation: 'registry' });
 assert.equal(registryResponse.registry_version, '1.5.0');
 const registry = registryResponse.functions;
-assert.equal(registry.length, 48);
+assert.equal(registry.length, 50);
 for (const name of ['allowit::set_cap_per_day', 'allowit::amount_at_most', 'jev::semantic', 'jev::check_preference']) {
   assert.ok(registry.some(entry => entry.name === name), `Missing registered namespace ${name}`);
 }

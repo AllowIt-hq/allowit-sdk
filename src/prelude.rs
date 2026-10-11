@@ -214,3 +214,7 @@ pub mod jev {
     pub use crate::primitives::check_preference;
     pub use crate::primitives::preference_evidence;
 }
+
+pub fn require_asset(ctx: &Context, required: &str) -> PolicyResult {
+    crate::primitives::require_asset(&ctx.token, required)
+}

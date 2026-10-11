@@ -66,7 +66,7 @@ pub use prelude::{
 };
 pub use primitives::{
     allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, is_one_of,
-    require_merchant, require_recipient, set_cap_per_day,
+    require_asset, require_merchant, require_recipient, set_cap_per_day,
 };
 
 #[cfg(feature = "std")]
@@ -81,7 +81,9 @@ pub use runtime::evaluate_with_trace;
 #[cfg(all(feature = "compiler", feature = "std"))]
 pub use runtime::evaluate_with_trace_native_payment;
 #[cfg(all(feature = "compiler", feature = "typed-workflow", feature = "std"))]
-pub use runtime::evaluate_with_trace_private_provider_localnet;
+pub use runtime::{
+    evaluate_with_trace_native_provider_policy, evaluate_with_trace_private_provider_localnet,
+};
 pub use types::*;
 pub use validation::validate_program;
 

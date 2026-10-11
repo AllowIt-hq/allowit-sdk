@@ -70,6 +70,7 @@ impl Collector {
                     "set_cap_per_day"
                     | "cap_per_transaction"
                     | "allow_actions"
+                    | "require_asset"
                     | "require_merchant"
                     | "require_recipient"
                     | "fail"

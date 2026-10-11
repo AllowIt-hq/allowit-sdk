@@ -1,4 +1,5 @@
 use allowit_contract_core::{Artifact, CORE_VERSION, Mandate, Request, State};
+use std::vec::Vec;
 
 pub const SIMPLE: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; allow_actions(ctx, &[\"research\"])?; Ok(()) }";
 pub const INPUT: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; require_user_input(ctx, \"Approve this purchase?\").await?; Ok(()) }";
@@ -126,3 +127,27 @@ pub fn evidence(state: &State, request: &mut Request, lower: u64, upper: u64) {
 }
 extern crate alloc;
 use alloc::vec;
+
+/// Old exact wire format, retained to test owner revocation after custody upgrades.
+pub fn legacy_state_bytes(state: &State) -> Vec<u8> {
+    #[derive(borsh::BorshSerialize)]
+    struct LegacyState {
+        mandate: Mandate,
+        artifact: Vec<u8>,
+        active: bool,
+        revoked: bool,
+        spent_units: u64,
+        next_nonce: u64,
+    }
+    let mut mandate = state.mandate.clone();
+    mandate.core_version = "0.1.0".into();
+    borsh::to_vec(&LegacyState {
+        mandate,
+        artifact: state.artifact.clone(),
+        active: true,
+        revoked: false,
+        spent_units: state.spent_units,
+        next_nonce: state.next_nonce,
+    })
+    .unwrap()
+}

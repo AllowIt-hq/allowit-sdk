@@ -98,7 +98,7 @@ All monetary values in the portable core are micro-USDC (six decimal places). De
 
 `set_cap_per_day` is a configuration declaration: it may occur at most once, at the top level, with literal amount and token. It is enforced before user control flow, including when placed after an early return. The host allocation and spent amount are always enforced independently. Total funding is enforced by the host allocation, outside policy rules. Daily spending uses authenticated counters, resets at UTC midnight, and rejects missing counters or clock rollback.
 
-The predefined registry contains `set_cap_per_day`, `cap_per_transaction`, `allow_actions`, `require_merchant`, `require_recipient`, `confidence`, `semantic`, `context_u64`, `require_user_input` and `fail`. Help, signatures and workflow labels come from that registry.
+The predefined registry contains `require_asset`, `set_cap_per_day`, `cap_per_transaction`, `allow_actions`, `require_merchant`, `require_recipient`, `confidence`, `semantic`, `context_u64`, `require_user_input` and `fail`. Help, signatures and workflow labels come from that registry.
 
 Classifications such as research purpose, wallet role, or a customer's investment category belong in configurable `check_preference` questions evaluated by Jev. `allow_actions` only compares caller-supplied strings; it does not verify membership in a semantic category. Exact user-specified addresses, merchant identifiers and numeric restrictions remain deterministic checks. A matching address does not establish its purpose or ownership.
 
@@ -232,8 +232,9 @@ The default `oracle-ledger` feature includes host purchase counters. Contract bu
 Builds without `oracle-ledger` reject purchase-tier IR during validation with `LEDGER_REQUIRED`, before any evaluation. The registry still describes the function so callers can identify this unsupported feature. The public `spending` module is available only with `oracle-ledger`. Default SDK WASM and host builds include it; contract builds exclude it.
 
 
-Provider policies declare their exact payment asset in one unconditional `set_cap_per_day`
-guard. The compiler projects that literal into `CompiledPolicy.token` and
+Provider policies declare their exact payment asset with an unconditional
+`allowit::require_asset(&ctx.token, "asset-id")?` guard. A daily or per-purchase cap
+can also bind the asset. `require_asset` sets no monetary limit; daily caps are optional. The compiler projects that literal into `CompiledPolicy.token` and
 `provider_call_requirements[].payment_asset_id`. The authenticated host sets
 `Context.token` to this mint and supplies `ProviderCallInput.payment_asset`
 with the verified network, mint and six decimals. A source guard for `USDC`
@@ -251,3 +252,5 @@ any policy with this compiler; older readers reject registry 1.3 artifacts.
 
 AllowIt-authored source is MIT licensed. Third-party licenses and the companion materials required when redistributing SDK or contract binaries, including historical Actions artifacts, are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keep the full [licenses/](licenses/) directory and root license with redistributed binaries.
 
+
+Native provider adapters use `evaluate_with_trace_native_provider_policy` only after verifying owner/source/executor authority and actual native funding. This entry checks provider binding and policy rules while the native rail enforces funding in its own asset units. The generic evaluator still checks token allocation and lifetime spending. The policy-only entry is not exposed through JSON or the Contract profile.

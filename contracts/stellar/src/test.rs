@@ -627,3 +627,20 @@ fn qualified_checks_authorize_the_same_stellar_asset_transfer() {
     );
     assert_eq!(f.balance(), 100_000_000);
 }
+
+#[test]
+fn owner_can_revoke_legacy_wire_state_after_upgrade() {
+    let f = Fixture::new(support::SIMPLE);
+    let id = f.client().activate(&f.activation);
+    let bytes = support::legacy_state_bytes(&f.state(&id));
+    f.env.as_contract(&f.contract, || {
+        let key = Key::Mandate(id.clone());
+        let mut stored: Stored = f.env.storage().persistent().get(&key).unwrap();
+        stored.state = Bytes::from_slice(&f.env, &bytes);
+        f.env.storage().persistent().set(&key, &stored);
+    });
+    f.client().revoke(&id);
+    let state = f.state(&id);
+    assert!(!state.active && state.revoked);
+    assert!(f.env.auths().iter().any(|(address, _)| address == &f.owner));
+}

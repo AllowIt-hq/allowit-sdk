@@ -488,3 +488,25 @@ fn qualified_checks_authorize_the_same_spl_transfer() {
     assert_eq!(f.balance(), 10_000_000);
     set_syscall_stubs(old_stub);
 }
+
+#[test]
+fn owner_can_revoke_legacy_wire_state_after_upgrade() {
+    let _guard = LOCK.lock().unwrap();
+    let f = Fixture::new(support::SIMPLE);
+    f.initialize();
+    let encoded = support::legacy_state_bytes(&f.state);
+    {
+        let mut data = f.account.try_borrow_mut_data().unwrap();
+        data.fill(0);
+        data[..8].copy_from_slice(b"ALLOWIT1");
+        data[8..12].copy_from_slice(&(encoded.len() as u32).to_le_bytes());
+        data[12..12 + encoded.len()].copy_from_slice(&encoded);
+    }
+    let legacy = read_state(&f.account, &f.program).unwrap();
+    assert!(!legacy.active && legacy.revoked);
+    f.run(&[f.account.clone(), f.owner.clone()], Instruction::Revoke)
+        .unwrap();
+    let revoked = read_state(&f.account, &f.program).unwrap();
+    assert!(!revoked.active && revoked.revoked);
+    assert_eq!(&f.account.try_borrow_data().unwrap()[..8], b"ALLOWIT2");
+}

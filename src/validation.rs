@@ -205,7 +205,7 @@ impl Validator {
                     value, semicolon, ..
                 } => {
                     let direct_config = top
-                        && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call{name,..} if name=="set_cap_per_day" || name=="cap_purchase_tiers"));
+                        && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call{name,..} if name=="set_cap_per_day" || name=="cap_purchase_tiers" || name=="require_asset"));
                     let ty = self.expr(value, env, depth + 1, direct_config)?;
                     if *semicolon {
                         if ty != Type::Unit {
@@ -550,8 +550,8 @@ impl Validator {
                         alloc::vec![Type::Context, Type::String, Type::Integer, Type::String]
                     }
                     "allow_actions" => alloc::vec![Type::Context, Type::Strings],
-                    "require_merchant" | "require_recipient" | "confidence" | "semantic"
-                    | "context_u64" | "require_user_input" => {
+                    "require_asset" | "require_merchant" | "require_recipient" | "confidence"
+                    | "semantic" | "context_u64" | "require_user_input" => {
                         alloc::vec![Type::Context, Type::String]
                     }
                     "fail" => alloc::vec![Type::String],
@@ -708,6 +708,7 @@ impl Validator {
                         "set_cap_per_day",
                         "cap_per_transaction",
                         "cap_purchase_tiers",
+                        "require_asset",
                         "require_recipient",
                         "require_merchant",
                         "allow_actions",
@@ -719,6 +720,15 @@ impl Validator {
                     return Err(bad(
                         "Typed request policies use typed effect and fee guards; scalar token limits cannot represent native assets.",
                     ));
+                }
+                if name == "require_asset" {
+                    if !config
+                        || !matches!(args.get(1),Some(Expr::String{value}) if !value.trim().is_empty() && value.len()<=128)
+                    {
+                        return Err(bad(
+                            "Declare require_asset unconditionally at top level with a literal asset identifier.",
+                        ));
+                    }
                 }
                 if name == "set_cap_per_day" {
                     self.config_count += 1;
@@ -880,16 +890,26 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         && provider_asset_id(program).is_none_or(|asset| ["USDC", "SOL"].contains(&asset))
     {
         return Err(bad(
-            "Provider policies require one unconditional set_cap_per_day with a literal asset identifier, not a currency symbol.",
+            "Provider policies require an unconditional require_asset or cap guard with a literal asset identifier, not a currency symbol.",
         ));
+    }
+    #[cfg(feature = "typed-workflow")]
+    if let Some(first) = provider_asset_id(program) {
+        if asset_declarations(program).any(|asset| asset != first) {
+            return Err(bad("Payment asset declarations must agree."));
+        }
     }
     Ok(())
 }
 
-/// The payment asset comes from the same unconditional numeric guard as funding metadata.
+/// Payment asset binding is independent of funding and optional daily caps.
 #[cfg(feature = "typed-workflow")]
 pub(crate) fn provider_asset_id(program: &Program) -> Option<&str> {
-    program.statements.iter().find_map(|statement| {
+    asset_declarations(program).next()
+}
+#[cfg(feature = "typed-workflow")]
+fn asset_declarations(program: &Program) -> impl Iterator<Item = &str> {
+    program.statements.iter().filter_map(|statement| {
         let Statement::Expression {
             value: Expr::Try { value },
             ..
@@ -900,10 +920,12 @@ pub(crate) fn provider_asset_id(program: &Program) -> Option<&str> {
         let Expr::Call { name, args, .. } = &**value else {
             return None;
         };
-        if name != "set_cap_per_day" {
-            return None;
-        }
-        match args.get(2) {
+        let index = match name.as_str() {
+            "require_asset" => 1,
+            "set_cap_per_day" | "cap_per_transaction" => 2,
+            _ => return None,
+        };
+        match args.get(index) {
             Some(Expr::String { value }) => Some(value.as_str()),
             _ => None,
         }

@@ -793,6 +793,15 @@ impl Evaluator<'_> {
                         }
                         Value::Unit
                     }
+                    "require_asset" => {
+                        if string(&values, 1)? != self.context.token {
+                            return Err(failure(
+                                "TOKEN_MISMATCH",
+                                "The payment asset does not match the policy.",
+                            ));
+                        }
+                        Value::Unit
+                    }
                     "require_recipient" => {
                         if string(&values, 1)? != self.context.recipient {
                             return Err(failure(
@@ -969,6 +978,7 @@ fn validate_context(
     provider_profile: bool,
     private_provider_localnet: bool,
     native_payment_asset: Option<&crate::ProviderPaymentAsset>,
+    native_provider_funding: bool,
 ) -> Result<(), alloc::boxed::Box<Decision>> {
     #[cfg(not(feature = "typed-workflow"))]
     let _ = provider_profile;
@@ -1051,16 +1061,17 @@ fn validate_context(
             "The requested network is not supported.",
         ));
     }
-    if ctx.amount_units == 0 || ctx.allocation_units == 0 {
+    if ctx.amount_units == 0 || (!native_provider_funding && ctx.allocation_units == 0) {
         return Err(failure(
             "INVALID_AMOUNT",
             "The request and allocation amounts must be greater than zero.",
         ));
     }
-    if ctx
-        .spent_units
-        .checked_add(ctx.amount_units)
-        .is_none_or(|n| n > ctx.allocation_units)
+    if !native_provider_funding
+        && ctx
+            .spent_units
+            .checked_add(ctx.amount_units)
+            .is_none_or(|n| n > ctx.allocation_units)
     {
         return Err(failure(
             "BUDGET_EXCEEDED",
@@ -1154,6 +1165,7 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
         binding,
         false,
         None,
+        false,
         #[cfg(feature = "compiler")]
         None,
     )
@@ -1166,6 +1178,7 @@ fn run_inner(
     binding: String,
     private_provider_localnet: bool,
     native_payment_asset: Option<&crate::ProviderPaymentAsset>,
+    native_provider_funding: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
     if let Err(error) = validate_program(ir) {
@@ -1266,6 +1279,7 @@ fn run_inner(
             cfg!(feature = "typed-workflow") && crate::validation::provider_call_required(ir),
             private_provider_localnet,
             native_payment_asset,
+            native_provider_funding,
         )
     } {
         return *error;
@@ -1302,7 +1316,7 @@ fn run_inner(
             value: Expr::Try { value },
             ..
         } = statement
-            && matches!(&**value,Expr::Call{name,..} if name=="set_cap_per_day" || name=="cap_purchase_tiers")
+            && matches!(&**value,Expr::Call{name,..} if name=="set_cap_per_day" || name=="cap_purchase_tiers" || name=="require_asset")
         {
             let result = evaluator.expr(value, &env);
             #[cfg(feature = "compiler")]
@@ -1481,6 +1495,7 @@ fn evaluate_with_trace_inner(
         policy.source_hash.clone(),
         private_provider_localnet,
         native_payment_asset,
+        false,
         Some(&mut trace),
     );
     let trace = trace.finish(&decision);
@@ -1748,4 +1763,46 @@ pub fn evaluate_with_trace_native_payment(
         );
     }
     evaluate_with_trace_inner(policy, ctx, false, Some(asset))
+}
+
+/// Evaluate provider rules after the adapter verifies native funding and owner/source authority.
+/// The native rail owns funding accounting (for example SOL allocation); scalar token
+/// allocation is intentionally unused here. The adapter MUST verify native funding,
+/// executor authority and, when enabled, the private validator genesis before calling.
+/// This admission is unavailable through JSON and never used by Contract evaluation.
+#[cfg(all(feature = "compiler", feature = "typed-workflow", feature = "std"))]
+pub fn evaluate_with_trace_native_provider_policy(
+    policy: &CompiledPolicy,
+    ctx: &Context,
+    private_localnet: bool,
+) -> (Decision, Option<crate::WorkflowTrace>) {
+    if !crate::validation::provider_call_required(&policy.ir)
+        || ctx.provider_call_input.is_none()
+        || (private_localnet && ctx.network != "solana:localnet")
+    {
+        return (
+            Decision::fail(
+                "PROVIDER_INPUT_REQUIRED",
+                "Native provider policy evaluation requires authenticated provider input.",
+            ),
+            None,
+        );
+    }
+    let compiled = match validate_artifact(policy) {
+        Ok(compiled) => compiled,
+        Err(decision) => return (*decision, None),
+    };
+    let mut trace = crate::trace::TraceRecorder::new(&compiled);
+    let decision = run_inner(
+        &policy.ir,
+        Profile::Oracle,
+        ctx,
+        policy.source_hash.clone(),
+        private_localnet,
+        None,
+        true,
+        Some(&mut trace),
+    );
+    let trace = trace.finish(&decision);
+    (decision, Some(trace))
 }

@@ -638,3 +638,92 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
         );
     }
 }
+
+#[test]
+fn provider_asset_binding_does_not_require_a_daily_or_total_policy_cap() {
+    let src = format!(
+        "use allowit::prelude::*; pub async fn execute(ctx:&Context)->PolicyResult{{ require_asset(ctx, \"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\")?; let admitted = {CALL}; Ok(()) }}"
+    );
+    let policy = compile(&src).unwrap();
+    assert!(policy.limit.is_empty() && policy.daily_limit.is_empty());
+    assert_eq!(
+        policy.provider_call_requirements[0].payment_asset_id,
+        context().token
+    );
+    let mut ctx = context();
+    ctx.daily_spent_units = None;
+    ctx.spent_day = None;
+    assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, "pass");
+    let mismatch = src.replace(
+        "let admitted",
+        "cap_per_transaction(ctx, \"1\", \"other-asset\")?; let admitted",
+    );
+    assert!(compile(&mismatch).is_err());
+    let conditional = src
+        .replace("require_asset(ctx", "if true { require_asset(ctx")
+        .replace(")?; let admitted", ")?; } let admitted");
+    assert!(compile(&conditional).is_err());
+}
+#[test]
+fn asset_only_primitive_rejects_substitutes_and_hoists_past_early_return() {
+    let src = "use allowit::v1::prelude::*; struct PolicyParams {} fn new()->PolicyParams {PolicyParams{}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { return Ok(()); allowit::require_asset(&ctx.token, \"USDC\")?; }";
+    assert!(compile(src).is_ok());
+    assert!(compile(&src.replace("&ctx.token", "\"USDC\"")).is_err());
+    let mut ctx = context();
+    ctx.provider_call_input = None;
+    ctx.token = "USDC".into();
+    assert_eq!(
+        evaluate(&compile(src).unwrap(), Profile::Oracle, &ctx).outcome,
+        "pass"
+    );
+    assert!(allowit_sdk::require_asset("wrong", "USDC").is_err());
+}
+
+#[test]
+fn native_provider_entry_preserves_rules_and_generic_token_funding_checks() {
+    let policy=compile(&format!("use allowit::prelude::*; pub async fn execute(ctx:&Context)->PolicyResult{{ require_asset(ctx, \"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\")?; let admitted = {CALL}; Ok(()) }}")).unwrap();
+    let mut ctx = context();
+    ctx.allocation_units = 0;
+    ctx.spent_units = u64::MAX;
+    assert_eq!(
+        evaluate(&policy, Profile::Oracle, &ctx).code,
+        "INVALID_AMOUNT"
+    );
+    assert_eq!(
+        allowit_sdk::evaluate_with_trace_native_provider_policy(&policy, &ctx, false)
+            .0
+            .outcome,
+        "pass"
+    );
+    ctx.token = "wrong-asset".into();
+    assert_eq!(
+        allowit_sdk::evaluate_with_trace_native_provider_policy(&policy, &ctx, false)
+            .0
+            .code,
+        "PROVIDER_ASSET_MISMATCH"
+    );
+    ctx.provider_call_input = None;
+    assert_eq!(
+        allowit_sdk::evaluate_with_trace_native_provider_policy(&policy, &ctx, false)
+            .0
+            .code,
+        "PROVIDER_INPUT_REQUIRED"
+    );
+    let ordinary = compile("pub async fn execute(ctx:&Context)->PolicyResult{Ok(())}").unwrap();
+    assert_eq!(
+        allowit_sdk::evaluate_with_trace_native_provider_policy(&ordinary, &context(), false)
+            .0
+            .code,
+        "PROVIDER_INPUT_REQUIRED"
+    );
+    let capped = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
+    let mut capped_ctx = context();
+    capped_ctx.allocation_units = 0;
+    capped_ctx.daily_spent_units = Some(100_000_000);
+    assert_eq!(
+        allowit_sdk::evaluate_with_trace_native_provider_policy(&capped, &capped_ctx, false)
+            .0
+            .code,
+        "DAILY_CAP_EXCEEDED"
+    );
+}

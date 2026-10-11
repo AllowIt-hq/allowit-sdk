@@ -141,6 +141,7 @@ impl Parser {
             "cap_per_transaction",
             "cap_purchase_tiers",
             "allow_actions",
+            "require_asset",
             "require_merchant",
             "require_recipient",
         ]
@@ -169,6 +170,7 @@ impl Parser {
                 ("purchase_counts", true),
             ],
             "allow_actions" => &[("action", true)],
+            "require_asset" => &[("token", true)],
             "require_merchant" => &[("merchant", true)],
             _ => &[("recipient", true)],
         };
