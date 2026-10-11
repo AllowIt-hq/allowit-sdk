@@ -65,3 +65,80 @@ fn direct_primitive_matches_daily_guard_and_preserves_overflow_denial() {
     );
     assert!(allowit_sdk::set_cap_per_day(None, Some(0), 0, 1, "USDC", 1, "USDC", 6).is_err());
 }
+
+#[test]
+fn declared_tempo_asset_daily_and_action_guards_use_verified_current_day_state() {
+    let source = r#"use allowit::v1::prelude::*;
+struct PolicyParams {} fn new() -> PolicyParams { PolicyParams {} }
+async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
+    allowit::require_asset(&ctx.token, "AlphaUSD")?;
+    allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, 1_000_000, "AlphaUSD", 6)?;
+    allowit::cap_per_transaction(ctx.amount_units, &ctx.token, 500_000, "AlphaUSD", 6)?;
+    allowit::require_recipient(&ctx.recipient, "supplier")?;
+    Ok(())
+}"#;
+    let policy = compile(source).unwrap();
+    assert_eq!(policy.token, "AlphaUSD");
+    assert_eq!(policy.daily_limit, "1");
+    let mut ctx = context();
+    ctx.network = "tempo:localnet".into();
+    ctx.token = "AlphaUSD".into();
+    ctx.recipient = "supplier".into();
+    ctx.now = 86_399;
+    ctx.spent_day = Some(0);
+    ctx.daily_spent_units = Some(750_000);
+    ctx.amount_units = 250_000;
+    ctx.native_policy_storage = Some(allowit_sdk::NativePolicyStorage {
+        daily_limit_units: 1_000_000,
+        action_limit_units: 500_000,
+    });
+    let asset = allowit_sdk::ProviderPaymentAsset {
+        network: "tempo:localnet".into(),
+        asset: "AlphaUSD".into(),
+        decimals: 6,
+    };
+    let run =
+        |ctx: &Context| allowit_sdk::evaluate_with_trace_native_payment(&policy, ctx, &asset).0;
+    assert_eq!(run(&ctx).outcome, "pass");
+    ctx.daily_spent_units = Some(750_001);
+    assert_eq!(run(&ctx).code, "DAILY_CAP_EXCEEDED");
+    ctx.now = 86_400;
+    assert_eq!(run(&ctx).outcome, "pass");
+    ctx.amount_units = 500_001;
+    assert_ne!(run(&ctx).outcome, "pass");
+    ctx.amount_units = 250_000;
+    ctx.recipient = "different".into();
+    assert_ne!(run(&ctx).outcome, "pass");
+    // A source declaration does not authenticate a public caller's token data.
+    assert_eq!(
+        evaluate(&policy, Profile::Oracle, &ctx).code,
+        "TOKEN_MISMATCH"
+    );
+}
+
+#[test]
+fn non_usdc_caps_require_one_matching_unconditional_asset_and_six_decimals() {
+    let source = r#"use allowit::v1::prelude::*; struct PolicyParams {} fn new()->PolicyParams{PolicyParams{}}
+async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult {
+    allowit::require_asset(&ctx.token,"AlphaUSD")?;
+    allowit::set_cap_per_day(ctx.daily_spent_units,ctx.spent_day,ctx.now,ctx.amount_units,&ctx.token,1_000_000,"AlphaUSD",6)?;
+    allowit::cap_per_transaction(ctx.amount_units,&ctx.token,500_000,"AlphaUSD",6)?;
+    Ok(())
+}"#;
+    assert!(compile(source).is_ok());
+    for invalid in [
+        source.replace("allowit::require_asset(&ctx.token,\"AlphaUSD\")?;", ""),
+        source.replace(
+            "require_asset(&ctx.token,\"AlphaUSD\")",
+            "require_asset(&ctx.token,\"BetaUSD\")",
+        ),
+        source.replace("500_000,\"AlphaUSD\",6", "500_000,\"BetaUSD\",6"),
+        source.replace("1_000_000,\"AlphaUSD\",6", "1_000_000,\"AlphaUSD\",18"),
+        source.replace(
+            "allowit::require_asset(&ctx.token,\"AlphaUSD\")?;",
+            "if ctx.amount_units > 0 { allowit::require_asset(&ctx.token,\"AlphaUSD\")?; }",
+        ),
+    ] {
+        assert!(compile(&invalid).is_err(), "{invalid}");
+    }
+}
