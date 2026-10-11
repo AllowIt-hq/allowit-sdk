@@ -3,17 +3,14 @@ use serde::{Deserialize, Serialize};
 
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
-pub const REGISTRY_VERSION: &str = "1.4.0";
+pub const REGISTRY_VERSION: &str = "1.5.0";
 /// Canonical expression schema. New registered host operations use the source registry
 /// version and explicit target-profile admission without changing the expression encoding.
 pub const IR_VERSION: &str = "1.0.0";
 pub const TYPED_IR_VERSION: &str = "1.1.0";
-/// Previously supported guard registries retain their artifact semantics.
+/// Daily caps require new authenticated accounting; older artifacts require recompilation.
 pub fn supported_registry_version(version: &str) -> bool {
-    matches!(
-        version,
-        "1.0.0" | "1.1.0" | "1.2.0" | "1.3.0" | REGISTRY_VERSION
-    )
+    version == REGISTRY_VERSION
 }
 pub const MAX_SOURCE_BYTES: usize = 32768;
 pub const MAX_NODES: usize = 2048;
@@ -210,7 +207,10 @@ pub struct CompiledPolicy {
     pub typed_workflow_requirements: Vec<crate::typed_workflow::TypedWorkflowNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typed_budget_requirements: Vec<crate::typed_workflow::TypedBudgetRequirement>,
+    /// Legacy total policy cap is always empty; funding belongs to the host.
     pub limit: String,
+    #[serde(default)]
+    pub daily_limit: String,
     pub token: String,
     pub source: String,
     pub workflow: Vec<WorkflowBlock>,
@@ -376,6 +376,11 @@ pub struct Context {
     pub amount_units: u64,
     pub allocation_units: u64,
     pub spent_units: u64,
+    /// Trusted host daily spend and its UTC Unix day. Missing counters fail closed.
+    #[serde(default)]
+    pub daily_spent_units: Option<u64>,
+    #[serde(default)]
+    pub spent_day: Option<u64>,
     /// Trusted host counts for the single declared geometric purchase-tier rule.
     #[serde(default)]
     pub purchase_counts: Option<Vec<u64>>,
@@ -428,6 +433,8 @@ impl Default for Context {
             amount_units: 0,
             allocation_units: 0,
             spent_units: 0,
+            daily_spent_units: None,
+            spent_day: None,
             purchase_counts: None,
             action: String::new(),
             merchant: String::new(),

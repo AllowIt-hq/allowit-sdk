@@ -1,7 +1,7 @@
 use allowit::prelude::*;
 
 pub async fn evaluate(ctx: &Context) -> PolicyResult {
-    set_cap(ctx, "250", "USDC")?;
+    set_cap_per_day(ctx, "250", "USDC")?;
     let candidate = context_u64(ctx, "candidate_yield_bps")?;
     let benchmark = context_u64(ctx, "benchmark_yield_bps")?;
     if !within_percentage_points(candidate, benchmark, "1")? {

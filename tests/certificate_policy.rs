@@ -8,12 +8,14 @@ fn context() -> Context {
         action: "research".into(),
         original_intent: "Research primary sources".into(),
         purchase_counts: Some(vec![0; 40]),
+        daily_spent_units: Some(0),
+        spent_day: Some(0),
         ..Context::default()
     }
 }
 fn source(body: &str) -> String {
     format!(
-        "use allowit::v1::prelude::*; pub async fn exec(ctx: &Context) -> PolicyResult {{ set_cap(ctx, \"10\", \"USDC\")?; {body} Ok(()) }}"
+        "use allowit::v1::prelude::*; pub async fn exec(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"10\", \"USDC\")?; {body} Ok(()) }}"
     )
 }
 #[test]

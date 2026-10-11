@@ -137,7 +137,7 @@ impl Parser {
             return Ok(None);
         };
         if ![
-            "set_cap",
+            "set_cap_per_day",
             "cap_per_transaction",
             "cap_purchase_tiers",
             "allow_actions",
@@ -155,8 +155,10 @@ impl Parser {
             ));
         }
         let expected: &[(&str, bool)] = match name.as_str() {
-            "set_cap" => &[
-                ("spent_units", false),
+            "set_cap_per_day" => &[
+                ("daily_spent_units", false),
+                ("spent_day", false),
+                ("now", false),
                 ("amount_units", false),
                 ("token", true),
             ],
@@ -172,7 +174,7 @@ impl Parser {
         };
         let financial = matches!(
             name.as_str(),
-            "set_cap" | "cap_per_transaction" | "cap_purchase_tiers"
+            "set_cap_per_day" | "cap_per_transaction" | "cap_purchase_tiers"
         );
         let suffix = if name == "cap_purchase_tiers" {
             4
@@ -1254,7 +1256,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     let source_hash = digest(source.as_bytes());
     let ir_hash = canonical_ir_hash(&ir)?;
     let mut workflow: Vec<WorkflowBlock> = vec![];
-    let mut limit = String::new();
+    let mut daily_limit = String::new();
     let mut projected_preferences = BTreeSet::new();
     for statement in &ir.statements {
         let span = statement.span();
@@ -1289,8 +1291,8 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         let pass = matches!(value,Some(Expr::Call{name,..}) if name=="Ok");
         let (kind, name, label, description, arguments) = if let Some((name, args)) = predefined {
             let info = function(name).expect("validator checked the registry");
-            if name == "set_cap" {
-                limit = argument(&args[1]);
+            if name == "set_cap_per_day" {
+                daily_limit = argument(&args[1]);
             }
             (
                 "function",
@@ -1366,7 +1368,8 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         provider_call_requirements: crate::requirements::provider_calls(&ir)?,
         typed_workflow_requirements: crate::validation::typed_nodes(&ir)?,
         typed_budget_requirements: crate::validation::typed_budgets(&ir)?,
-        limit,
+        limit: String::new(),
+        daily_limit,
         token: if crate::typed_workflow::required(&ir)
             && !crate::validation::provider_call_required(&ir)
         {

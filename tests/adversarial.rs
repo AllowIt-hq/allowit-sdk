@@ -110,12 +110,13 @@ fn malformed_confidence_never_passes_even_if_unused() {
 }
 #[test]
 fn deterministic_boundary_vectors_match_oracle_and_contract() {
-    let p=compile(&source("set_cap(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; if ctx.amount_units % 2 == 1 { return fail(\"Even micro-units only\"); } Ok(())")).unwrap();
+    let p=compile(&source("set_cap_per_day(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; if ctx.amount_units % 2 == 1 { return fail(\"Even micro-units only\"); } Ok(())")).unwrap();
     for amount in [0, 1, 2, 9_999_999, 10_000_000, 10_000_001, u64::MAX] {
         for spent in [0, 90_000_000, 99_999_999, 100_000_000, u64::MAX] {
             let mut ctx = context();
             ctx.amount_units = amount;
             ctx.spent_units = spent;
+            ctx.daily_spent_units = Some(spent);
             assert_eq!(
                 evaluate(&p, Profile::Oracle, &ctx),
                 evaluate(&p, Profile::Contract, &ctx)
@@ -126,7 +127,7 @@ fn deterministic_boundary_vectors_match_oracle_and_contract() {
 #[test]
 fn bounded_token_mutations_never_panic_and_successful_compiles_are_deterministic() {
     let original = source(
-        "set_cap(ctx, \"100\", \"USDC\")?; if ctx.action == \"research\" { require_merchant(ctx, \"research.example\")?; } Ok(())",
+        "set_cap_per_day(ctx, \"100\", \"USDC\")?; if ctx.action == \"research\" { require_merchant(ctx, \"research.example\")?; } Ok(())",
     );
     let mut seed = 0x5eed_u64;
     let tokens = [

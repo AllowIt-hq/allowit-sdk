@@ -11,8 +11,8 @@ fn source(body: &str) -> String {
 fn constructor_and_primitives_preserve_real_accounting() {
     let source = include_str!("fixtures/constructor-policy.rs");
     let policy = compile(source).unwrap();
-    assert_eq!(policy.limit, "5");
-    assert_eq!(policy.registry_version, "1.4.0");
+    assert_eq!(policy.daily_limit, "5");
+    assert_eq!(policy.registry_version, "1.5.0");
     for profile in [Profile::Oracle, Profile::Contract] {
         let mut ctx = context();
         ctx.amount_units = 2_000_000;
@@ -24,8 +24,10 @@ fn constructor_and_primitives_preserve_real_accounting() {
         );
         ctx.amount_units = 2_000_000;
         ctx.spent_units = 3_000_001;
-        assert_eq!(evaluate(&policy, profile, &ctx).code, "POLICY_CAP_EXCEEDED");
+        ctx.daily_spent_units = Some(3_000_001);
+        assert_eq!(evaluate(&policy, profile, &ctx).code, "DAILY_CAP_EXCEEDED");
         ctx.spent_units = 0;
+        ctx.daily_spent_units = Some(0);
         ctx.recipient = "unapproved".into();
         assert_eq!(evaluate(&policy, profile, &ctx).outcome, "fail");
         ctx.recipient = "11111111111111111111111111111111".into();
@@ -33,10 +35,10 @@ fn constructor_and_primitives_preserve_real_accounting() {
         assert_eq!(evaluate(&policy, profile, &ctx).outcome, "fail");
     }
     let changed =
-        compile(&source.replace("total_limit: 5_000_000,", "total_limit: 1_000_000,")).unwrap();
+        compile(&source.replace("daily_limit: 5_000_000,", "daily_limit: 1_000_000,")).unwrap();
     assert_ne!(changed.source_hash, policy.source_hash);
     assert_ne!(changed.ir_hash, policy.ir_hash);
-    assert_eq!(changed.limit, "1");
+    assert_eq!(changed.daily_limit, "1");
 }
 #[test]
 fn empty_template_builds_and_denies_in_every_profile() {
@@ -48,13 +50,13 @@ fn empty_template_builds_and_denies_in_every_profile() {
 #[test]
 fn primitive_guards_reject_substitutes_and_hidden_configuration() {
     for body in [
-        "allowit::set_cap(0, ctx.amount_units, &ctx.token, 5_000_000, \"USDC\", 6)?; Ok(())",
-        "allowit::set_cap(ctx.spent_units, 0, &ctx.token, 5_000_000, \"USDC\", 6)?; Ok(())",
-        "allowit::set_cap(ctx.spent_units, ctx.amount_units, \"USDC\", 5_000_000, \"USDC\", 6)?; Ok(())",
-        "allowit::set_cap(ctx.spent_units, ctx.amount_units, &ctx.token, 5_000_000, \"USDC\", 9)?; Ok(())",
-        "allowit::set_cap(ctx.spent_units, ctx.amount_units, &ctx.token, REPORT_PAYMENT, \"USDC\", 6)?; Ok(())",
-        "allowit::set_cap(ctx, \"5\", \"USDC\")?; Ok(())",
-        "set_cap(ctx, \"5\", \"USDC\")?; Ok(())",
+        "allowit::set_cap_per_day(0, ctx.amount_units, &ctx.token, 5_000_000, \"USDC\", 6)?; Ok(())",
+        "allowit::set_cap_per_day(ctx.spent_units, 0, &ctx.token, 5_000_000, \"USDC\", 6)?; Ok(())",
+        "allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, \"USDC\", 5_000_000, \"USDC\", 6)?; Ok(())",
+        "allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, 5_000_000, \"USDC\", 9)?; Ok(())",
+        "allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, REPORT_PAYMENT, \"USDC\", 6)?; Ok(())",
+        "allowit::set_cap_per_day(ctx, \"5\", \"USDC\")?; Ok(())",
+        "set_cap_per_day(ctx, \"5\", \"USDC\")?; Ok(())",
         "allowit::require_recipient(\"allowed\", \"allowed\")?; Ok(())",
         "let params = 0; Ok(())",
         "let limit = params.missing; Ok(())",
@@ -69,16 +71,16 @@ fn primitive_guards_reject_substitutes_and_hidden_configuration() {
 fn constructor_is_a_bounded_rust_literal_declaration() {
     let good = include_str!("fixtures/constructor-policy.rs");
     for (from, to) in [
-        ("total_limit: 5_000_000,", "total_limit: REPORT_PAYMENT,"),
-        ("total_limit: 5_000_000,", "total_limit: 5_000_000 + 1,"),
-        ("total_limit: 5_000_000,", "total_limit: true,"),
+        ("daily_limit: 5_000_000,", "daily_limit: REPORT_PAYMENT,"),
+        ("daily_limit: 5_000_000,", "daily_limit: 5_000_000 + 1,"),
+        ("daily_limit: 5_000_000,", "daily_limit: true,"),
         (
-            "total_limit: 5_000_000,",
-            "total_limit: 5_000_000, total_limit: 1,",
+            "daily_limit: 5_000_000,",
+            "daily_limit: 5_000_000, daily_limit: 1,",
         ),
-        ("total_limit: 5_000_000,", ""),
-        ("total_limit: u64,", "total_limit: Vec<Vec<u64>>,"),
-        ("total_limit: u64,", "total_limit: u64,,"),
+        ("daily_limit: 5_000_000,", ""),
+        ("daily_limit: u64,", "daily_limit: Vec<Vec<u64>>,"),
+        ("daily_limit: u64,", "daily_limit: u64,,"),
         ("fn new()", "pub fn new()"),
         ("fn new()", "fn new(ctx: &Context)"),
         ("enabled: true,", "enabled: true, unknown: false,"),
@@ -96,13 +98,16 @@ fn constructor_is_a_bounded_rust_literal_declaration() {
 }
 #[test]
 fn primitive_budget_still_precedes_early_return_and_checks_overflow() {
-    let policy=compile(&source("return Ok(()); allowit::set_cap(ctx.spent_units,ctx.amount_units,&ctx.token,1_000_000,\"USDC\",6)?;")).unwrap();
+    let policy=compile(&source("return Ok(()); allowit::set_cap_per_day(ctx.daily_spent_units,ctx.spent_day,ctx.now,ctx.amount_units,&ctx.token,1_000_000,\"USDC\",6)?;")).unwrap();
     let mut ctx = context();
     ctx.amount_units = 1_000_001;
     for profile in [Profile::Oracle, Profile::Contract] {
         assert_eq!(evaluate(&policy, profile, &ctx).outcome, "fail");
     }
-    assert!(allowit_sdk::set_cap(u64::MAX, 1, "USDC", u64::MAX, "USDC", 6).is_err());
+    assert!(
+        allowit_sdk::set_cap_per_day(Some(u64::MAX), Some(0), 0, 1, "USDC", u64::MAX, "USDC", 6)
+            .is_err()
+    );
 }
 #[allow(dead_code, unused_variables)]
 mod empty_template_rust_build {
@@ -289,6 +294,7 @@ fn native_storage_reads_current_owner_state_and_fails_closed_elsewhere() {
         .action_limit_units = 2_000_000;
     assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "pass");
     ctx.spent_units = 3_000_001;
+    ctx.daily_spent_units = Some(3_000_001);
     assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "fail");
     ctx.native_policy_storage
         .as_mut()

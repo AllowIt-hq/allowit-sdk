@@ -1,7 +1,7 @@
 use allowit::v1::prelude::*;
 
 struct PolicyParams {
-    total_limit: u64,
+    daily_limit: u64,
     recipients: &'static [&'static str],
     enabled: bool,
     currency: &'static str,
@@ -9,7 +9,7 @@ struct PolicyParams {
 
 fn new() -> PolicyParams {
     PolicyParams {
-        total_limit: 5_000_000,
+        daily_limit: 5_000_000,
         recipients: &["11111111111111111111111111111111"],
         enabled: true,
         currency: "USDC",
@@ -17,7 +17,7 @@ fn new() -> PolicyParams {
 }
 
 async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
-    allowit::set_cap(ctx.spent_units, ctx.amount_units, &ctx.token, params.total_limit, params.currency, 6)?;
+    allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, params.daily_limit, params.currency, 6)?;
     if !params.enabled {
         return allowit::fail("Policy is disabled");
     }

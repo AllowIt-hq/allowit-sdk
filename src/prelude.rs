@@ -43,20 +43,19 @@ pub fn within_percentage_points(
     let gap = percent(gap)?;
     Ok(candidate >= benchmark || benchmark - candidate <= gap)
 }
-pub fn set_cap(ctx: &Context, amount: &str, token: &str) -> PolicyResult {
+pub fn set_cap_per_day(ctx: &Context, amount: &str, token: &str) -> PolicyResult {
     let cap =
         crate::validation::amount_units(amount).map_err(|e| error("INVALID_AMOUNT", &e.message))?;
     if token != "USDC" || ctx.token != token {
         return Err(error("TOKEN_MISMATCH", "Token does not match."));
     }
-    if ctx
-        .spent_units
+    if crate::primitives::daily_spend(ctx.daily_spent_units, ctx.spent_day, ctx.now)?
         .checked_add(ctx.amount_units)
         .is_none_or(|n| n > cap)
     {
         return Err(error(
-            "POLICY_CAP_EXCEEDED",
-            "Total spending limit exceeded.",
+            "DAILY_CAP_EXCEEDED",
+            "Daily spending limit exceeded.",
         ));
     }
     Ok(())

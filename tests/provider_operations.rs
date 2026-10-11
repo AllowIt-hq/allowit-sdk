@@ -110,7 +110,7 @@ fn private_provider_localnet_preserves_exact_input_domain_artifact_and_caps() {
 }
 fn source(body: &str) -> String {
     format!(
-        "use allowit::prelude::*; pub async fn execute(ctx: &Context) -> PolicyResult {{ set_cap(ctx, \"100\", \"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\")?; {body} }}"
+        "use allowit::prelude::*; pub async fn execute(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"100\", \"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\")?; {body} }}"
     )
 }
 fn context() -> Context {
@@ -342,7 +342,7 @@ fn dynamic_source_caps_reject_and_constructor_constants_are_projected() {
             .is_err()
         );
     }
-    let src = "use allowit::v1::prelude::*; struct PolicyParams {max_units:u64} fn new()->PolicyParams{PolicyParams{max_units:1000}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { allowit::set_cap(ctx.spent_units,ctx.amount_units,&ctx.token,100000000,\"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\",6)?; if !paysh::call(\"air-quality\",\"request\",params.max_units,5000000,100000){return allowit::fail(\"Unavailable\");} Ok(()) }";
+    let src = "use allowit::v1::prelude::*; struct PolicyParams {max_units:u64} fn new()->PolicyParams{PolicyParams{max_units:1000}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { allowit::set_cap_per_day(ctx.daily_spent_units,ctx.spent_day,ctx.now,ctx.amount_units,&ctx.token,100000000,\"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\",6)?; if !paysh::call(\"air-quality\",\"request\",params.max_units,5000000,100000){return allowit::fail(\"Unavailable\");} Ok(()) }";
     let compiled = compile(src).unwrap();
     assert_eq!(
         compiled.provider_call_requirements[0].max_payment_units,
@@ -452,7 +452,7 @@ fn authenticated_testnet_asset_is_exact_and_legacy_usdc_semantics_are_unchanged(
         evaluate(&usdc_guard, Profile::Oracle, &context()).reason,
         "Not USDC"
     );
-    let legacy = compile("use allowit::prelude::*; pub async fn execute(ctx:&Context)->PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; Ok(()) }").unwrap();
+    let legacy = compile("use allowit::prelude::*; pub async fn execute(ctx:&Context)->PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; Ok(()) }").unwrap();
     assert_eq!(
         evaluate(&legacy, Profile::Oracle, &context()).outcome,
         "fail"

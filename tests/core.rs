@@ -15,23 +15,28 @@ fn decision(body: &str, ctx: &Context) -> allowit_sdk::Decision {
 fn spending_limits_are_exact_and_global() {
     let mut ctx = context();
     ctx.amount_units = 10_000_000;
-    let body =
-        "set_cap(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; Ok(())";
+    let body = "set_cap_per_day(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; Ok(())";
     assert_eq!(decision(body, &ctx).outcome, "pass");
     ctx.amount_units += 1;
     assert_eq!(decision(body, &ctx).code, "PURCHASE_CAP_EXCEEDED");
     ctx.amount_units = 10_000_000;
     ctx.spent_units = 90_000_001;
+    ctx.daily_spent_units = Some(90_000_001);
     ctx.allocation_units = 200_000_000;
-    assert_eq!(decision(body, &ctx).code, "POLICY_CAP_EXCEEDED");
+    assert_eq!(decision(body, &ctx).code, "DAILY_CAP_EXCEEDED");
     assert_eq!(
-        decision("return Ok(()); set_cap(ctx, \"1\", \"USDC\")?;", &ctx).code,
-        "POLICY_CAP_EXCEEDED"
+        decision(
+            "return Ok(()); set_cap_per_day(ctx, \"1\", \"USDC\")?;",
+            &ctx
+        )
+        .code,
+        "DAILY_CAP_EXCEEDED"
     );
     ctx.allocation_units = 1;
     assert_eq!(decision("Ok(())", &ctx).code, "BUDGET_EXCEEDED");
     ctx.allocation_units = u64::MAX;
     ctx.spent_units = u64::MAX;
+    ctx.daily_spent_units = Some(u64::MAX);
     assert_eq!(decision("Ok(())", &ctx).code, "BUDGET_EXCEEDED");
 }
 #[test]
@@ -39,7 +44,11 @@ fn decimals_cannot_round_up_or_overflow() {
     let mut ctx = context();
     ctx.amount_units = 1;
     assert_eq!(
-        decision("set_cap(ctx, \"0.000001\", \"USDC\")?; Ok(())", &ctx).outcome,
+        decision(
+            "set_cap_per_day(ctx, \"0.000001\", \"USDC\")?; Ok(())",
+            &ctx
+        )
+        .outcome,
         "pass"
     );
     for amount in [
@@ -53,7 +62,7 @@ fn decimals_cannot_round_up_or_overflow() {
     ] {
         assert!(
             compile(&source(&format!(
-                "set_cap(ctx, \"{amount}\", \"USDC\")?; Ok(())"
+                "set_cap_per_day(ctx, \"{amount}\", \"USDC\")?; Ok(())"
             )))
             .is_err(),
             "{amount}"
@@ -148,12 +157,12 @@ fn unsupported_or_unchecked_code_is_rejected_including_unreachable_branches() {
         "unsafe { Ok(()) }",
         "std::fs::read(\"secret\"); Ok(())",
         "if false { unknown(ctx)?; } Ok(())",
-        "set_cap(ctx, \"1\", \"USDC\"); Ok(())",
+        "set_cap_per_day(ctx, \"1\", \"USDC\"); Ok(())",
         "require_user_input(ctx, \"Approve?\")?; Ok(())",
         "require_user_input(ctx, \"Approve?\").await; Ok(())",
-        "set_cap(ctx, \"1\", \"USDC\")?; set_cap(ctx, \"2\", \"USDC\")?; Ok(())",
-        "if true { set_cap(ctx, \"1\", \"USDC\")?; } Ok(())",
-        "let amount = \"1\"; set_cap(ctx, amount, \"USDC\")?; Ok(())",
+        "set_cap_per_day(ctx, \"1\", \"USDC\")?; set_cap_per_day(ctx, \"2\", \"USDC\")?; Ok(())",
+        "if true { set_cap_per_day(ctx, \"1\", \"USDC\")?; } Ok(())",
+        "let amount = \"1\"; set_cap_per_day(ctx, amount, \"USDC\")?; Ok(())",
         "let ctx = 1; Ok(())",
         "if true { Ok(()) } Ok(())",
         "allow_actions(ctx, [\"research\"])?; Ok(())",
@@ -200,7 +209,7 @@ fn action_merchant_recipient_and_network_are_enforced() {
 #[test]
 fn workflow_preserves_custom_source_and_unicode_offsets() {
     let text = source(
-        "// keep 👋\n set_cap(ctx, \"100\", \"USDC\")?;\n let label = \"café 👋\";\n // custom comment\n if ctx.amount_units > 10 { require_user_input(ctx, label).await?; }\n Ok(())",
+        "// keep 👋\n set_cap_per_day(ctx, \"100\", \"USDC\")?;\n let label = \"café 👋\";\n // custom comment\n if ctx.amount_units > 10 { require_user_input(ctx, label).await?; }\n Ok(())",
     );
     let p = compile(&text).unwrap();
     assert_eq!(p.workflow.len(), 3);
@@ -255,11 +264,11 @@ fn malformed_ir_and_artifact_tampering_fail_closed() {
 #[test]
 fn json_wire_protocol_is_exact() {
     let compiled = process_value(
-        json!({"operation":"compile","source":source("set_cap(ctx, \"20\", \"USDC\")?; Ok(())")}),
+        json!({"operation":"compile","source":source("set_cap_per_day(ctx, \"20\", \"USDC\")?; Ok(())")}),
     );
     assert_eq!(compiled["ok"], true);
     assert_eq!(compiled["policy"]["language"], "allowit-rust-v1");
-    assert_eq!(compiled["policy"]["limit"], "20");
+    assert_eq!(compiled["policy"]["daily_limit"], "20");
     let evaluated = process_value(
         json!({"operation":"evaluate","source":source("Ok(())"),"profile":"oracle","context":context()}),
     );

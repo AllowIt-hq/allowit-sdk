@@ -404,10 +404,10 @@ fn compiled_wasm_runs_in_the_soroban_vm() {
     let wasm = std::fs::read(path).unwrap();
     let named = support::SIMPLE
         .replace("pub async fn evaluate", "async fn _execute")
-        .replace("set_cap(", "allowit::set_cap(")
+        .replace("set_cap_per_day(", "allowit::set_cap_per_day(")
         .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
         .replace("allow_actions(", "allowit::allow_actions(");
-    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap"));
+    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap_per_day"));
     for (label, policy, input_required, evidence) in [
         ("pass", support::fixture(support::SIMPLE), false, false),
         ("qualified-pass", support::fixture(&named), false, false),
@@ -615,10 +615,10 @@ fn stellar_rejects_artifacts_above_its_canonical_size_profile() {
 fn qualified_checks_authorize_the_same_stellar_asset_transfer() {
     let named = support::SIMPLE
         .replace("pub async fn evaluate", "async fn _execute")
-        .replace("set_cap(", "allowit::set_cap(")
+        .replace("set_cap_per_day(", "allowit::set_cap_per_day(")
         .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
         .replace("allow_actions(", "allowit::allow_actions(");
-    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap"));
+    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap_per_day"));
     let f = Fixture::new(&named);
     let id = f.client().activate(&f.activation);
     assert_eq!(

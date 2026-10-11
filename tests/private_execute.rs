@@ -12,7 +12,7 @@ fn context() -> Context {
 #[test]
 fn private_handler_preserves_outer_limits_and_all_check_results() {
     let policy = compile(&source(
-        r#"allowit::set_cap(ctx, "5", "USDC")?;
+        r#"allowit::set_cap_per_day(ctx, "5", "USDC")?;
 allowit::cap_per_transaction(ctx, "2", "USDC")?;
 allowit::require_recipient(ctx, "11111111111111111111111111111111")?;
 Ok(())"#,
@@ -26,8 +26,10 @@ Ok(())"#,
         assert_eq!(evaluate(&policy, profile, &ctx).outcome, "fail");
         ctx.amount_units = 2_000_000;
         ctx.spent_units = 3_000_001;
+        ctx.daily_spent_units = Some(3_000_001);
         assert_eq!(evaluate(&policy, profile, &ctx).outcome, "fail");
         ctx.spent_units = 0;
+        ctx.daily_spent_units = Some(0);
         ctx.recipient = "wrong-recipient".into();
         assert_eq!(evaluate(&policy, profile, &ctx).outcome, "fail");
         ctx.recipient = "11111111111111111111111111111111".into();
@@ -43,9 +45,9 @@ fn private_handler_rejects_missing_bindings_even_in_unreachable_code() {
         "if false { let amount = REPORT_PAYMENT; } Ok(())",
         "return Ok(()); let amount = REPORT_PAYMENT;",
         "if false { paysh::pay(ctx)?; } Ok(())",
-        "allowit::set_cap(ctx, REPORT_BUDGET, \"USDC\")?; Ok(())",
-        "allowit::set_cap(ctx, \"5\", \"USDC\"); Ok(())",
-        "if false { allowit::set_cap(ctx, \"5\", \"USDC\")?; } Ok(())",
+        "allowit::set_cap_per_day(ctx, REPORT_BUDGET, \"USDC\")?; Ok(())",
+        "allowit::set_cap_per_day(ctx, \"5\", \"USDC\"); Ok(())",
+        "if false { allowit::set_cap_per_day(ctx, \"5\", \"USDC\")?; } Ok(())",
         "_execute(ctx).await?; Ok(())",
     ] {
         assert!(compile(&source(body)).is_err(), "accepted: {body}");
@@ -82,7 +84,7 @@ fn private_handler_has_one_exact_signature_and_no_ambient_items() {
 #[test]
 fn private_handler_keeps_hoisted_budget_before_early_returns() {
     let policy = compile(&source(
-        r#"return Ok(()); allowit::set_cap(ctx, "1", "USDC")?;"#,
+        r#"return Ok(()); allowit::set_cap_per_day(ctx, "1", "USDC")?;"#,
     ))
     .unwrap();
     for profile in [Profile::Oracle, Profile::Contract] {

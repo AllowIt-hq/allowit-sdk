@@ -25,7 +25,7 @@ const context = JSON.parse(fs.readFileSync('examples/context.json', 'utf8'));
 const compiled = invoke({ operation: 'compile', source });
 assert.equal(compiled.ok, true);
 assert.equal(compiled.policy.language, 'allowit-rust-v1');
-assert.equal(compiled.policy.limit, '50');
+assert.equal(compiled.policy.daily_limit, '50');
 for (const call of compiled.policy.calls) assert.equal(source.slice(call.start, call.end), call.name);
 for (const block of compiled.policy.workflow) assert.equal(source.slice(block.start, block.end), block.source);
 const awaiting = invoke({ operation: 'evaluate', source, profile: 'oracle', context });
@@ -35,22 +35,22 @@ assert.equal(invoke({ operation: 'evaluate', source, profile: 'oracle', context 
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'panic!("no")') }).ok, false);
 const registryResponse = invoke({ operation: 'registry' });
-assert.equal(registryResponse.registry_version, '1.4.0');
+assert.equal(registryResponse.registry_version, '1.5.0');
 const registry = registryResponse.functions;
 assert.equal(registry.length, 48);
-for (const name of ['allowit::set_cap', 'allowit::amount_at_most', 'jev::semantic', 'jev::check_preference']) {
+for (const name of ['allowit::set_cap_per_day', 'allowit::amount_at_most', 'jev::semantic', 'jev::check_preference']) {
   assert.ok(registry.some(entry => entry.name === name), `Missing registered namespace ${name}`);
 }
-const qualifiedSource = 'async fn _execute(ctx: &Context) -> PolicyResult { allowit::set_cap(ctx, "50", "USDC")?; jev::check_preference(ctx, "Research?", None, None).await?; Ok(()) }';
+const qualifiedSource = 'async fn _execute(ctx: &Context) -> PolicyResult { allowit::set_cap_per_day(ctx, "50", "USDC")?; jev::check_preference(ctx, "Research?", None, None).await?; Ok(()) }';
 const qualified = invoke({ operation: 'compile', source: qualifiedSource });
 assert.equal(qualified.ok, true);
-assert.equal(qualified.policy.limit, '50');
-assert.equal(qualified.policy.calls[0].name, 'set_cap');
-assert.equal(qualifiedSource.slice(qualified.policy.calls[0].start, qualified.policy.calls[0].end), 'allowit::set_cap');
+assert.equal(qualified.policy.daily_limit, '50');
+assert.equal(qualified.policy.calls[0].name, 'set_cap_per_day');
+assert.equal(qualifiedSource.slice(qualified.policy.calls[0].start, qualified.policy.calls[0].end), 'allowit::set_cap_per_day');
 assert.equal(JSON.stringify(qualified.policy.ir).includes('allowit::'), false);
 assert.equal(invoke({ operation: 'evaluate', source: qualifiedSource, profile: 'oracle', context }).decision.outcome, 'awaiting_input');
 assert.equal(invoke({ operation: 'evaluate', source: qualifiedSource, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
-assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('allowit::set_cap', 'paysh::set_cap') }).ok, false);
+assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('allowit::set_cap_per_day', 'paysh::set_cap_per_day') }).ok, false);
 assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('jev::check_preference', 'other::check_preference') }).ok, false);
 for (let i = 0; i < 100; i++) {
   assert.equal(invoke({ operation: 'compile', source }).policy.ir_hash, compiled.policy.ir_hash);
@@ -133,7 +133,7 @@ for (const profile of ['oracle', 'contract']) {
 assert.equal(invoke({operation: 'compile', source: readable.replace('"0.000001"', '"0.0000001"')}).ok, false);
 
 // Opt-in workflow evidence records execution, including caps hoisted past early returns.
-const traceSource = 'pub async fn exec(ctx: &Context) -> PolicyResult { if ctx.amount_units > 0 { return Ok(()); } require_merchant(ctx,"unreached")?; set_cap(ctx,"10","USDC")?; Ok(()) }';
+const traceSource = 'pub async fn exec(ctx: &Context) -> PolicyResult { if ctx.amount_units > 0 { return Ok(()); } require_merchant(ctx,"unreached")?; set_cap_per_day(ctx,"10","USDC")?; Ok(()) }';
 const traceContext = {...context, amount_units: 750000};
 const traceRequest = {operation: 'evaluate', source: traceSource, profile: 'oracle', context: traceContext};
 const untraced = invoke(traceRequest);

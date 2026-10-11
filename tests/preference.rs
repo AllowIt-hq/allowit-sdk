@@ -1,7 +1,7 @@
 use allowit_sdk::{ConfidenceInterval, Context, Profile, compile, evaluate, semantic_evidence_key};
 fn source(approve: bool, deny: bool) -> String {
     format!(
-        "pub async fn evaluate(ctx: &Context) -> PolicyResult {{ set_cap(ctx, \"500\", \"USDC\")?; check_preference(ctx, \"Avoid hype 🌱\", {approve}, \"85\", {deny}, \"40\").await?; Ok(()) }}"
+        "pub async fn evaluate(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"500\", \"USDC\")?; check_preference(ctx, \"Avoid hype 🌱\", {approve}, \"85\", {deny}, \"40\").await?; Ok(()) }}"
     )
 }
 fn context(score: u64) -> Context {
@@ -93,10 +93,7 @@ fn invalid_settings_cannot_compile_or_bypass_hard_rules() {
     let mut c = context(10000);
     c.amount_units = 501_000_000;
     c.allocation_units = 1_000_000_000;
-    assert_eq!(
-        evaluate(&p, Profile::Oracle, &c).code,
-        "POLICY_CAP_EXCEEDED"
-    );
+    assert_eq!(evaluate(&p, Profile::Oracle, &c).code, "DAILY_CAP_EXCEEDED");
     let mut c = context(10000);
     c.network = "local:dev".into();
     assert_eq!(evaluate(&p, Profile::Oracle, &c).outcome, "pass");

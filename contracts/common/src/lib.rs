@@ -13,7 +13,7 @@ pub mod binary;
 #[cfg(feature = "integer-json")]
 mod integer_json;
 
-pub const CORE_VERSION: &str = "0.1.0";
+pub const CORE_VERSION: &str = "0.2.0";
 pub const MAX_ARTIFACT_BYTES: usize = 16_384;
 #[cfg(not(feature = "stellar"))]
 pub const MAX_CHAIN_ARTIFACT_BYTES: usize = 8192;
@@ -166,6 +166,8 @@ pub struct State {
     pub active: bool,
     pub revoked: bool,
     pub spent_units: u64,
+    pub daily_spent_units: u64,
+    pub spent_day: u64,
     pub next_nonce: u64,
 }
 
@@ -484,9 +486,14 @@ fn prepare_execution_with(
     // The current language measures USDC in six decimal places. Stellar token
     // amounts may have seven; convert exactly, never round a spend downward.
     let divisor = if m.asset_decimals == 7 { 10 } else { 1 };
-    if [request.amount_units, m.allocation_units, state.spent_units]
-        .iter()
-        .any(|n| n % divisor != 0)
+    if [
+        request.amount_units,
+        m.allocation_units,
+        state.spent_units,
+        state.daily_spent_units,
+    ]
+    .iter()
+    .any(|n| n % divisor != 0)
     {
         return Err(Error::InvalidMandate);
     }
@@ -495,6 +502,8 @@ fn prepare_execution_with(
         amount_units: request.amount_units / divisor,
         allocation_units: m.allocation_units / divisor,
         spent_units: state.spent_units / divisor,
+        daily_spent_units: Some(state.daily_spent_units / divisor),
+        spent_day: Some(state.spent_day),
         purchase_counts: None,
         action: request.action.clone(),
         merchant: request.merchant.clone(),
@@ -524,14 +533,30 @@ fn prepare_execution_with(
     Ok(decision)
 }
 
-pub fn record_execution(state: &mut State, request: &Request) -> Result<(), Error> {
+pub fn record_execution(state: &mut State, request: &Request, now: u64) -> Result<(), Error> {
     // Invoked only AFTER a successful chain transfer. Chain transaction atomicity
     // reverts the transfer too if a later state write fails.
-    state.spent_units = state
+    let day = now / 86_400;
+    if day < state.spent_day {
+        return Err(Error::InvalidMandate);
+    }
+    let daily = if day == state.spent_day {
+        state.daily_spent_units
+    } else {
+        0
+    };
+    let next_daily = daily
+        .checked_add(request.amount_units)
+        .ok_or(Error::Overflow)?;
+    let next_spent = state
         .spent_units
         .checked_add(request.amount_units)
         .ok_or(Error::Overflow)?;
-    state.next_nonce = state.next_nonce.checked_add(1).ok_or(Error::Overflow)?;
+    let next_nonce = state.next_nonce.checked_add(1).ok_or(Error::Overflow)?;
+    state.daily_spent_units = next_daily;
+    state.spent_day = day;
+    state.spent_units = next_spent;
+    state.next_nonce = next_nonce;
     Ok(())
 }
 
@@ -615,7 +640,7 @@ mod typed_profile_rejection {
     #[test]
     fn binary_encoder_rejects_typed_version_even_with_only_scalar_nodes() {
         let compiled = allowit_sdk::compile(
-            "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"1\", \"USDC\")?; Ok(()) }",
+            "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"1\", \"USDC\")?; Ok(()) }",
         )
         .unwrap();
         let mut artifact = Artifact {

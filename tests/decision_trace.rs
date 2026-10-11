@@ -8,12 +8,14 @@ fn context() -> Context {
         network: "local:dev".into(),
         action: "research".into(),
         original_intent: "Research primary sources".into(),
+        daily_spent_units: Some(0),
+        spent_day: Some(0),
         ..Context::default()
     }
 }
 fn policy(body: &str) -> String {
     format!(
-        "pub async fn exec(ctx: &Context) -> PolicyResult {{ set_cap(ctx, \"10\", \"USDC\")?; {body} Ok(()) }}"
+        "pub async fn exec(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"10\", \"USDC\")?; {body} Ok(()) }}"
     )
 }
 #[test]

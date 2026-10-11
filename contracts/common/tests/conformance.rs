@@ -33,7 +33,7 @@ fn chain_profile_admits_maximum_semantic_policy_and_rejects_deeper_ir() {
     let state = support::maximum_semantic_fixture();
     allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact).unwrap();
     let deep = fixture(
-        "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; if ((((((ctx.amount_units + 0) + 0) + 0) + 0) + 0) > 0) { cap_per_transaction(ctx, \"10\", \"USDC\")?; } Ok(()) }",
+        "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; if ((((((ctx.amount_units + 0) + 0) + 0) + 0) + 0) > 0) { cap_per_transaction(ctx, \"10\", \"USDC\")?; } Ok(()) }",
     );
     assert_eq!(
         allowit_contract_core::validate_chain_artifact(&deep.mandate, &deep.artifact),
@@ -44,7 +44,7 @@ fn chain_profile_admits_maximum_semantic_policy_and_rejects_deeper_ir() {
 #[test]
 fn purchase_ledger_policies_cannot_activate_on_contracts_without_ledger_state() {
     let state = fixture(
-        "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; cap_purchase_tiers(ctx, \"1\", 2, \"USDC\")?; Ok(()) }",
+        "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; cap_purchase_tiers(ctx, \"1\", 2, \"USDC\")?; Ok(()) }",
     );
     assert_eq!(
         allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact),
@@ -68,6 +68,8 @@ fn contract_and_oracle_share_exact_pass_and_failure_core() {
             token: "USDC".into(),
             action: "research".into(),
             network: "devnet".into(),
+            daily_spent_units: Some(0),
+            spent_day: Some(0),
             ..Context::default()
         };
         let oracle = evaluate(&compiled, Profile::Oracle, &ctx);
@@ -107,7 +109,7 @@ fn binds_every_action_field_and_enforces_nonce_budget_expiry_revoke() {
         );
     }
     assert_eq!(prepare_execution(&state, &valid, 2000), Err(Error::Expired));
-    record_execution(&mut state, &valid).unwrap();
+    record_execution(&mut state, &valid, 1000).unwrap();
     assert_eq!(prepare_execution(&state, &valid, 1000), Err(Error::Replay));
     state.spent_units = 99_000_000;
     assert_eq!(
@@ -137,6 +139,8 @@ fn input_fails_without_consuming_nonce_or_budget_and_artifact_tampering_fails() 
         token: "USDC".into(),
         action: "research".into(),
         network: "devnet".into(),
+        daily_spent_units: Some(0),
+        spent_day: Some(0),
         ..Context::default()
     };
     let suspended = evaluate(&compiled, Profile::Oracle, &context);
@@ -272,10 +276,10 @@ fn semantic_evidence_binds_original_intent_and_complete_runtime_context() {
 fn qualified_functions_keep_chain_artifact_and_request_bindings() {
     let named = SIMPLE
         .replace("pub async fn evaluate", "async fn _execute")
-        .replace("set_cap(", "allowit::set_cap(")
+        .replace("set_cap_per_day(", "allowit::set_cap_per_day(")
         .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
         .replace("allow_actions(", "allowit::allow_actions(");
-    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap"));
+    assert!(named.contains("async fn _execute") && named.contains("allowit::set_cap_per_day"));
     let state = fixture(&named);
     allowit_contract_core::validate_chain_artifact(&state.mandate, &state.artifact).unwrap();
     for (amount, pass) in [(10_000_000, true), (10_000_001, false)] {
@@ -313,4 +317,38 @@ fn authenticated_host_workflow_ir_is_not_admitted_by_chain_or_binary_profile() {
         allowit_contract_core::binary::encode(&forged),
         Err(Error::InvalidArtifact)
     );
+}
+
+#[test]
+fn daily_custody_accounting_commits_and_resets_independently_of_funding() {
+    let mut state = fixture(SIMPLE);
+    state.mandate.expires_at = 200_000;
+    state.mandate.allocation_units = 200_000_000;
+    state.spent_units = 100_000_000;
+    state.daily_spent_units = 95_000_000;
+    state.spent_day = 0;
+    let req = request(&state, 10_000_000);
+    assert!(prepare_execution(&state, &req, 86_399).is_err());
+    assert!(prepare_execution(&state, &req, 86_400).is_ok());
+    record_execution(&mut state, &req, 86_400).unwrap();
+    assert_eq!(state.spent_units, 110_000_000);
+    assert_eq!(state.daily_spent_units, 10_000_000);
+    assert_eq!(state.spent_day, 1);
+    let next = request(&state, 10_000_000);
+    assert!(prepare_execution(&state, &next, 86_399).is_err());
+    state.mandate.allocation_units = 110_000_000;
+    assert!(prepare_execution(&state, &next, 172_800).is_err());
+}
+
+#[test]
+fn counter_overflow_does_not_mutate_custody_state() {
+    let mut state = fixture(SIMPLE);
+    state.spent_units = u64::MAX;
+    let before = state.clone();
+    let req = request(&state, 1);
+    assert_eq!(
+        record_execution(&mut state, &req, 86400),
+        Err(Error::Overflow)
+    );
+    assert_eq!(state, before);
 }

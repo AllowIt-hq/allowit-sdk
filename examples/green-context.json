@@ -14,11 +14,20 @@
     "benchmark_yield_bps": 500,
     "candidate": {
       "name": "Clean-energy bond",
-      "environmental_claims": ["Project proceeds finance grid-scale renewable energy"],
-      "sources": [{"url": "https://issuer.example/disclosures", "kind": "issuer disclosure"}]
+      "environmental_claims": [
+        "Project proceeds finance grid-scale renewable energy"
+      ],
+      "sources": [
+        {
+          "url": "https://issuer.example/disclosures",
+          "kind": "issuer disclosure"
+        }
+      ]
     },
     "provenance": "Illustrative caller-supplied claims; authenticate sources before making a real decision."
   },
   "answers": {},
-  "confidence": {}
+  "confidence": {},
+  "daily_spent_units": 0,
+  "spent_day": 20724
 }

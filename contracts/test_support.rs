@@ -1,7 +1,7 @@
 use allowit_contract_core::{Artifact, CORE_VERSION, Mandate, Request, State};
 
-pub const SIMPLE: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; allow_actions(ctx, &[\"research\"])?; Ok(()) }";
-pub const INPUT: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; require_user_input(ctx, \"Approve this purchase?\").await?; Ok(()) }";
+pub const SIMPLE: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; allow_actions(ctx, &[\"research\"])?; Ok(()) }";
+pub const INPUT: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; require_user_input(ctx, \"Approve this purchase?\").await?; Ok(()) }";
 
 pub fn fixture(source: &str) -> State {
     let compiled = allowit_sdk::compile(source).unwrap();
@@ -45,6 +45,8 @@ pub fn fixture(source: &str) -> State {
         active: true,
         revoked: false,
         spent_units: 0,
+        daily_spent_units: 0,
+        spent_day: 0,
         next_nonce: 0,
     }
 }
@@ -67,10 +69,10 @@ pub fn request(state: &State, amount: u64) -> Request {
     }
 }
 
-pub const CONFIDENCE: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; let interval = confidence(ctx, \"merchant\")?; if interval.lower_bps < 9000 { require_user_input(ctx, \"Approve the uncertain merchant?\").await?; } Ok(()) }";
+pub const CONFIDENCE: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; let interval = confidence(ctx, \"merchant\")?; if interval.lower_bps < 9000 { require_user_input(ctx, \"Approve the uncertain merchant?\").await?; } Ok(()) }";
 
 pub const SEMANTIC_QUESTION: &str = "Does this purchase satisfy the owner intent?";
-pub const SEMANTIC: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap(ctx, \"100\", \"USDC\")?; let risk = context_u64(ctx, \"risk\")?; if risk > 10 { return fail(\"Risk is too high.\"); } let interval = semantic(ctx, \"Does this purchase satisfy the owner intent?\")?; if interval.lower_bps < 9000 { require_user_input(ctx, \"Approve the uncertain request?\").await?; } Ok(()) }";
+pub const SEMANTIC: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; let risk = context_u64(ctx, \"risk\")?; if risk > 10 { return fail(\"Risk is too high.\"); } let interval = semantic(ctx, \"Does this purchase satisfy the owner intent?\")?; if interval.lower_bps < 9000 { require_user_input(ctx, \"Approve the uncertain request?\").await?; } Ok(()) }";
 
 pub fn maximum_semantic_fixture() -> State {
     let nested = "if (((((ctx.amount_units + 0) + 0) + 0) + 0) > 0) { cap_per_transaction(ctx, \"10\", \"USDC\")?; }";

@@ -78,7 +78,7 @@ Use decimal strings in policy source; runtime context remains JSON with integer 
 | `amount_at_most(ctx, "25.50")?` | Whether this purchase is at or below 25.50 USDC, including equality. |
 | `within_percentage_points(candidate, benchmark, "1")?` | Whether a candidate return is at most one percentage point below the benchmark. Both values are immutable integer variables or literals in basis points; 4% versus 5% passes. Higher returns pass. |
 
-These helpers do not create an allowance. Use `set_cap` for the total allocation and `cap_per_transaction` for a per-purchase limit, with positive decimal strings. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.
+These helpers do not create an allowance. Use `set_cap_per_day` for the daily spending limit and `cap_per_transaction` for a per-purchase limit, with positive decimal strings. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.
 
 ```rust
 if !amount_at_most(ctx, "25.50")? {
@@ -104,7 +104,7 @@ New source can use `use allowit::v1::prelude::*;` and `pub async fn execute(ctx:
 use allowit::v1::prelude::*;
 
 pub async fn execute(ctx: &Context) -> PolicyResult {
-    set_cap(ctx, "10", "USDC")?;
+    set_cap_per_day(ctx, "10", "USDC")?;
     cap_purchase_tiers(ctx, "1", 2, "USDC")?;
     check_preference(ctx,
         "Does this purchase count as research under the user's stated purpose and definitions?",

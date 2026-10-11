@@ -66,7 +66,7 @@ pub use prelude::{
 };
 pub use primitives::{
     allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, is_one_of,
-    require_merchant, require_recipient, set_cap,
+    require_merchant, require_recipient, set_cap_per_day,
 };
 
 #[cfg(feature = "std")]

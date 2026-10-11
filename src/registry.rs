@@ -13,9 +13,9 @@ pub struct FunctionInfo {
 }
 pub fn registry() -> Vec<FunctionInfo> {
     let functions: Vec<FunctionInfo> = [
-        ("set_cap", "Total spending limit", "Sets the total amount this policy can spend. Previous spending and the new request must fit within this limit.", "set_cap(ctx: &Context, amount: &str, token: &str) -> PolicyResult", "config"),
+        ("set_cap_per_day", "Daily spending limit", "Sets the amount this policy can spend per UTC day. Authenticated daily spending and the new request must fit within this limit.", "set_cap_per_day(ctx: &Context, amount: &str, token: &str) -> PolicyResult", "config"),
         ("cap_per_transaction", "Limit per purchase", "Rejects a purchase above this amount, even when money remains in the total allowance.", "cap_per_transaction(ctx: &Context, amount: &str, token: &str) -> PolicyResult", "context"),
-        ("cap_purchase_tiers", "Purchase tiers", "Limits expensive purchases: the first price band allows the stated count. Each cheaper band halves the ceiling and doubles the count. No minimum purchase amount; the total cap still applies. Uses authoritative purchase history, including reservations.", "cap_purchase_tiers(ctx: &Context, maximum: &str, first_count: u64, token: &str) -> PolicyResult", "ledger"),
+        ("cap_purchase_tiers", "Purchase tiers", "Limits expensive purchases: the first price band allows the stated count. Each cheaper band halves the ceiling and doubles the count. No minimum purchase amount; available funding still limits spending. Uses authoritative purchase history, including reservations.", "cap_purchase_tiers(ctx: &Context, maximum: &str, first_count: u64, token: &str) -> PolicyResult", "ledger"),
         ("usdc", "USDC amount", "Writes amounts in USDC: usdc(\"25.50\")? means 25.50 USDC. Up to six decimal places, with no rounding. On Testnet this unit uses the policy's configured six-decimal test token.", "usdc(amount: &str) -> Result<u64, PolicyError>", "pure"),
         ("percent", "Percentage", "Writes a percentage from 0 to 100: percent(\"85\")? means 85%, or 8,500 basis points. Up to two decimal places, with no rounding.", "percent(value: &str) -> Result<u64, PolicyError>", "pure"),
         ("amount_at_most", "Compare purchase amount", "Checks whether the purchase is at or below this USDC amount, including equality. This comparison does not set a spending allowance.", "amount_at_most(ctx: &Context, amount: &str) -> Result<bool, PolicyError>", "context"),
@@ -40,7 +40,7 @@ pub fn registry() -> Vec<FunctionInfo> {
         qualified.name = alloc::format!("allowit::{}", function.name);
         qualified.signature = match function.name.as_str() {
             "check_preference"=>"async allowit::check_preference(evidence: Option<ConfidenceInterval>, question: &str, deny: Threshold, approve: Threshold) -> PolicyResult".into(),
-            "set_cap"=>"allowit::set_cap(spent_units: u64, amount_units: u64, token: &str, limit_units: u64, currency: &str, decimals: u64) -> PolicyResult".into(),
+            "set_cap_per_day"=>"allowit::set_cap_per_day(daily_spent_units: Option<u64>, spent_day: Option<u64>, now: u64, amount_units: u64, token: &str, limit_units: u64, currency: &str, decimals: u64) -> PolicyResult".into(),
             "cap_per_transaction"=>"allowit::cap_per_transaction(amount_units: u64, token: &str, limit_units: u64, currency: &str, decimals: u64) -> PolicyResult".into(),
             "cap_purchase_tiers"=>"allowit::cap_purchase_tiers(amount_units: u64, token: &str, purchase_counts: &Option<Vec<u64>>, maximum_units: u64, first_count: u64, currency: &str, decimals: u64) -> PolicyResult".into(),
             "allow_actions"=>"allowit::allow_actions(action: &str, actions: &[&str]) -> PolicyResult".into(),

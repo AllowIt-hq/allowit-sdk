@@ -67,7 +67,7 @@ impl Collector {
                         }
                         Some(ExecutionFeature::RuntimeContextU64)
                     }
-                    "set_cap"
+                    "set_cap_per_day"
                     | "cap_per_transaction"
                     | "allow_actions"
                     | "require_merchant"

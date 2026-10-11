@@ -232,6 +232,8 @@ impl AllowIt {
             active: true,
             revoked: false,
             spent_units: 0,
+            daily_spent_units: 0,
+            spent_day: 0,
             next_nonce: 0,
         };
         let mut stored = Stored {
@@ -296,7 +298,7 @@ impl AllowIt {
             &stored.recipient,
             &i128::from(request.amount_units),
         );
-        record_execution(&mut state, &request)?;
+        record_execution(&mut state, &request, env.ledger().timestamp())?;
         save(&env, &key, &mut stored, &state)?;
         Ok(state.spent_units)
     }

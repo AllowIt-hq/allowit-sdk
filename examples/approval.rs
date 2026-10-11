@@ -1,7 +1,7 @@
 use allowit::prelude::*;
 
 pub async fn evaluate(ctx: &Context) -> PolicyResult {
-    set_cap(ctx, "50", "USDC")?;
+    set_cap_per_day(ctx, "50", "USDC")?;
     allow_actions(ctx, &["research"])?;
     let safety = confidence(ctx, "safety")?;
     if safety.lower_bps < 8000 {

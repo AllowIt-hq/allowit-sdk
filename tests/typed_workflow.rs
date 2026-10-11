@@ -235,6 +235,8 @@ fn payment() -> (allowit_sdk::CompiledPolicy, Context) {
     let b = binding(&p);
     let mut c = Context {
         now: 100,
+        daily_spent_units: Some(0),
+        spent_day: Some(0),
         ..Context::default()
     };
     c.install_workflow(WorkflowEnvironment {
@@ -419,7 +421,7 @@ fn old_ir_cannot_smuggle_new_semantics() {
     ir.version = "1.0.0".into();
     assert!(allowit_sdk::validate_program(&ir).is_err());
     let registry = allowit_sdk::process_value(serde_json::json!({"operation":"registry"}));
-    assert_eq!(registry["registry_version"], "1.4.0");
+    assert_eq!(registry["registry_version"], "1.5.0");
     assert_eq!(registry["type_declarations"][0], "ExecutionRequest");
 }
 

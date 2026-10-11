@@ -27,7 +27,7 @@ pub const MAX_SOLANA_ARTIFACT_BYTES: usize = allowit_contract_core::MAX_CHAIN_AR
 pub const MAX_SOLANA_IR_DEPTH: usize = allowit_contract_core::MAX_CHAIN_IR_DEPTH;
 pub const MAX_SOLANA_IR_NODES: usize = allowit_contract_core::MAX_CHAIN_IR_NODES;
 pub const MAX_RUNTIME_CONTEXT_BYTES: usize = 256;
-const MAGIC: &[u8; 8] = b"ALLOWIT1";
+const MAGIC: &[u8; 8] = b"ALLOWIT2";
 pub const DEPLOYMENT_NETWORK: &str = match option_env!("ALLOWIT_SOLANA_NETWORK") {
     Some(v) => v,
     None => "devnet",
@@ -297,6 +297,8 @@ pub fn process_instruction(
                     active: false,
                     revoked: false,
                     spent_units: 0,
+                    daily_spent_units: 0,
+                    spent_day: 0,
                     next_nonce: 0,
                 },
             )
@@ -428,7 +430,7 @@ pub fn process_instruction(
                 ],
                 &[&[b"allowit", state_account.key.as_ref(), &[bump]]],
             )?;
-            record_execution(&mut state, &request).map_err(fail)?;
+            record_execution(&mut state, &request, now).map_err(fail)?;
             write_state(state_account, &state)
         }
         Instruction::Revoke => {

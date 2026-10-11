@@ -696,7 +696,7 @@ fn logical_head_cannot_be_substituted_reinitialized_or_used_to_skip_revisions() 
 fn private_namespaced_handler_runs_in_compiled_sbf() {
     let source = support::SIMPLE
         .replace("pub async fn evaluate", "async fn _execute")
-        .replace("set_cap(", "allowit::set_cap(")
+        .replace("set_cap_per_day(", "allowit::set_cap_per_day(")
         .replace("cap_per_transaction(", "allowit::cap_per_transaction(")
         .replace("allow_actions(", "allowit::allow_actions(");
     let mut f = Fixture::ready(&source, false);

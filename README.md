@@ -9,7 +9,7 @@ struct PolicyParams {}
 fn new() -> PolicyParams { PolicyParams {} }
 
 async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
-    allowit::set_cap(ctx.spent_units, ctx.amount_units, &ctx.token, 100_000_000, "USDC", 6)?;
+    allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, 100_000_000, "USDC", 6)?;
     allowit::cap_per_transaction(ctx.amount_units, &ctx.token, 10_000_000, "USDC", 6)?;
     allowit::require_merchant(&ctx.merchant, "research.example")?;
     jev::check_preference(
@@ -96,9 +96,9 @@ Every function and every branch is validated, including unreachable code. Unknow
 
 All monetary values in the portable core are micro-USDC (six decimal places). Decimal limit strings are converted exactly; excess precision, zero, negatives and overflow are rejected. Rail adapters must verify the asset and normalize its actual decimal precision without rounding. The Stellar adapter therefore rejects sub-micro-unit dust when converting its seven-decimal asset. Version 1 supports only the bound USDC asset, not arbitrary tokens described as USDC.
 
-`set_cap` is a configuration declaration: it may occur at most once, at the top level, with literal amount and token. It is enforced before user control flow, including when placed after an early return. The host allocation and spent amount are always enforced independently. Policies can restrict this budget but cannot increase it.
+`set_cap_per_day` is a configuration declaration: it may occur at most once, at the top level, with literal amount and token. It is enforced before user control flow, including when placed after an early return. The host allocation and spent amount are always enforced independently. Total funding is enforced by the host allocation, outside policy rules. Daily spending uses authenticated counters, resets at UTC midnight, and rejects missing counters or clock rollback.
 
-The predefined registry contains `set_cap`, `cap_per_transaction`, `allow_actions`, `require_merchant`, `require_recipient`, `confidence`, `semantic`, `context_u64`, `require_user_input` and `fail`. Help, signatures and workflow labels come from that registry.
+The predefined registry contains `set_cap_per_day`, `cap_per_transaction`, `allow_actions`, `require_merchant`, `require_recipient`, `confidence`, `semantic`, `context_u64`, `require_user_input` and `fail`. Help, signatures and workflow labels come from that registry.
 
 Classifications such as research purpose, wallet role, or a customer's investment category belong in configurable `check_preference` questions evaluated by Jev. `allow_actions` only compares caller-supplied strings; it does not verify membership in a semantic category. Exact user-specified addresses, merchant identifiers and numeric restrictions remain deterministic checks. A matching address does not establish its purpose or ownership.
 
@@ -151,7 +151,7 @@ Workflow and call spans are **UTF-16 code-unit offsets** for browser strings and
 
 Oracle callers can add `"trace": true` to an evaluation request. The response then includes `trace: {version: 1, source_hash, ir_hash, complete, steps: [{node_id, status, visited}]}`. Every compiled workflow node appears exactly once in display order. IDs and hashes come from freshly compiled source, and a native caller can use `evaluate_with_trace(&policy, &context)`. Invalid artifacts return no trace. The default response is unchanged; a contract-profile request rejects `trace: true`, and contract builds omit the tracing code.
 
-The trace records actual execution, including `set_cap` and `cap_purchase_tiers` checks hoisted before normal control flow. `passed` means the block's executed path completed; it does not mean every condition inside custom code ran. `failed` identifies the block that rejected the request. `verifying` identifies the exact block that requires semantic evidence; the trusted host should persist that state before calling Jev. `awaiting_input` identifies a block waiting for the owner. Both pending states have `complete: false`, with unreached nodes `inactive`. Terminal outcomes have `complete: true`, with unvisited nodes `skipped`, including a final `Ok(())` bypassed by an earlier return. Only `inactive` and `skipped` have `visited: false`. A block containing several custom statements remains one unit; its unselected branches are not separate workflow steps.
+The trace records actual execution, including `set_cap_per_day` and `cap_purchase_tiers` checks hoisted before normal control flow. `passed` means the block's executed path completed; it does not mean every condition inside custom code ran. `failed` identifies the block that rejected the request. `verifying` identifies the exact block that requires semantic evidence; the trusted host should persist that state before calling Jev. `awaiting_input` identifies a block waiting for the owner. Both pending states have `complete: false`, with unreached nodes `inactive`. Terminal outcomes have `complete: true`, with unvisited nodes `skipped`, including a final `Ok(())` bypassed by an earlier return. Only `inactive` and `skipped` have `visited: false`. A block containing several custom statements remains one unit; its unselected branches are not separate workflow steps.
 
 Hosts must bind each trace to the request, evaluation attempt and approved revision, verify both hashes and node IDs, and replace it after reevaluation rather than merge results across contexts. A host-level rejection has no policy node unless the host possesses an exact source binding. Trace status describes a policy check, never chain settlement or a transfer receipt. Displaying a previous run's trace must not imply that its checks passed for a newer request.
 
@@ -195,7 +195,7 @@ Use decimal strings in policy source; runtime context remains JSON with integer 
 | `allowit::amount_at_most(ctx.amount_units, "25.50")?` | Whether this purchase is at or below 25.50 USDC, including equality. |
 | `within_percentage_points(candidate, benchmark, "1")?` | Whether a candidate return is at most one percentage point below the benchmark. Both values are immutable integer variables or literals in basis points; 4% versus 5% passes. Higher returns pass. |
 
-These helpers do not create an allowance. Use `set_cap` for the total allocation and `cap_per_transaction` for a per-purchase limit, with explicit positive integer units, currency and decimals. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.
+These helpers do not create an allowance. Use `set_cap_per_day` for the daily spending limit and `cap_per_transaction` for a per-purchase limit, with explicit positive integer units, currency and decimals. USDC has six policy decimals; Testnet uses its bound six-decimal test token. Other token precisions are not inferred from symbols. Rail adapters bind the actual asset and reject precision loss.
 
 ```rust
 if !allowit::amount_at_most(ctx.amount_units, "25.50")? {
@@ -232,12 +232,12 @@ The default `oracle-ledger` feature includes host purchase counters. Contract bu
 Builds without `oracle-ledger` reject purchase-tier IR during validation with `LEDGER_REQUIRED`, before any evaluation. The registry still describes the function so callers can identify this unsupported feature. The public `spending` module is available only with `oracle-ledger`. Default SDK WASM and host builds include it; contract builds exclude it.
 
 
-Provider policies declare their exact payment asset in one unconditional `set_cap`
+Provider policies declare their exact payment asset in one unconditional `set_cap_per_day`
 guard. The compiler projects that literal into `CompiledPolicy.token` and
 `provider_call_requirements[].payment_asset_id`. The authenticated host sets
 `Context.token` to this mint and supplies `ProviderCallInput.payment_asset`
 with the verified network, mint and six decimals. A source guard for `USDC`
-does not accept the Testnet demo token. Legacy policies keep their USDC profile.
+does not accept the Testnet demo token. Older stored registries must be recompiled and installed as a new revision; `set_cap` is rejected.
 Provider binding cannot round-trip through JSON; the host assigns it through the
 typed API after authenticating the canonical run input. Execute effects only from
 an in-process successful evaluation, never from a deserialized decision. Hosts

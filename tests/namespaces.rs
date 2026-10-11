@@ -8,8 +8,8 @@ fn context() -> Context {
 }
 #[test]
 fn qualified_calls_preserve_effects_requirements_and_contract_decisions() {
-    let plain = compile(&source("set_cap(ctx, \"100\", \"USDC\")?; if !amount_at_most(ctx, \"10\")? { return fail(\"limit\"); } require_merchant(ctx, \"research.example\")?; Ok(())")).unwrap();
-    let named = compile(&source("allowit::set_cap(ctx, \"100\", \"USDC\")?; if !allowit::amount_at_most(ctx, \"10\")? { return allowit::fail(\"limit\"); } allowit::require_merchant(ctx, \"research.example\")?; Ok(())")).unwrap();
+    let plain = compile(&source("set_cap_per_day(ctx, \"100\", \"USDC\")?; if !amount_at_most(ctx, \"10\")? { return fail(\"limit\"); } require_merchant(ctx, \"research.example\")?; Ok(())")).unwrap();
+    let named = compile(&source("allowit::set_cap_per_day(ctx, \"100\", \"USDC\")?; if !allowit::amount_at_most(ctx, \"10\")? { return allowit::fail(\"limit\"); } allowit::require_merchant(ctx, \"research.example\")?; Ok(())")).unwrap();
     assert_eq!(plain.execution_requirements, named.execution_requirements);
     assert_eq!(plain.limit, named.limit);
     assert_ne!(plain.source_hash, named.source_hash);
@@ -29,10 +29,10 @@ fn qualified_calls_preserve_effects_requirements_and_contract_decisions() {
     }
     let entry = registry()
         .into_iter()
-        .find(|f| f.name == "allowit::set_cap")
+        .find(|f| f.name == "allowit::set_cap_per_day")
         .unwrap();
     assert_eq!(entry.effect, "config");
-    assert!(entry.signature.starts_with("allowit::set_cap("));
+    assert!(entry.signature.starts_with("allowit::set_cap_per_day("));
 }
 #[test]
 fn jev_preferences_lower_to_existing_evidence_and_owner_input() {
@@ -67,37 +67,37 @@ fn jev_preferences_lower_to_existing_evidence_and_owner_input() {
 #[test]
 fn exact_registry_rejects_unknown_vendors_operations_and_type_paths() {
     for name in [
-        "paysh::set_cap",
+        "paysh::set_cap_per_day",
         "paysh::pay",
         "stripe::pay",
-        "jev::set_cap",
+        "jev::set_cap_per_day",
         "jev::confidence",
         "allowit::pay",
         "allowit::Ok",
-        "::allowit::set_cap",
-        "allowit::v1::set_cap",
-        "allowit::set_cap::<u64>",
-        "<Context as Vendor>::set_cap",
+        "::allowit::set_cap_per_day",
+        "allowit::v1::set_cap_per_day",
+        "allowit::set_cap_per_day::<u64>",
+        "<Context as Vendor>::set_cap_per_day",
     ] {
         assert!(
             compile(&source(&format!("{name}(ctx, \"100\", \"USDC\")?; Ok(())"))).is_err(),
             "{name}"
         );
     }
-    assert!(compile(&source("let check = allowit::set_cap; Ok(())")).is_err());
+    assert!(compile(&source("let check = allowit::set_cap_per_day; Ok(())")).is_err());
     assert!(compile(&source("if true { allowit::require_merchant(ctx, \"research.example\")?; } allowit::require_recipient(ctx, \"recipient\")?; Ok(())")).is_ok());
 }
 #[test]
 fn named_configuration_keeps_the_same_placement_and_feature_rules() {
     assert!(
         compile(&source(
-            "if true { allowit::set_cap(ctx, \"100\", \"USDC\")?; } Ok(())"
+            "if true { allowit::set_cap_per_day(ctx, \"100\", \"USDC\")?; } Ok(())"
         ))
         .is_err()
     );
     assert!(
         compile(&source(
-            "set_cap(ctx, \"100\", \"USDC\")?; allowit::set_cap(ctx, \"100\", \"USDC\")?; Ok(())"
+            "set_cap_per_day(ctx, \"100\", \"USDC\")?; allowit::set_cap_per_day(ctx, \"100\", \"USDC\")?; Ok(())"
         ))
         .is_err()
     );
@@ -113,8 +113,10 @@ mod native_facade {
     use allowit_sdk as allowit;
     use allowit_sdk::prelude::*;
     pub async fn check(ctx: &Context) -> PolicyResult {
-        allowit::set_cap(
-            ctx.spent_units,
+        allowit::set_cap_per_day(
+            ctx.daily_spent_units,
+            ctx.spent_day,
+            ctx.now,
             ctx.amount_units,
             &ctx.token,
             100_000_000,
@@ -142,8 +144,10 @@ mod versioned_facade {
     use allowit_sdk as allowit;
     use allowit_sdk::v1::prelude::*;
     pub async fn check(ctx: &Context) -> PolicyResult {
-        allowit::set_cap(
-            ctx.spent_units,
+        allowit::set_cap_per_day(
+            ctx.daily_spent_units,
+            ctx.spent_day,
+            ctx.now,
             ctx.amount_units,
             &ctx.token,
             100_000_000,
@@ -176,7 +180,7 @@ fn registered_names_type_check_in_both_facades() {
 #[test]
 fn every_registered_core_alias_compiles_to_its_bounded_operation() {
     for body in [
-        "allowit::set_cap(ctx, \"100\", \"USDC\")?;",
+        "allowit::set_cap_per_day(ctx, \"100\", \"USDC\")?;",
         "allowit::cap_per_transaction(ctx, \"10\", \"USDC\")?;",
         "let amount = allowit::usdc(\"10\")?;",
         "let score = allowit::percent(\"85\")?;",
@@ -229,20 +233,20 @@ fn runtime_artifacts_require_canonical_operation_names() {
 }
 
 #[test]
-fn registry_minor_version_advertises_aliases_without_changing_ir_schema() {
-    let source = source("set_cap(ctx, \"100\", \"USDC\")?; Ok(())");
+fn daily_accounting_registry_rejects_older_artifacts() {
+    let source = source("set_cap_per_day(ctx, \"100\", \"USDC\")?; Ok(())");
     let mut policy = compile(&source).unwrap();
-    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.4.0");
-    assert_eq!(policy.registry_version, "1.4.0");
+    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.5.0");
+    assert_eq!(policy.registry_version, "1.5.0");
     assert_eq!(policy.ir.version, "1.0.0");
     let hash = policy.ir_hash.clone();
     policy.registry_version = "1.0.0".into();
     assert_eq!(
-        evaluate(&policy, Profile::Oracle, &context()).outcome,
-        "pass"
+        evaluate(&policy, Profile::Oracle, &context()).code,
+        "INVALID_ARTIFACT"
     );
     assert_eq!(allowit_sdk::canonical_ir_hash(&policy.ir).unwrap(), hash);
-    policy.registry_version = "1.5.0".into();
+    policy.registry_version = "9.0.0".into();
     assert_eq!(
         evaluate(&policy, Profile::Oracle, &context()).code,
         "INVALID_ARTIFACT"
@@ -258,12 +262,15 @@ fn qualified_preference_signature_matches_the_rust_facade() {
 
 #[test]
 fn namespace_spacing_does_not_relax_exact_path_resolution() {
-    for call in ["allowit :: set_cap", "allowit::/* comment */set_cap"] {
+    for call in [
+        "allowit :: set_cap_per_day",
+        "allowit::/* comment */set_cap_per_day",
+    ] {
         assert!(compile(&source(&format!("{call}(ctx, \"5\", \"USDC\")?; Ok(())"))).is_ok());
     }
     for call in [
-        "r#allowit::set_cap",
-        "allowit::r#set_cap",
+        "r#allowit::set_cap_per_day",
+        "allowit::r#set_cap_per_day",
         "jev::jev::semantic",
     ] {
         assert!(compile(&source(&format!("{call}(ctx, \"5\", \"USDC\")?; Ok(())"))).is_err());

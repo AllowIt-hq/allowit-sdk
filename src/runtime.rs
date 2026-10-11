@@ -732,7 +732,7 @@ impl Evaluator<'_> {
                             .map_err(alloc::boxed::Box::new)?;
                         Value::Unit
                     }
-                    "set_cap" | "cap_per_transaction" => {
+                    "set_cap_per_day" | "cap_per_transaction" => {
                         let token = string(&values, 2)?;
                         if token != self.context.token {
                             return Err(failure(
@@ -742,28 +742,29 @@ impl Evaluator<'_> {
                         }
                         let cap = amount_units(&string(&values, 1)?)
                             .map_err(|e| failure("INVALID_AMOUNT", e.message))?;
-                        let amount = if name == "set_cap" {
-                            self.context
-                                .spent_units
-                                .checked_add(self.context.amount_units)
-                                .ok_or_else(|| {
-                                    failure(
-                                        "BUDGET_EXCEEDED",
-                                        "The request exceeds the remaining allowance.",
-                                    )
-                                })?
+                        let amount = if name == "set_cap_per_day" {
+                            crate::primitives::daily_spend(
+                                self.context.daily_spent_units,
+                                self.context.spent_day,
+                                self.context.now,
+                            )
+                            .map_err(|e| failure(&e.code, &e.reason))?
+                            .checked_add(self.context.amount_units)
+                            .ok_or_else(|| {
+                                failure("DAILY_CAP_EXCEEDED", "Daily spending limit exceeded.")
+                            })?
                         } else {
                             self.context.amount_units
                         };
                         if amount > cap {
                             return Err(failure(
-                                if name == "set_cap" {
-                                    "POLICY_CAP_EXCEEDED"
+                                if name == "set_cap_per_day" {
+                                    "DAILY_CAP_EXCEEDED"
                                 } else {
                                     "PURCHASE_CAP_EXCEEDED"
                                 },
-                                if name == "set_cap" {
-                                    "The request exceeds this policy's remaining spending limit."
+                                if name == "set_cap_per_day" {
+                                    "The request exceeds this policy's remaining daily spending limit."
                                 } else {
                                     "The purchase exceeds the per-transaction limit."
                                 },
@@ -1301,7 +1302,7 @@ fn run_inner(
             value: Expr::Try { value },
             ..
         } = statement
-            && matches!(&**value,Expr::Call{name,..} if name=="set_cap" || name=="cap_purchase_tiers")
+            && matches!(&**value,Expr::Call{name,..} if name=="set_cap_per_day" || name=="cap_purchase_tiers")
         {
             let result = evaluator.expr(value, &env);
             #[cfg(feature = "compiler")]

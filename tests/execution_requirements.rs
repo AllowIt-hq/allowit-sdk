@@ -2,7 +2,7 @@ use allowit_sdk::{ExecutionFeature as F, compile};
 
 fn policy(body: &str) -> String {
     format!(
-        "pub async fn evaluate(ctx: &Context) -> PolicyResult {{ set_cap(ctx, \"100\", \"USDC\")?; {body} }}"
+        "pub async fn evaluate(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"100\", \"USDC\")?; {body} }}"
     )
 }
 

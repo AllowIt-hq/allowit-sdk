@@ -291,7 +291,7 @@ fn malformed_or_ambiguous_threshold_updates_are_rejected() {
 #[test]
 fn helper_edits_change_only_requested_inclusive_score_boundaries() {
     let original = source(
-        "set_cap(ctx, \"25\", \"USDC\")?;\ncheck_preference(ctx, \"Research\", 0.40, 0.85).await?;\nOk(())",
+        "set_cap_per_day(ctx, \"25\", \"USDC\")?;\ncheck_preference(ctx, \"Research\", 0.40, 0.85).await?;\nOk(())",
     );
     let before = compile(&original).unwrap();
     let response = preference(
@@ -330,7 +330,7 @@ fn helper_edits_change_only_requested_inclusive_score_boundaries() {
         context.amount_units += 1;
         assert_eq!(
             evaluate(policy, Profile::Oracle, &context).code,
-            "POLICY_CAP_EXCEEDED"
+            "DAILY_CAP_EXCEEDED"
         );
         context.amount_units = 1;
         context.confidence.clear();

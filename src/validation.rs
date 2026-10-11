@@ -205,7 +205,7 @@ impl Validator {
                     value, semicolon, ..
                 } => {
                     let direct_config = top
-                        && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call{name,..} if name=="set_cap" || name=="cap_purchase_tiers"));
+                        && matches!(value,Expr::Try {value} if matches!(&**value,Expr::Call{name,..} if name=="set_cap_per_day" || name=="cap_purchase_tiers"));
                     let ty = self.expr(value, env, depth + 1, direct_config)?;
                     if *semicolon {
                         if ty != Type::Unit {
@@ -542,7 +542,7 @@ impl Validator {
                         Type::Integer,
                         Type::Integer
                     ],
-                    "set_cap" | "cap_per_transaction" => {
+                    "set_cap_per_day" | "cap_per_transaction" => {
                         alloc::vec![Type::Context, Type::String, Type::String]
                     }
                     #[cfg(feature = "oracle-ledger")]
@@ -705,7 +705,7 @@ impl Validator {
                 }
                 if self.typed_only()
                     && [
-                        "set_cap",
+                        "set_cap_per_day",
                         "cap_per_transaction",
                         "cap_purchase_tiers",
                         "require_recipient",
@@ -720,11 +720,11 @@ impl Validator {
                         "Typed request policies use typed effect and fee guards; scalar token limits cannot represent native assets.",
                     ));
                 }
-                if name == "set_cap" {
+                if name == "set_cap_per_day" {
                     self.config_count += 1;
                     if !config || self.config_count > 1 {
                         return Err(bad(
-                            "Declare set_cap at most once, unconditionally at top level, with literal arguments.",
+                            "Declare set_cap_per_day at most once, unconditionally at top level, with literal arguments.",
                         ));
                     }
                     match (args.get(1), args.get(2)) {
@@ -740,7 +740,7 @@ impl Validator {
                         }
                         _ => {
                             return Err(bad(
-                                "set_cap requires a positive amount literal and the string \"USDC\".",
+                                "set_cap_per_day requires a positive amount literal and the string \"USDC\".",
                             ));
                         }
                     }
@@ -880,7 +880,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         && provider_asset_id(program).is_none_or(|asset| ["USDC", "SOL"].contains(&asset))
     {
         return Err(bad(
-            "Provider policies require one unconditional set_cap with a literal asset identifier, not a currency symbol.",
+            "Provider policies require one unconditional set_cap_per_day with a literal asset identifier, not a currency symbol.",
         ));
     }
     Ok(())
@@ -900,7 +900,7 @@ pub(crate) fn provider_asset_id(program: &Program) -> Option<&str> {
         let Expr::Call { name, args, .. } = &**value else {
             return None;
         };
-        if name != "set_cap" {
+        if name != "set_cap_per_day" {
             return None;
         }
         match args.get(2) {

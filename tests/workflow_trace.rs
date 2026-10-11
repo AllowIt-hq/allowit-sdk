@@ -18,6 +18,8 @@ fn context() -> Context {
         token: "USDC".into(),
         network: "local:dev".into(),
         original_intent: "Buy primary evidence".into(),
+        daily_spent_units: Some(0),
+        spent_day: Some(0),
         ..Context::default()
     }
 }
@@ -55,7 +57,7 @@ fn states(trace: &WorkflowTrace) -> Vec<S> {
 
 #[test]
 fn straight_execution_records_exact_steps_and_halt() {
-    let body = "set_cap(ctx,\"10\",\"USDC\")?; cap_per_transaction(ctx,\"1\",\"USDC\")?; cap_per_transaction(ctx,\"0.5\",\"USDC\")?; Ok(())";
+    let body = "set_cap_per_day(ctx,\"10\",\"USDC\")?; cap_per_transaction(ctx,\"1\",\"USDC\")?; cap_per_transaction(ctx,\"0.5\",\"USDC\")?; Ok(())";
     let (_, d, trace) = traced(body, &context());
     assert_eq!(d.code, "PURCHASE_CAP_EXCEEDED");
     assert!(trace.complete);
@@ -77,14 +79,14 @@ fn straight_execution_records_exact_steps_and_halt() {
 #[test]
 fn hoisted_caps_do_not_claim_earlier_source_steps_ran() {
     let (_, d, trace) = traced(
-        "require_merchant(ctx,\"other\")?; set_cap(ctx,\"0.5\",\"USDC\")?; Ok(())",
+        "require_merchant(ctx,\"other\")?; set_cap_per_day(ctx,\"0.5\",\"USDC\")?; Ok(())",
         &context(),
     );
-    assert_eq!(d.code, "POLICY_CAP_EXCEEDED");
+    assert_eq!(d.code, "DAILY_CAP_EXCEEDED");
     assert_eq!(states(&trace), vec![S::Skipped, S::Failed, S::Skipped]);
 
     let (_, d, trace) = traced(
-        "if ctx.amount_units > 0 { return Ok(()); } require_merchant(ctx,\"other\")?; set_cap(ctx,\"10\",\"USDC\")?; Ok(())",
+        "if ctx.amount_units > 0 { return Ok(()); } require_merchant(ctx,\"other\")?; set_cap_per_day(ctx,\"10\",\"USDC\")?; Ok(())",
         &context(),
     );
     assert_eq!(d.outcome, "pass");
@@ -133,7 +135,7 @@ fn custom_blocks_report_only_the_selected_path() {
 
 #[test]
 fn jev_pending_and_owner_resume_replace_the_trace() {
-    let body = "set_cap(ctx,\"10\",\"USDC\")?; check_preference(ctx,\"Primary 🌱 evidence?\",0.40,0.85).await?; Ok(())";
+    let body = "set_cap_per_day(ctx,\"10\",\"USDC\")?; check_preference(ctx,\"Primary 🌱 evidence?\",0.40,0.85).await?; Ok(())";
     let (p, d, trace) = traced(body, &context());
     assert_eq!(d.code, "SEMANTIC_EVIDENCE_REQUIRED");
     assert_eq!(p.workflow[1].kind, "preference");
@@ -163,7 +165,7 @@ fn jev_pending_and_owner_resume_replace_the_trace() {
 #[test]
 fn invalid_context_never_marks_a_node_visited() {
     let (_, _, trace) = traced(
-        "set_cap(ctx,\"10\",\"USDC\")?; Ok(())",
+        "set_cap_per_day(ctx,\"10\",\"USDC\")?; Ok(())",
         &Context {
             amount_units: 0,
             ..context()
@@ -175,7 +177,7 @@ fn invalid_context_never_marks_a_node_visited() {
 
 #[test]
 fn trace_identity_comes_from_recompiled_source_not_projection() {
-    let mut p = compile(&source("set_cap(ctx,\"10\",\"USDC\")?; Ok(())")).unwrap();
+    let mut p = compile(&source("set_cap_per_day(ctx,\"10\",\"USDC\")?; Ok(())")).unwrap();
     let canonical = p.workflow.clone();
     p.workflow[0].id = "forged".into();
     p.workflow[0].start = usize::MAX;

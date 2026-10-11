@@ -14,5 +14,12 @@
     "provenance": "Illustrative caller-supplied claim; an action label alone does not establish research purpose."
   },
   "answers": {},
-  "confidence": {"safety": {"lower_bps": 7000, "upper_bps": 9000}}
+  "confidence": {
+    "safety": {
+      "lower_bps": 7000,
+      "upper_bps": 9000
+    }
+  },
+  "daily_spent_units": 0,
+  "spent_day": 20724
 }

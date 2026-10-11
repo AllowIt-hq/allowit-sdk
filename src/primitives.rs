@@ -16,8 +16,10 @@ fn denomination(token: &str, currency: &str, decimals: u64) -> PolicyResult {
     }
     Ok(())
 }
-pub fn set_cap(
-    spent_units: u64,
+pub fn set_cap_per_day(
+    daily_spent_units: Option<u64>,
+    spent_day: Option<u64>,
+    now: u64,
     amount_units: u64,
     token: &str,
     limit_units: u64,
@@ -28,13 +30,13 @@ pub fn set_cap(
     if limit_units == 0 {
         return Err(denied("INVALID_AMOUNT", "The limit must be positive."));
     }
-    if spent_units
+    if daily_spend(daily_spent_units, spent_day, now)?
         .checked_add(amount_units)
         .is_none_or(|n| n > limit_units)
     {
         return Err(denied(
-            "POLICY_CAP_EXCEEDED",
-            "Total spending limit exceeded.",
+            "DAILY_CAP_EXCEEDED",
+            "Daily spending limit exceeded.",
         ));
     }
     Ok(())
@@ -215,4 +217,26 @@ pub fn stored_limit(ctx: &crate::Context, limit: OwnerLimit) -> Result<u64, Poli
         "native_action_limit" => Ok(storage.action_limit_units),
         _ => Err(denied("INVALID_POLICY", "Unknown native storage field.")),
     }
+}
+
+/// Use host-authenticated accounting only. Reset at UTC midnight and reject clock rollback.
+pub(crate) fn daily_spend(
+    spent: Option<u64>,
+    spent_day: Option<u64>,
+    now: u64,
+) -> Result<u64, PolicyError> {
+    let (Some(spent), Some(spent_day)) = (spent, spent_day) else {
+        return Err(denied(
+            "DAILY_ACCOUNTING_REQUIRED",
+            "Authenticated daily accounting is required.",
+        ));
+    };
+    let day = now / 86_400;
+    if day < spent_day {
+        return Err(denied(
+            "CLOCK_WENT_BACKWARDS",
+            "The current day precedes the accounting day.",
+        ));
+    }
+    Ok(if day == spent_day { spent } else { 0 })
 }
