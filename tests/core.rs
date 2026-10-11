@@ -284,7 +284,7 @@ fn json_wire_protocol_is_exact() {
             .as_array()
             .unwrap()
             .len(),
-        48
+        50
     );
 }
 #[test]
