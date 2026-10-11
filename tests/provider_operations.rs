@@ -614,7 +614,7 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
         );
     }
     #[test]
-    fn deposit_selected_storage_caps_replace_constructor_defaults_without_source_changes() {
+    fn verified_storage_caps_replace_constructor_defaults_without_source_changes() {
         let policy = compile(source()).unwrap();
         let source_hash = policy.source_hash.clone();
         let mut ctx = context();

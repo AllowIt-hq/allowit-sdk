@@ -620,10 +620,8 @@ mod tests {
     #[test]
     fn deposit_can_exceed_spending_caps_but_cannot_change_the_asset_or_selected_terms() {
         let (c, mut p, _) = fixture();
-        // Owner chooses these caps at the first deposit, without changing policy source.
+        // Final preparation binds the cumulative cap without changing policy source.
         let source_digest = p.policy_digest.clone();
-        p.action_limit = "2".into();
-        p.daily_limit = "8".into();
         p.total_limit = "10".into();
         let tx = deployment(&c, &p, 50_000_000);
         assert!(validate_prepared(&c, &p, &tx).is_ok());

@@ -8,8 +8,10 @@ token, cumulative/daily/action caps, revision, nonce, expiry and EIP-712 authori
 
 Owner authentication uses an origin-bound, expiring EIP-191 sign-in challenge.
 Owner, executor and authority must be separate accounts. A generated policy binds
-the configured chain, immutable factory, predicted CREATE2 vault, actual TIP-20
-token and symbol, compiled source digest and execution-requirements digest.
+the configured chain, immutable factory, actual TIP-20 token and symbol, compiled
+source digest and execution-requirements digest. The source can declare a daily
+spending cap. First-deposit preparation selects the cumulative spending limit
+and binds the final CREATE2 vault without changing the source digest.
 
 `POST /api/tempo/generate` accepts either an exact numeric prompt, an authenticated
 owner's approved execution policy ID, or explicitly reviewed restricted Rust
@@ -22,7 +24,11 @@ resumes evaluation and never overrides the contract or deterministic policy caps
 Prepare owner operations with `/api/tempo/prepare`: `approve_deploy`, `deploy`,
 `approve_fund`, `fund`, `tune`, `revoke`, `withdraw`. Approvals name only the factory
 or vault and the exact funding amount. Setup uses approval then atomic
-create-and-fund. Further deposits preserve spend, nonce and revision. Tuning
+create-and-fund. First-deposit options include `amount`, `token` and optional
+`totalLimit`. The cumulative limit must be at least the daily limit. The
+wallet validates the final policy returned by preparation against the exact
+transaction. Deposits can exceed spending caps. A different token is rejected.
+Further deposits preserve caps, spend, nonce and revision. Tuning
 preserves cumulative and daily usage. Revocation is permanent; withdrawal returns
 the full remaining balance to the owner and revokes spending.
 
