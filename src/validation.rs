@@ -883,7 +883,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         provider_profile: cfg!(feature = "typed-workflow") && provider_call_required(program),
         nodes: 0,
         config_count: 0,
-        declared_asset: declared_asset(program).map(str::to_owned),
+        declared_asset: declared_asset(program).map(String::from),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
@@ -1134,7 +1134,7 @@ pub(crate) fn typed_nodes(
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
-        declared_asset: declared_asset(program).map(str::to_owned),
+        declared_asset: declared_asset(program).map(String::from),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
@@ -1166,7 +1166,7 @@ pub(crate) fn typed_budgets(
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
-        declared_asset: declared_asset(program).map(str::to_owned),
+        declared_asset: declared_asset(program).map(String::from),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
