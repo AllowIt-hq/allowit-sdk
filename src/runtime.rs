@@ -1199,6 +1199,24 @@ fn run_inner(
                 "One authenticated ingress family and trusted nonzero evaluation time are required.",
             );
         }
+        if environment
+            .execution_request
+            .as_ref()
+            .is_some_and(|r| !crate::typed_workflow::execution_shape(r))
+            || environment
+                .curl_request
+                .as_ref()
+                .is_some_and(|r| !crate::typed_workflow::curl_input_size(r))
+            || environment
+                .curl_outcome
+                .as_ref()
+                .is_some_and(|r| !crate::typed_workflow::curl_outcome_shape(r))
+        {
+            return Decision::fail(
+                "WORKFLOW_INPUT_LIMIT",
+                "Typed ingress exceeds its bounded shape.",
+            );
+        }
         if crate::typed_workflow::request_digest(
             &environment.binding,
             &environment.execution_request,

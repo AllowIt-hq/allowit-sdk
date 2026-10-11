@@ -891,3 +891,81 @@ fn final_authorization_rejects_missing_fees_even_without_source_fee_refusal() {
         assert_eq!(decision.outcome, "fail");
     }
 }
+
+#[test]
+fn oversized_provider_responses_are_rejected_before_hashing() {
+    let (p, mut c) = payment();
+    let environment = c.workflow.as_mut().unwrap();
+    if let Some(CurlOutcome::PaymentRequired(challenge)) = &mut environment.curl_outcome {
+        challenge.authenticated_wire_bytes = vec![0; 8193];
+    }
+    assert!(
+        request_digest(
+            &environment.binding,
+            &environment.execution_request,
+            &environment.curl_request,
+            &environment.curl_outcome
+        )
+        .is_err()
+    );
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &c).code,
+        "WORKFLOW_INPUT_LIMIT"
+    );
+    c.workflow.as_mut().unwrap().curl_outcome = Some(CurlOutcome::Complete(HttpResponse {
+        status: 200,
+        body: vec![0; 65537],
+        receipt_digest: [31; 32],
+    }));
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &c).code,
+        "WORKFLOW_INPUT_LIMIT"
+    );
+}
+
+#[test]
+fn oversized_agent_requests_are_rejected_before_hashing() {
+    let (p, mut c) = payment();
+    let env = c.workflow.as_mut().unwrap();
+    env.curl_request.as_mut().unwrap().method = Some("x".repeat(17));
+    assert!(
+        request_digest(
+            &env.binding,
+            &env.execution_request,
+            &env.curl_request,
+            &env.curl_outcome
+        )
+        .is_err()
+    );
+    env.curl_request.as_mut().unwrap().method = None;
+    env.curl_request.as_mut().unwrap().url = "x".repeat(4097);
+    assert!(
+        request_digest(
+            &env.binding,
+            &env.execution_request,
+            &env.curl_request,
+            &env.curl_outcome
+        )
+        .is_err()
+    );
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &c).code,
+        "WORKFLOW_INPUT_LIMIT"
+    );
+    let (p, mut c) = execution();
+    let env = c.workflow.as_mut().unwrap();
+    env.execution_request.as_mut().unwrap().input = ExecutionInput::Message(vec![0; 65537]);
+    assert!(
+        request_digest(
+            &env.binding,
+            &env.execution_request,
+            &env.curl_request,
+            &env.curl_outcome
+        )
+        .is_err()
+    );
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &c).code,
+        "WORKFLOW_INPUT_LIMIT"
+    );
+}
