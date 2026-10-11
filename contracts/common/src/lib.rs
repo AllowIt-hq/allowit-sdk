@@ -656,3 +656,35 @@ mod typed_profile_rejection {
         assert_eq!(binary::encode(&artifact), Err(Error::InvalidArtifact));
     }
 }
+
+/// Decode current custody state, or an inert legacy state for owner revocation.
+/// Legacy counters cannot authorize a daily policy and remain permanently disabled.
+pub fn decode_custody_state(bytes: &[u8]) -> Result<State, Error> {
+    if let Ok(state) = borsh::from_slice::<State>(bytes) {
+        return Ok(state);
+    }
+    #[derive(BorshDeserialize)]
+    struct LegacyState {
+        mandate: Mandate,
+        artifact: Vec<u8>,
+        active: bool,
+        revoked: bool,
+        spent_units: u64,
+        next_nonce: u64,
+    }
+    let legacy: LegacyState = borsh::from_slice(bytes).map_err(|_| Error::InvalidAccount)?;
+    if legacy.mandate.core_version != "0.1.0" {
+        return Err(Error::InvalidAccount);
+    }
+    let _ = (legacy.active, legacy.revoked);
+    Ok(State {
+        mandate: legacy.mandate,
+        artifact: legacy.artifact,
+        active: false,
+        revoked: true,
+        spent_units: legacy.spent_units,
+        daily_spent_units: 0,
+        spent_day: 0,
+        next_nonce: legacy.next_nonce,
+    })
+}

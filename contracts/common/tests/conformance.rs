@@ -352,3 +352,39 @@ fn counter_overflow_does_not_mutate_custody_state() {
     );
     assert_eq!(state, before);
 }
+
+#[test]
+fn legacy_state_remains_owner_revocable_but_cannot_authorize_daily_spending() {
+    #[derive(borsh::BorshSerialize)]
+    struct LegacyState {
+        mandate: allowit_contract_core::Mandate,
+        artifact: Vec<u8>,
+        active: bool,
+        revoked: bool,
+        spent_units: u64,
+        next_nonce: u64,
+    }
+    let mut current = fixture(SIMPLE);
+    current.mandate.core_version = "0.1.0".into();
+    let old = LegacyState {
+        mandate: current.mandate.clone(),
+        artifact: current.artifact.clone(),
+        active: true,
+        revoked: false,
+        spent_units: 12_000_000,
+        next_nonce: 7,
+    };
+    let mut state =
+        allowit_contract_core::decode_custody_state(&borsh::to_vec(&old).unwrap()).unwrap();
+    assert_eq!(state.mandate.owner, current.mandate.owner);
+    assert_eq!(state.spent_units, 12_000_000);
+    assert_eq!(state.next_nonce, 7);
+    assert!(!state.active && state.revoked);
+    let req = request(&state, 1);
+    assert!(prepare_execution(&state, &req, 1000).is_err());
+    state.revoked = true;
+    state.active = false;
+    let roundtrip =
+        allowit_contract_core::decode_custody_state(&borsh::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(roundtrip, state);
+}

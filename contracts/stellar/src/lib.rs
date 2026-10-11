@@ -153,7 +153,8 @@ fn canonical_asset(env: &Env) -> Result<Address, Error> {
 }
 
 fn decode(stored: &Stored) -> Result<State, Error> {
-    borsh::from_slice(&stored.state.to_alloc_vec()).map_err(|_| Error::InvalidAccount)
+    allowit_contract_core::decode_custody_state(&stored.state.to_alloc_vec())
+        .map_err(|_| Error::InvalidAccount)
 }
 
 fn save(env: &Env, key: &Key, stored: &mut Stored, state: &State) -> Result<(), Error> {

@@ -172,14 +172,14 @@ pub fn read_state(account: &AccountInfo, program: &Pubkey) -> Result<State, Prog
         return Err(fail(Error::InvalidAccount));
     }
     let data = account.try_borrow_data()?;
-    if data.len() != STATE_BYTES || &data[..8] != MAGIC {
+    if data.len() != STATE_BYTES || (&data[..8] != MAGIC && &data[..8] != b"ALLOWIT1") {
         return Err(fail(Error::InvalidAccount));
     }
     let length = u32::from_le_bytes(data[8..12].try_into().unwrap()) as usize;
     if length > data.len() - 12 {
         return Err(fail(Error::InvalidAccount));
     }
-    borsh::from_slice(&data[12..12 + length]).map_err(|_| fail(Error::InvalidAccount))
+    allowit_contract_core::decode_custody_state(&data[12..12 + length]).map_err(fail)
 }
 
 fn write_state(account: &AccountInfo, state: &State) -> ProgramResult {
