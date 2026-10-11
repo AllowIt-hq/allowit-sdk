@@ -43,12 +43,16 @@ impl HttpRpc {
 impl Rpc for HttpRpc {
     fn call(&self, method: &str, params: Value) -> Result<Value> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let block_time_read = method == "getBlockTime"
+            && params
+                .as_array()
+                .is_some_and(|p| p.len() == 1 && p[0].as_u64().is_some());
         let body =
             serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
                 .map_err(|_| Error::config("Invalid RPC request"))?;
         let mut attempt = 0;
-        let mut response = loop {
-            let response = self
+        loop {
+            let mut response = self
                 .client
                 .post(&self.url)
                 .header("Content-Type", "application/json")
@@ -59,20 +63,19 @@ impl Rpc for HttpRpc {
                         "RPC request failed; retain the original journal and request ID",
                     )
                 })?;
-            if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS || attempt == 4 {
-                break response;
+            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < 4 {
+                drop(response);
+                std::thread::sleep(self.backoff.saturating_mul(1 << attempt));
+                attempt += 1;
+                continue;
             }
-            drop(response);
-            std::thread::sleep(self.backoff.saturating_mul(1 << attempt));
-            attempt += 1;
-        };
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(Error::uncertain(
-                "RPC request failed; retain the original journal and request ID",
-            ));
-        }
-        let mut raw = Vec::new();
-        Read::by_ref(&mut response)
+            if response.status() != reqwest::StatusCode::OK {
+                return Err(Error::uncertain(
+                    "RPC request failed; retain the original journal and request ID",
+                ));
+            }
+            let mut raw = Vec::new();
+            Read::by_ref(&mut response)
             .take(4_194_305)
             .read_to_end(&mut raw)
             .map_err(|_| {
@@ -80,21 +83,38 @@ impl Rpc for HttpRpc {
                     "RPC response could not be read; retain the original journal and request ID",
                 )
             })?;
-        if raw.len() > 4_194_304 {
-            return Err(Error::config("RPC response exceeded its size limit"));
+            if raw.len() > 4_194_304 {
+                return Err(Error::config("RPC response exceeded its size limit"));
+            }
+            let envelope: Value =
+                serde_json::from_slice(&raw).map_err(|_| Error::config("Invalid RPC response"))?;
+            if envelope["jsonrpc"] != "2.0" || envelope["id"] != id {
+                return Err(Error::config("RPC response does not match the request"));
+            }
+            // A live processed slot may not yet have an indexed block time. Retry
+            // only this exact read, never another slot or a transaction submission.
+            let block_time_pending = block_time_read
+                && (envelope["error"]["code"].as_i64() == Some(-32004)
+                    || (envelope["error"].is_null()
+                        && envelope.get("result").is_some_and(Value::is_null)));
+            if block_time_pending {
+                if attempt == 4 {
+                    return Err(Error::uncertain(
+                        "Block time is unavailable; retain the original journal and request ID",
+                    ));
+                }
+                std::thread::sleep(self.backoff.saturating_mul(1 << attempt));
+                attempt += 1;
+                continue;
+            }
+            if !envelope["error"].is_null() {
+                return Err(Error::config("RPC refused the request"));
+            }
+            return envelope
+                .get("result")
+                .cloned()
+                .ok_or_else(|| Error::config("Invalid RPC response"));
         }
-        let envelope: Value =
-            serde_json::from_slice(&raw).map_err(|_| Error::config("Invalid RPC response"))?;
-        if envelope["jsonrpc"] != "2.0" || envelope["id"] != id {
-            return Err(Error::config("RPC response does not match the request"));
-        }
-        if !envelope["error"].is_null() {
-            return Err(Error::config("RPC refused the request"));
-        }
-        envelope
-            .get("result")
-            .cloned()
-            .ok_or_else(|| Error::config("Invalid RPC response"))
     }
 }
 #[cfg(test)]
@@ -148,6 +168,132 @@ mod tests {
         assert_eq!(result.unwrap_err().code, 5);
         assert_eq!(requests.len(), 5);
         assert!(requests.windows(2).all(|p| p[0] == p[1]));
+    }
+
+    fn scripted_rpc(
+        method: &str,
+        params: Value,
+        replies: Vec<Value>,
+    ) -> (Result<Value>, Vec<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for mut reply in replies {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(std::time::Instant::now() < deadline, "expected RPC request");
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(e) => panic!("RPC fixture failed: {e}"),
+                    }
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut header = Vec::new();
+                let mut byte = [0];
+                while !header.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    header.push(byte[0]);
+                }
+                let header = String::from_utf8(header).unwrap();
+                let length = header
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length: ")
+                            .and_then(|n| n.parse::<usize>().ok())
+                    })
+                    .unwrap();
+                let mut body = vec![0; length];
+                stream.read_exact(&mut body).unwrap();
+                let request: Value = serde_json::from_slice(&body).unwrap();
+                if reply.get("id").is_none() {
+                    reply["id"] = request["id"].clone();
+                }
+                let raw = reply.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{raw}",
+                    raw.len()
+                )
+                .unwrap();
+                bodies.push(body);
+            }
+            bodies
+        });
+        let mut rpc = HttpRpc::new(url).unwrap();
+        rpc.backoff = Duration::from_millis(1);
+        let result = rpc.call(method, params);
+        (result, server.join().unwrap())
+    }
+
+    fn pending_time() -> Value {
+        json!({"jsonrpc":"2.0", "error":{"code":-32004, "message":"Block not available"}})
+    }
+
+    #[test]
+    fn fresh_block_time_retries_identical_slot_and_request_until_available() {
+        let (result, requests) = scripted_rpc(
+            "getBlockTime",
+            json!([509902168]),
+            vec![
+                pending_time(),
+                json!({"jsonrpc":"2.0", "result":null}),
+                json!({"jsonrpc":"2.0", "result":1791721873}),
+            ],
+        );
+        assert_eq!(result.unwrap(), 1791721873);
+        assert_eq!(requests.len(), 3);
+        assert!(requests.windows(2).all(|p| p[0] == p[1]));
+        let request: Value = serde_json::from_slice(&requests[0]).unwrap();
+        assert_eq!(request["method"], "getBlockTime");
+        assert_eq!(request["params"], json!([509902168]));
+    }
+
+    #[test]
+    fn unavailable_block_time_stops_without_fabricating_time() {
+        for pending in [pending_time(), json!({"jsonrpc":"2.0", "result":null})] {
+            let (result, requests) =
+                scripted_rpc("getBlockTime", json!([509902168]), vec![pending; 5]);
+            assert_eq!(result.unwrap_err().code, 5);
+            assert_eq!(requests.len(), 5);
+            assert!(requests.windows(2).all(|p| p[0] == p[1]));
+        }
+    }
+
+    #[test]
+    fn block_time_retry_does_not_admit_bad_envelopes_or_other_errors() {
+        for reply in [
+            json!({"jsonrpc":"2.0", "id":99, "error":{"code":-32004}}),
+            json!({"jsonrpc":"1.0", "error":{"code":-32004}}),
+            json!({"jsonrpc":"2.0", "error":{"code":-32602}}),
+            json!({"jsonrpc":"2.0"}),
+        ] {
+            let (result, requests) = scripted_rpc("getBlockTime", json!([509902168]), vec![reply]);
+            assert_eq!(result.unwrap_err().code, 3);
+            assert_eq!(requests.len(), 1);
+        }
+    }
+
+    #[test]
+    fn block_time_error_does_not_retry_submission_or_another_method() {
+        for (method, params) in [
+            (
+                "sendTransaction",
+                json!(["signed-proof", {"encoding":"base64"}]),
+            ),
+            ("getBlockHeight", json!([{"commitment":"processed"}])),
+        ] {
+            let (result, requests) = scripted_rpc(method, params, vec![pending_time()]);
+            assert_eq!(result.unwrap_err().code, 3);
+            assert_eq!(requests.len(), 1);
+        }
     }
 }
 #[derive(Debug, Clone)]

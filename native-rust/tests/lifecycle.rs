@@ -28,14 +28,18 @@ struct Network {
     processed_height: Option<u64>,
     processed_slot: Option<u64>,
     processed_time: Option<u64>,
+    height_after_time: Option<u64>,
     block_height: u64,
     chain_time: u64,
     nonce: String,
     revision: String,
+    state_present: bool,
+    instance_slot: u64,
     sends: Vec<String>,
     receipt: Value,
     status: String,
     refreshed_status: Option<String>,
+    claimed_status_slot: Option<u64>,
     blockhash_valid: bool,
     processed_blockhash_valid: Option<bool>,
 }
@@ -74,11 +78,15 @@ impl Rpc for FakeRpc {
                 }
             }
             "getBlockTime" => {
-                if Some(params[0].as_u64().unwrap()) == d.processed_slot {
+                let value = if Some(params[0].as_u64().unwrap()) == d.processed_slot {
                     json!(d.processed_time.unwrap_or(d.chain_time))
                 } else {
                     json!(d.chain_time)
+                };
+                if let Some(height) = d.height_after_time.take() {
+                    d.processed_height = Some(height);
                 }
+                value
             }
             "getBlock" => {
                 assert_eq!(params[1]["transactionDetails"], "none");
@@ -135,14 +143,18 @@ impl Fixture {
                 processed_height: None,
                 processed_slot: None,
                 processed_time: None,
+                height_after_time: None,
                 block_height: 10,
                 chain_time: 100,
                 nonce: "0".into(),
                 revision: "1".into(),
+                state_present: true,
+                instance_slot: 77,
                 sends: vec![],
                 receipt: Value::Null,
                 status: "uncertain".into(),
                 refreshed_status: None,
+                claimed_status_slot: None,
                 blockhash_valid: false,
                 processed_blockhash_valid: None,
             }),
@@ -294,6 +306,206 @@ impl Fixture {
             },
         )
     }
+    fn close(&self, id: Option<&str>, count: &AtomicUsize) -> Result<Record> {
+        let options = self
+            .life()
+            .close_options(&self.policy, self.owner.public_key(), id)?;
+        self.life().submit(
+            &self.policy,
+            self.owner.public_key(),
+            "close",
+            &options,
+            id,
+            |tx, role| {
+                assert_eq!(role, "owner");
+                count.fetch_add(1, Ordering::Relaxed);
+                Ok(self.owner.sign(&tx.message))
+            },
+        )
+    }
+}
+
+#[test]
+fn settled_close_replays_exact_receipt_after_accounts_disappear() {
+    for id in [None, Some("closed-vault-request-001")] {
+        let f = Fixture::new();
+        let signatures = AtomicUsize::new(0);
+        let original = f.close(id, &signatures).unwrap();
+        {
+            let mut network = f.rpc.data.lock().unwrap();
+            network.state_present = false;
+            network.status = "settled".into();
+            network.receipt = json!({"slot":90,"transaction":[original.signed_bytes,"base64"],"meta":{"err":null}});
+        }
+        let replay = f.close(id, &signatures).unwrap();
+        assert_eq!(replay.status, "settled");
+        assert_eq!(replay.id, original.id);
+        assert_eq!(replay.extra["replayed"], true);
+        assert_eq!(replay.extra["finalizedSlot"], 90);
+        assert_eq!(replay.signed_bytes, original.signed_bytes);
+        assert_eq!(signatures.load(Ordering::Relaxed), 1);
+        assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 1);
+        assert!(
+            f.close(Some("fresh-close-request-002"), &signatures)
+                .is_err()
+        );
+        assert_eq!(signatures.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[test]
+fn missing_vault_close_requires_original_id_and_verified_successful_proof() {
+    for case in [
+        "uncertain",
+        "failed",
+        "missing-receipt",
+        "substituted-proof",
+        "changed-instance",
+        "implicit-id",
+    ] {
+        let f = Fixture::new();
+        let signatures = AtomicUsize::new(0);
+        let original = f
+            .close(Some("verified-close-request-001"), &signatures)
+            .unwrap();
+        {
+            let mut network = f.rpc.data.lock().unwrap();
+            network.state_present = false;
+            network.status = "settled".into();
+            network.receipt = json!({"slot":90,"transaction":[original.signed_bytes,"base64"],"meta":{"err":null}});
+            match case {
+                "uncertain" | "failed" => network.status = case.into(),
+                "missing-receipt" => network.receipt = Value::Null,
+                "substituted-proof" => network.receipt["transaction"][0] = json!("invalid"),
+                _ => (),
+            }
+        }
+        if case == "changed-instance" {
+            let mut substituted = original.clone();
+            substituted.instance_slot = Some("88".into());
+            f.journal
+                .locked(|| {
+                    f.journal
+                        .write(&format!("request-{}", original.id), &substituted)
+                })
+                .unwrap();
+        }
+        let id = (case != "implicit-id").then_some("verified-close-request-001");
+        assert!(f.close(id, &signatures).is_err(), "{case}");
+        assert_eq!(signatures.load(Ordering::Relaxed), 1, "{case}");
+        assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 1, "{case}");
+    }
+}
+
+#[test]
+fn close_replay_cannot_target_a_recreated_or_later_closed_instance() {
+    let f = Fixture::new();
+    let signatures = AtomicUsize::new(0);
+    let first = f
+        .close(Some("first-incarnation-close"), &signatures)
+        .unwrap();
+    {
+        let mut network = f.rpc.data.lock().unwrap();
+        network.status = "settled".into();
+        network.receipt =
+            json!({"slot":90,"transaction":[first.signed_bytes,"base64"],"meta":{"err":null}});
+        network.instance_slot = 95;
+    }
+    assert!(
+        f.close(Some(&first.id), &signatures)
+            .err()
+            .unwrap()
+            .message
+            .contains("conflict")
+    );
+    assert_eq!(signatures.load(Ordering::Relaxed), 1);
+    let second = f
+        .close(Some("second-incarnation-close"), &signatures)
+        .unwrap();
+    assert_eq!(second.instance_slot.as_deref(), Some("95"));
+    assert_ne!(second.signed_bytes, first.signed_bytes);
+    {
+        let mut network = f.rpc.data.lock().unwrap();
+        network.state_present = false;
+        network.receipt =
+            json!({"slot":100,"transaction":[second.signed_bytes,"base64"],"meta":{"err":null}});
+    }
+    assert!(f.close(Some(&first.id), &signatures).is_err());
+    let replay = f.close(Some(&second.id), &signatures).unwrap();
+    assert_eq!(replay.signed_bytes, second.signed_bytes);
+    assert_eq!(signatures.load(Ordering::Relaxed), 2);
+    assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 2);
+}
+
+#[test]
+fn settled_close_is_not_replayed_for_a_live_same_slot_incarnation() {
+    for id in [None, Some("same-slot-close-request")] {
+        let f = Fixture::new();
+        let signatures = AtomicUsize::new(0);
+        let original = f.close(id, &signatures).unwrap();
+        {
+            let mut network = f.rpc.data.lock().unwrap();
+            network.status = "settled".into();
+            network.receipt = json!({"slot":77,"transaction":[original.signed_bytes,"base64"],"meta":{"err":null}});
+            // The live account names the same slot; this cannot prove it is the
+            // original closed incarnation and must not replay its close.
+            network.instance_slot = 77;
+        }
+        let error = f.close(id, &signatures).err().unwrap();
+        assert!(error.message.contains("vault is live"));
+        assert_eq!(signatures.load(Ordering::Relaxed), 1);
+        assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 1);
+    }
+}
+
+#[test]
+fn legacy_settled_recovery_publishes_only_the_verified_receipt_slot() {
+    let f = Fixture::new();
+    let signatures = AtomicUsize::new(0);
+    let mut record = f
+        .submit(
+            "fund",
+            &Options {
+                amount: Some("1".into()),
+                ..Options::default()
+            },
+            "legacy-receipt-slot-001",
+            &signatures,
+        )
+        .unwrap();
+    record.status = "settled".into();
+    record.extra.insert("finalizedSlot".into(), json!(999));
+    f.journal
+        .locked(|| f.journal.write(&format!("request-{}", record.id), &record))
+        .unwrap();
+    {
+        let mut network = f.rpc.data.lock().unwrap();
+        network.status = "settled".into();
+        network.receipt =
+            json!({"slot":90,"transaction":[record.signed_bytes,"base64"],"meta":{"err":null}});
+        network.claimed_status_slot = Some(999);
+    }
+    let recovered = f
+        .life()
+        .recover(&record.id, &f.policy, f.owner.public_key())
+        .unwrap();
+    assert_eq!(recovered.public()["finalizedSlot"], 90);
+    assert_eq!(recovered.signed_bytes, record.signed_bytes);
+    f.rpc
+        .data
+        .lock()
+        .unwrap()
+        .receipt
+        .as_object_mut()
+        .unwrap()
+        .remove("slot");
+    let recovered = f
+        .life()
+        .recover(&record.id, &f.policy, f.owner.public_key())
+        .unwrap();
+    assert!(!recovered.extra.contains_key("finalizedSlot"));
+    assert_eq!(signatures.load(Ordering::Relaxed), 1);
+    assert_eq!(f.rpc.data.lock().unwrap().sends.len(), 1);
 }
 
 #[test]
@@ -483,9 +695,11 @@ impl NativeOperations for Fixture {
         if let Some(next) = data.refreshed_status.take() {
             data.status = next;
         }
-        Ok(
-            json!({"status":status,"signature":signature,"transactionUrl":self.sdk.transaction_url(signature)?}),
-        )
+        let mut result = json!({"status":status,"signature":signature,"transactionUrl":self.sdk.transaction_url(signature)?});
+        if let Some(slot) = data.claimed_status_slot {
+            result["finalizedSlot"] = json!(slot);
+        }
+        Ok(result)
     }
     fn state(
         &self,
@@ -496,6 +710,9 @@ impl NativeOperations for Fixture {
     ) -> Result<Option<State>> {
         assert!(min.is_none() || min == Some(99));
         let d = self.rpc.data.lock().unwrap();
+        if !d.state_present {
+            return Ok(None);
+        }
         Ok(Some(State {
             binding: self.sdk.public_binding(policy, owner)?,
             abi: 2,
@@ -508,7 +725,7 @@ impl NativeOperations for Fixture {
             spent_day: "0".into(),
             nonce: d.nonce.clone(),
             revision: d.revision.clone(),
-            instance_slot: "77".into(),
+            instance_slot: d.instance_slot.to_string(),
             approved: true,
             balance: "10000000".into(),
         }))
@@ -1148,4 +1365,40 @@ fn unsigned_signing_requires_both_exact_lifetime_margins() {
         assert_eq!(result.is_ok(), allowed, "height={height}, time={now}");
         assert_eq!(signatures.load(Ordering::Relaxed), usize::from(allowed));
     }
+}
+
+#[test]
+fn height_margin_is_rechecked_after_waiting_for_tip_block_time() {
+    let f = Fixture::new();
+    let identity = f.identity("block-time-height-001", "fetch fixed fixture");
+    let response = f.authorized(&identity);
+    {
+        let mut network = f.rpc.data.lock().unwrap();
+        network.processed_slot = Some(150);
+        network.processed_height = Some(68);
+        network.processed_time = Some(170);
+        // Timestamp availability moved the live height across the exact margin.
+        network.height_after_time = Some(69);
+    }
+    let signatures = AtomicUsize::new(0);
+    let result = f.life().submit_authorized(
+        &f.policy,
+        f.owner.public_key(),
+        &identity,
+        || Ok(response.clone()),
+        |transaction| {
+            signatures.fetch_add(1, Ordering::Relaxed);
+            Ok(f.executor.sign(&transaction.message))
+        },
+    );
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .message
+            .contains("safe signing window")
+    );
+    assert_eq!(signatures.load(Ordering::Relaxed), 0);
+    assert!(f.journal.entries::<Record>().unwrap().is_empty());
+    assert!(f.rpc.data.lock().unwrap().sends.is_empty());
 }
