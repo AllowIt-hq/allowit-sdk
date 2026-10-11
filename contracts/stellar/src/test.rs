@@ -640,7 +640,7 @@ fn owner_can_revoke_legacy_wire_state_after_upgrade() {
         f.env.storage().persistent().set(&key, &stored);
     });
     f.client().revoke(&id);
+    assert!(f.env.auths().iter().any(|(address, _)| address == &f.owner));
     let state = f.state(&id);
     assert!(!state.active && state.revoked);
-    assert!(f.env.auths().iter().any(|(address, _)| address == &f.owner));
 }

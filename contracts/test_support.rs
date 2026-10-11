@@ -1,5 +1,5 @@
+use self::alloc::vec::Vec;
 use allowit_contract_core::{Artifact, CORE_VERSION, Mandate, Request, State};
-use std::vec::Vec;
 
 pub const SIMPLE: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; cap_per_transaction(ctx, \"10\", \"USDC\")?; allow_actions(ctx, &[\"research\"])?; Ok(()) }";
 pub const INPUT: &str = "pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"100\", \"USDC\")?; require_user_input(ctx, \"Approve this purchase?\").await?; Ok(()) }";
