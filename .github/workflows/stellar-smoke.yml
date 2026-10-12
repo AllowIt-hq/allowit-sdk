@@ -1,0 +1,86 @@
+name: Stellar smoke
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full-runtime-suite:
+        description: Run all compiled contract runtime tests
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: contracts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+jobs:
+  stellar-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: wasm32v1-none
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/stellar -> target
+      - run: cargo fmt --manifest-path contracts/stellar/Cargo.toml --check
+      - name: Check native Stellar behavior
+        run: cargo test --locked --manifest-path contracts/stellar/Cargo.toml -- --skip compiled_wasm_runs_in_the_soroban_vm
+      - name: Build Soroban Wasm
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p contracts/dist
+          curl --fail --location --retry 3 https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz -o "$RUNNER_TEMP/binaryen.tar.gz"
+          printf '%s  %s\n' 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489 "$RUNNER_TEMP/binaryen.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/binaryen.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --version | tee contracts/dist/stellar-toolchain.log
+          # Keep diagnostic strings independent of runner and registry paths.
+          path_flags="--remap-path-prefix=$GITHUB_WORKSPACE=."
+          cargo_cache_root="${CARGO_HOME:-$HOME/.cargo}"
+          registry_sources=0
+          for registry_path in "$cargo_cache_root"/registry/src/*/*; do
+            if [ -d "$registry_path" ]; then
+              path_flags+=" --remap-path-prefix=$registry_path=."
+              registry_sources=$((registry_sources + 1))
+            fi
+          done
+          test "$registry_sources" -gt 0
+          path_flags+=" --remap-path-prefix=$cargo_cache_root/git/checkouts=git"
+          RUSTFLAGS="${RUSTFLAGS:-} $path_flags" CARGO_PROFILE_RELEASE_OPT_LEVEL=z cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee contracts/dist/stellar-build.log
+          "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features -Oz --converge --strip-debug --strip-dwarf --strip-producers contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o contracts/dist/allowit_stellar.wasm
+          sha256sum contracts/dist/allowit_stellar.wasm | tee contracts/dist/stellar-sha256.txt
+      - name: Smoke compiled Stellar contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ALLOWIT_STELLAR_WASM="$GITHUB_WORKSPACE/contracts/dist/allowit_stellar.wasm"
+          cargo test --locked --manifest-path contracts/stellar/Cargo.toml --lib test::compiled_wasm_runs_in_the_soroban_vm -- --exact --nocapture 2>&1 | tee contracts/dist/stellar-runtime-tests.log
+          grep -q 'test result: ok. 1 passed; 0 failed' contracts/dist/stellar-runtime-tests.log
+      - name: Full compiled Stellar runtime suite
+        if: inputs.full-runtime-suite == true
+        env:
+          ALLOWIT_STELLAR_WASM: ${{ github.workspace }}/contracts/dist/allowit_stellar.wasm
+        run: cargo test --locked --manifest-path contracts/stellar/Cargo.toml -- --nocapture
+      - run: python3 scripts/package-licenses.py contracts/dist
+        id: licenses
+        if: always()
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.licenses.outcome == 'success'
+        with:
+          name: stellar-smoke
+          path: contracts/dist/
+          if-no-files-found: error
