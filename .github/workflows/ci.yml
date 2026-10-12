@@ -79,6 +79,18 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10
+      - name: Verify the imported dependency lock matches the package
+        working-directory: native
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const manifest = JSON.parse(fs.readFileSync('package.json'));
+          const locked = JSON.parse(fs.readFileSync('package-lock.json')).packages[''];
+          for (const key of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+            assert.deepEqual(locked[key] ?? {}, manifest[key] ?? {}, `package-lock.json ${key} are stale`);
+          }
+          JS
       - run: pnpm import
         working-directory: native
       - run: pnpm install --frozen-lockfile --ignore-scripts

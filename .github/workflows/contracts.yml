@@ -84,7 +84,7 @@ jobs:
           set -euo pipefail
           export ALLOWIT_STELLAR_WASM="$GITHUB_WORKSPACE/contracts/dist/allowit_stellar.wasm"
           cargo test --locked --manifest-path contracts/stellar/Cargo.toml --lib test::compiled_wasm_runs_in_the_soroban_vm -- --exact --nocapture 2>&1 | tee contracts/dist/stellar-runtime-tests.log
-          grep -q '1 passed; 0 failed' contracts/dist/stellar-runtime-tests.log
+          grep -q 'test result: ok. 1 passed; 0 failed' contracts/dist/stellar-runtime-tests.log
       - name: Full compiled Stellar runtime suite
         if: inputs.full-runtime-suite == true
         env:
@@ -151,9 +151,9 @@ jobs:
           set -euo pipefail
           export SBF_OUT_DIR="$GITHUB_WORKSPACE/contracts/dist"
           cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml --test runtime real_sbf_transfer_checks_identity_scope_budget_nonce_and_revocation -- --exact --nocapture 2>&1 | tee contracts/dist/solana-sbf-runtime-tests.log
-          grep -q '1 passed; 0 failed' contracts/dist/solana-sbf-runtime-tests.log
+          grep -q 'test result: ok. 1 passed; 0 failed' contracts/dist/solana-sbf-runtime-tests.log
           cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml --test vault vault_lifecycle_real_sbf -- --exact --nocapture 2>&1 | tee contracts/dist/solana-vault-smoke.log
-          grep -q '1 passed; 0 failed' contracts/dist/solana-vault-smoke.log
+          grep -q 'test result: ok. 1 passed; 0 failed' contracts/dist/solana-vault-smoke.log
       - name: Full compiled Solana runtime suite
         if: inputs.full-runtime-suite == true
         env:
