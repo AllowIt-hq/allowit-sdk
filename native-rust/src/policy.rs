@@ -198,15 +198,16 @@ impl Policy {
         let matched=re.captures(js_trim(prompt)).ok_or_else(||Error::denied("This native profile supports a daily token ceiling only. Use “Spend up to 5 test tokens per day” or configure the prompt author. Other rules must not be silently dropped."))?;
         let daily_limit = decimal(units(&matched[1])?);
         let action_limit = daily_limit.clone();
+        // Preserve the legacy sorted JSON bytes even when another dependency
+        // enables serde_json/preserve_order through Cargo feature unification.
+        let mut numeric_binding = serde_json::json!({
+            "kind":"allowit-native-numeric-v2",
+            "dailyLimit":daily_limit.as_str(),
+            "actionLimit":action_limit.as_str(),
+        });
+        numeric_binding.sort_all_objects();
         let binding = ExecutionBinding {
-            policy_digest: digest(
-                serde_json::to_vec(&serde_json::json!({
-                    "kind":"allowit-native-numeric-v2",
-                    "dailyLimit":daily_limit.as_str(),
-                    "actionLimit":action_limit.as_str(),
-                }))
-                .unwrap(),
-            ),
+            policy_digest: digest(serde_json::to_vec(&numeric_binding).unwrap()),
             requirements_digest: digest(b"{\"features\":[]}"),
             semantic_required: false,
         };
@@ -260,6 +261,15 @@ impl Policy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_binding_retains_legacy_sorted_json_digest() {
+        let policy =
+            Policy::generate("solana:testnet", "Spend up to 5 test tokens per day").unwrap();
+        assert_eq!(
+            policy.execution_policy_digest,
+            "e0ed33013748c504bf29df419463f7dc9eadfaeaedee52d48408f1b961cd1542"
+        );
+    }
     #[test]
     fn policy_identity_and_artifact_are_bound() {
         let p = Policy::generate("solana:testnet", "Spend up to 5 test tokens per day").unwrap();

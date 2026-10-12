@@ -73,7 +73,12 @@ impl ExecutionRequestIdentity {
         context: &Value,
     ) -> Result<Self> {
         let amount = decimal(units(amount)?);
-        let encoded = serde_json::to_string(context)
+        // Context objects used sorted keys before preserve_order was enabled.
+        // Sort only caller-controlled Values; typed identity field order stays
+        // unchanged for existing authorization and journal proofs.
+        let mut context = context.clone();
+        context.sort_all_objects();
+        let encoded = serde_json::to_string(&context)
             .map_err(|_| Error::config("Invalid execution context"))?;
         if !context.is_object() || encoded.len() > 16_384 {
             return Err(Error::config("Execution context must be a JSON object"));
