@@ -8,6 +8,8 @@ pub const PROFILE: &str = "tempo-native-v1";
 pub const TERMS: &str = "(bytes32,bytes32,uint256,uint256,uint256,uint64,address,bool)";
 pub const EXECUTION: &str = "(uint256,address,address,bytes32,bytes32,bytes32,uint64,uint64,address,uint256,uint64,bytes32,bytes32,bytes32)";
 pub const ZERO: &str = "0x0000000000000000000000000000000000000000";
+mod mpp;
+pub use mpp::{mpp_memo, mpp_url, validate_mpp_request, MppPaymentRequest, MppPurchase};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +116,13 @@ pub fn units(value: &str) -> Result<u64> {
 }
 pub fn keccak(value: impl AsRef<[u8]>) -> [u8; 32] {
     Keccak256::digest(value.as_ref()).into()
+}
+/// Hash identities independently of serde_json's globally unified preserve_order feature.
+/// The MPP schema is restricted to exact integers and strings, not arbitrary JCS numbers.
+pub fn canonical_json(value: &serde_json::Value) -> Result<Vec<u8>> {
+    let mut sorted = value.clone();
+    sorted.sort_all_objects();
+    serde_json::to_vec(&sorted).map_err(|_| "Invalid canonical request identity".into())
 }
 fn word(n: u64) -> [u8; 32] {
     let mut w = [0; 32];
@@ -345,11 +354,55 @@ pub fn validate_execution_request(
     merchant: &str,
     context: Option<&str>,
 ) -> Result<()> {
-    validate_prepared(c, p, tx)?;
-    let data = unhex(&tx.data)?;
-    if data[..4] != keccak(format!("execute({EXECUTION},bytes)"))[..4] {
-        return Err("Expected an executor payment".into());
-    }
+    validate_execution_request_inner(
+        c, p, tx, request_id, recipient, amount, action, merchant, context, None, 0,
+    )
+}
+
+/// Verify an MPP purchase without weakening the legacy native payment verifier.
+/// The entire original challenge and HTTP request are part of the authority-signed identity.
+/// Use `now = 0` only to verify an already retained historical plan during recovery;
+/// a new authorization or signature must use current time and reject expired challenges.
+#[allow(clippy::too_many_arguments)]
+pub fn validate_execution_request_mpp(
+    c: &Config,
+    p: &Policy,
+    tx: &Transaction,
+    request_id: &str,
+    recipient: &str,
+    amount: &str,
+    action: &str,
+    merchant: &str,
+    context: Option<&str>,
+    mpp: &MppPaymentRequest,
+    now: u64,
+) -> Result<()> {
+    validate_execution_request_inner(
+        c,
+        p,
+        tx,
+        request_id,
+        recipient,
+        amount,
+        action,
+        merchant,
+        context,
+        Some(mpp),
+        now,
+    )
+}
+
+/// Preserve the existing native identity byte-for-byte when no MPP request is supplied.
+#[allow(clippy::too_many_arguments)]
+pub fn execution_request_identity(
+    policy_id: &str,
+    recipient: &str,
+    amount: &str,
+    action: &str,
+    merchant: &str,
+    context: Option<&str>,
+    mpp: Option<&MppPaymentRequest>,
+) -> Result<serde_json::Value> {
     let raw = context.unwrap_or("null");
     let _: serde_json::Value = serde_json::from_str(raw).map_err(|_| "Invalid request context")?;
     let amount_units = units(amount)?;
@@ -361,16 +414,58 @@ pub fn validate_execution_request(
     } else {
         format!("{}.{fraction}", amount_units / 1_000_000)
     };
-    let identity = serde_json::json!({"policyId":p.id,"amount":normalized,"recipient":address(recipient)?,"action":action,"merchant":merchant,"context":raw});
-    let intent = format!(
-        "{:x}",
-        sha2::Sha256::digest(
-            serde_json::to_vec(&identity).map_err(|_| "Invalid request identity")?
-        )
-    );
+    let mut identity = serde_json::json!({"policyId":policy_id,"amount":normalized,"recipient":address(recipient)?,"action":action,"merchant":merchant,"context":raw});
+    if let Some(mpp) = mpp {
+        identity["mppRequest"] = serde_json::json!(mpp);
+    }
+    identity.sort_all_objects();
+    Ok(identity)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_execution_request_inner(
+    c: &Config,
+    p: &Policy,
+    tx: &Transaction,
+    request_id: &str,
+    recipient: &str,
+    amount: &str,
+    action: &str,
+    merchant: &str,
+    context: Option<&str>,
+    mpp: Option<&MppPaymentRequest>,
+    now: u64,
+) -> Result<()> {
+    validate_prepared(c, p, tx)?;
+    let data = unhex(&tx.data)?;
+    if data[..4] != keccak(format!("execute({EXECUTION},bytes)"))[..4] {
+        return Err("Expected an executor payment".into());
+    }
+    let amount_units = units(amount)?;
+    let identity =
+        execution_request_identity(&p.id, recipient, amount, action, merchant, context, mpp)?;
+    let intent = format!("{:x}", sha2::Sha256::digest(canonical_json(&identity)?));
     let request_hash: [u8; 32] =
         sha2::Sha256::digest(format!("{request_id}:{intent}").as_bytes()).into();
-    let memo: [u8; 32] = sha2::Sha256::digest(request_id.as_bytes()).into();
+    let memo: [u8; 32] = if let Some(mpp) = mpp {
+        let purchase = validate_mpp_request(mpp, p.chain_id, &p.token, recipient, amount, now)?;
+        if action != format!("GET {}", purchase.url) || merchant != purchase.origin {
+            return Err("MPP action must name the exact HTTP request and merchant origin".into());
+        }
+        let expiry = number(&data[4 + 10 * 32..4 + 11 * 32])?;
+        if expiry <= now
+            || purchase
+                .challenge_expires_at
+                .is_some_and(|end| expiry > end)
+        {
+            return Err("MPP approval exceeds the original challenge expiry".into());
+        }
+        unhex(&purchase.memo)?
+            .try_into()
+            .map_err(|_| "Invalid MPP memo")?
+    } else {
+        sha2::Sha256::digest(request_id.as_bytes()).into()
+    };
     if data[4 + 8 * 32..4 + 9 * 32] != account(recipient)?
         || data[4 + 9 * 32..4 + 10 * 32] != word(amount_units)
         || data[4 + 11 * 32..4 + 12 * 32] != request_hash
@@ -426,7 +521,7 @@ mod tests {
         let identity = serde_json::json!({"policyId":p.id,"amount":"0.25","recipient":recipient,"action":"buy research","merchant":"research","context":"{\"purpose\":\"research\"}"});
         let intent = format!(
             "{:x}",
-            sha2::Sha256::digest(serde_json::to_vec(&identity).unwrap())
+            sha2::Sha256::digest(canonical_json(&identity).unwrap())
         );
         let request_hash: [u8; 32] = sha2::Sha256::digest(format!("request-1:{intent}")).into();
         let memo: [u8; 32] = sha2::Sha256::digest("request-1").into();
@@ -557,6 +652,125 @@ mod tests {
         ] {
             assert!(verify(id, &r, a, act, m, ctx).is_err());
         }
+    }
+    fn mpp_fixture() -> (Config, Policy, Transaction, MppPaymentRequest) {
+        use base64::Engine;
+        let (mut c, mut p, tx) = fixture();
+        c.chain_id = 42431;
+        c.network = "tempo:testnet".into();
+        p.chain_id = c.chain_id;
+        p.network = c.network.clone();
+        let charge = serde_json::json!({"amount":"250000","currency":p.token,"recipient":hex(&[19;20]),"methodDetails":{"chainId":42431,"feePayer":false,"supportedModes":["push"]}});
+        let mpp = MppPaymentRequest {
+            version: 1,
+            method: "GET".into(),
+            url: "https://merchant.example/paid".into(),
+            challenge: serde_json::json!({"id":"charge-1","realm":"merchant.example","method":"tempo","intent":"charge","request":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(canonical_json(&charge).unwrap()),"expires":"1970-01-01T00:04:10Z","opaque":"original"}),
+        };
+        (c, p, tx, mpp)
+    }
+    fn sign_mpp(
+        p: &Policy,
+        old: &Transaction,
+        mpp: &MppPaymentRequest,
+        expiry: u64,
+    ) -> Transaction {
+        let recipient = hex(&[19; 20]);
+        let identity = execution_request_identity(
+            &p.id,
+            &recipient,
+            "0.25",
+            &format!("GET {}", mpp.url),
+            "https://merchant.example",
+            Some(r#"{"purpose":"research"}"#),
+            Some(mpp),
+        )
+        .unwrap();
+        let intent = format!(
+            "{:x}",
+            sha2::Sha256::digest(canonical_json(&identity).unwrap())
+        );
+        let bytes = unhex(&old.data).unwrap();
+        let mut words = bytes[4..4 + 14 * 32].as_chunks::<32>().0.to_vec();
+        words[0] = word(p.chain_id);
+        words[10] = word(expiry);
+        words[11] = sha2::Sha256::digest(format!("request-1:{intent}")).into();
+        words[13] = unhex(&mpp_memo(&mpp.challenge).unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap();
+        let signer = SigningKey::from_bytes((&[7; 32]).into()).unwrap();
+        let (sig, id) = signer
+            .sign_prehash_recoverable(&execution_digest(p.chain_id, &p.vault, &words).unwrap())
+            .unwrap();
+        words.extend([word(480), word(65)]);
+        let mut data = keccak(format!("execute({EXECUTION},bytes)"))[..4].to_vec();
+        data.extend(words.concat());
+        data.extend(sig.to_bytes());
+        data.push(id.to_byte() + 27);
+        data.resize(4 + 19 * 32, 0);
+        Transaction {
+            chain_id: p.chain_id,
+            data: hex(&data),
+            ..old.clone()
+        }
+    }
+    #[test]
+    fn mpp_signed_plan_binds_http_challenge_context_and_expiry_without_native_fallback() {
+        let (c, p, old, mpp) = mpp_fixture();
+        let tx = sign_mpp(&p, &old, &mpp, 250);
+        let check = |mpp: &MppPaymentRequest, now: u64, context: &str| {
+            validate_execution_request_mpp(
+                &c,
+                &p,
+                &tx,
+                "request-1",
+                &hex(&[19; 20]),
+                "0.25",
+                &format!("GET {}", mpp.url),
+                "https://merchant.example",
+                Some(context),
+                mpp,
+                now,
+            )
+        };
+        assert!(check(&mpp, 100, r#"{"purpose":"research"}"#).is_ok());
+        assert!(check(&mpp, 251, r#"{"purpose":"research"}"#).is_err());
+        assert!(check(&mpp, 0, r#"{"purpose":"research"}"#).is_ok());
+        assert!(check(&mpp, 100, r#"{ "purpose":"research" }"#).is_err());
+        let mut changed = mpp.clone();
+        changed.url = "https://merchant.example/other".into();
+        assert!(check(&changed, 100, r#"{"purpose":"research"}"#).is_err());
+        changed = mpp.clone();
+        changed.challenge["opaque"] = serde_json::json!("changed");
+        assert!(check(&changed, 100, r#"{"purpose":"research"}"#).is_err());
+        assert!(validate_execution_request(
+            &c,
+            &p,
+            &tx,
+            "request-1",
+            &hex(&[19; 20]),
+            "0.25",
+            &format!("GET {}", mpp.url),
+            "https://merchant.example",
+            Some(r#"{"purpose":"research"}"#)
+        )
+        .is_err());
+        let too_late = sign_mpp(&p, &old, &mpp, 251);
+        assert!(validate_execution_request_mpp(
+            &c,
+            &p,
+            &too_late,
+            "request-1",
+            &hex(&[19; 20]),
+            "0.25",
+            &format!("GET {}", mpp.url),
+            "https://merchant.example",
+            Some(r#"{"purpose":"research"}"#),
+            &mpp,
+            100
+        )
+        .is_err());
     }
     #[test]
     fn changed_signatures_envelopes_padding_and_domain_are_rejected() {
