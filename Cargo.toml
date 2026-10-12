@@ -98,6 +98,8 @@ required-features = ["std", "typed-workflow"]
 [features]
 default = ["std", "compiler", "oracle-ledger"]
 oracle-ledger = []
+# Compact validation diagnostics for no_std contracts that expose only error codes.
+compact-contract-validation = []
 std = ["serde/std", "serde_json/std", "sha2/std"]
 compiler = ["std", "typed-workflow", "dep:syn", "dep:proc-macro2"]
 typed-workflow = ["dep:unicode-normalization", "dep:unicode-ident", "dep:unicode-script"]

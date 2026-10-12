@@ -36,6 +36,8 @@ jobs:
           cargo check --locked --no-default-features --features std,oracle-ledger --lib
           cargo check --locked --no-default-features --features typed-workflow,oracle-ledger --lib
           cargo check --locked --no-default-features --features oracle-ledger --lib
+          cargo test --locked --no-default-features --features compact-contract-validation --test contract_validation
+          cargo test --locked --features compact-contract-validation --test contract_validation
           cargo test --locked --no-default-features --test feature_profiles
           cargo test --locked --no-default-features --features typed-workflow --test typed_host_feature
           cargo test --locked --no-default-features --features std,typed-workflow
