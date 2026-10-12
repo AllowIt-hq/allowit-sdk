@@ -748,7 +748,7 @@ impl Evaluator<'_> {
                                 self.context.spent_day,
                                 self.context.now,
                             )
-                            .map_err(|e| failure(&e.code, &e.reason))?
+                            .map_err(|(code, reason)| failure(code, reason))?
                             .checked_add(self.context.amount_units)
                             .ok_or_else(|| {
                                 failure("DAILY_CAP_EXCEEDED", "Daily spending limit exceeded.")

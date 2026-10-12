@@ -49,7 +49,8 @@ pub fn set_cap_per_day(ctx: &Context, amount: &str, token: &str) -> PolicyResult
     if token != "USDC" || ctx.token != token {
         return Err(error("TOKEN_MISMATCH", "Token does not match."));
     }
-    if crate::primitives::daily_spend(ctx.daily_spent_units, ctx.spent_day, ctx.now)?
+    if crate::primitives::daily_spend(ctx.daily_spent_units, ctx.spent_day, ctx.now)
+        .map_err(|(code, reason)| error(code, reason))?
         .checked_add(ctx.amount_units)
         .is_none_or(|n| n > cap)
     {

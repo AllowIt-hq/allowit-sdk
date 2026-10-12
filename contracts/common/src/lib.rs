@@ -659,32 +659,49 @@ mod typed_profile_rejection {
 
 /// Decode current custody state, or an inert legacy state for owner revocation.
 /// Legacy counters cannot authorize a daily policy and remain permanently disabled.
+#[inline(always)]
 pub fn decode_custody_state(bytes: &[u8]) -> Result<State, Error> {
-    if let Ok(state) = borsh::from_slice::<State>(bytes) {
-        return Ok(state);
-    }
-    #[derive(BorshDeserialize)]
-    struct LegacyState {
-        mandate: Mandate,
-        artifact: Vec<u8>,
-        active: bool,
-        revoked: bool,
-        spent_units: u64,
-        next_nonce: u64,
-    }
-    let legacy: LegacyState = borsh::from_slice(bytes).map_err(|_| Error::InvalidAccount)?;
-    if legacy.mandate.core_version != "0.1.0" {
-        return Err(Error::InvalidAccount);
-    }
-    let _ = (legacy.active, legacy.revoked);
+    // Decode the shared envelope once. Only the trailing accounting suffix
+    // differs between formats; this avoids two full custody decoders in Wasm.
+    let mut suffix = bytes;
+    let mandate = Mandate::deserialize(&mut suffix).map_err(|_| Error::InvalidAccount)?;
+    let artifact = <Vec<u8> as BorshDeserialize>::deserialize(&mut suffix)
+        .map_err(|_| Error::InvalidAccount)?;
+    let active =
+        <bool as BorshDeserialize>::deserialize(&mut suffix).map_err(|_| Error::InvalidAccount)?;
+    let revoked =
+        <bool as BorshDeserialize>::deserialize(&mut suffix).map_err(|_| Error::InvalidAccount)?;
+    let spent_units =
+        <u64 as BorshDeserialize>::deserialize(&mut suffix).map_err(|_| Error::InvalidAccount)?;
+    let (daily_spent_units, spent_day, next_nonce, active, revoked) = match suffix.len() {
+        24 => (
+            u64::from_le_bytes(suffix[..8].try_into().map_err(|_| Error::InvalidAccount)?),
+            u64::from_le_bytes(
+                suffix[8..16]
+                    .try_into()
+                    .map_err(|_| Error::InvalidAccount)?,
+            ),
+            u64::from_le_bytes(suffix[16..].try_into().map_err(|_| Error::InvalidAccount)?),
+            active,
+            revoked,
+        ),
+        8 if mandate.core_version == "0.1.0" => (
+            0,
+            0,
+            u64::from_le_bytes(suffix.try_into().map_err(|_| Error::InvalidAccount)?),
+            false,
+            true,
+        ),
+        _ => return Err(Error::InvalidAccount),
+    };
     Ok(State {
-        mandate: legacy.mandate,
-        artifact: legacy.artifact,
-        active: false,
-        revoked: true,
-        spent_units: legacy.spent_units,
-        daily_spent_units: 0,
-        spent_day: 0,
-        next_nonce: legacy.next_nonce,
+        mandate,
+        artifact,
+        active,
+        revoked,
+        spent_units,
+        daily_spent_units,
+        spent_day,
+        next_nonce,
     })
 }

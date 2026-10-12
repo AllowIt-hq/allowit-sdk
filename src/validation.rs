@@ -25,8 +25,24 @@ enum Type {
 fn result(t: Type) -> Type {
     Type::Result(Box::new(t))
 }
+#[cfg(not(all(feature = "compact-contract-validation", not(feature = "std"))))]
 fn bad(message: impl Into<String>) -> CompileError {
     CompileError::new("INVALID_POLICY", message)
+}
+
+#[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
+#[inline(always)]
+fn bad(message: impl Into<String>) -> CompileError {
+    // Drop discarded diagnostics before the shared constructor so literal
+    // authoring messages do not survive as unused call arguments in Wasm.
+    let _ = message;
+    compact_invalid_policy()
+}
+
+#[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
+#[inline(never)]
+fn compact_invalid_policy() -> CompileError {
+    CompileError::new("INVALID_POLICY", "")
 }
 
 pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
@@ -68,9 +84,10 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
     Ok(units)
 }
 
-struct Validator {
+struct Validator<'a> {
     nodes: usize,
     config_count: usize,
+    declared_asset: Option<&'a str>,
     #[cfg(feature = "typed-workflow")]
     provider_call_ids: Vec<String>,
     #[cfg(feature = "typed-workflow")]
@@ -88,7 +105,7 @@ struct Validator {
     #[cfg(feature = "oracle-ledger")]
     tier_count: usize,
 }
-impl Validator {
+impl Validator<'_> {
     #[inline(always)]
     fn typed_only(&self) -> bool {
         #[cfg(feature = "typed-workflow")]
@@ -741,6 +758,7 @@ impl Validator {
                             Some(Expr::String { value: amount }),
                             Some(Expr::String { value: token }),
                         ) if token == "USDC"
+                            || self.declared_asset == Some(token.as_str())
                             || (self.provider_profile()
                                 && !token.is_empty()
                                 && token.len() <= 128) =>
@@ -749,7 +767,7 @@ impl Validator {
                         }
                         _ => {
                             return Err(bad(
-                                "set_cap_per_day requires a positive amount literal and the string \"USDC\".",
+                                "set_cap_per_day requires a positive amount literal and USDC or the exact declared payment asset.",
                             ));
                         }
                     }
@@ -798,7 +816,10 @@ impl Validator {
                         if self.provider_profile() && (value.is_empty() || value.len() > 128) {
                             return Err(bad("Provider asset identifiers require 1 to 128 bytes."));
                         }
-                        if value != "USDC" && !self.provider_profile() {
+                        if value != "USDC"
+                            && !self.provider_profile()
+                            && self.declared_asset != Some(value.as_str())
+                        {
                             return Err(bad("Version 1 supports six-decimal USDC only."));
                         }
                     }
@@ -878,6 +899,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         provider_profile: cfg!(feature = "typed-workflow") && provider_call_required(program),
         nodes: 0,
         config_count: 0,
+        declared_asset: declared_asset(program),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
@@ -892,8 +914,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
             "Provider policies require an unconditional require_asset or cap guard with a literal asset identifier, not a currency symbol.",
         ));
     }
-    #[cfg(feature = "typed-workflow")]
-    if let Some(first) = provider_asset_id(program)
+    if let Some(first) = asset_declarations(program).next()
         && asset_declarations(program).any(|asset| asset != first)
     {
         return Err(bad("Payment asset declarations must agree."));
@@ -901,12 +922,35 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
     Ok(())
 }
 
+/// An explicit unconditional asset guard admits pure financial guards for the
+/// same asset. A cap alone cannot opt an ordinary policy into another token.
+fn declared_asset(program: &Program) -> Option<&str> {
+    program.statements.iter().find_map(|statement| {
+        let Statement::Expression {
+            value: Expr::Try { value },
+            ..
+        } = statement
+        else {
+            return None;
+        };
+        let Expr::Call { name, args, .. } = &**value else {
+            return None;
+        };
+        if name != "require_asset" {
+            return None;
+        }
+        match args.get(1) {
+            Some(Expr::String { value }) => Some(value.as_str()),
+            _ => None,
+        }
+    })
+}
+
 /// Payment asset binding is independent of funding and optional daily caps.
 #[cfg(feature = "typed-workflow")]
 pub(crate) fn provider_asset_id(program: &Program) -> Option<&str> {
     asset_declarations(program).next()
 }
-#[cfg(feature = "typed-workflow")]
 fn asset_declarations(program: &Program) -> impl Iterator<Item = &str> {
     program.statements.iter().filter_map(|statement| {
         let Statement::Expression {
@@ -1106,6 +1150,7 @@ pub(crate) fn typed_nodes(
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
+        declared_asset: declared_asset(program),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
@@ -1137,6 +1182,7 @@ pub(crate) fn typed_budgets(
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
+        declared_asset: declared_asset(program),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };

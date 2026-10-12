@@ -29,9 +29,16 @@ pub struct CompileError {
 }
 impl CompileError {
     pub fn new(code: &str, message: impl Into<String>) -> Self {
+        #[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
+        let message = {
+            let _ = message;
+            String::new()
+        };
+        #[cfg(not(all(feature = "compact-contract-validation", not(feature = "std"))))]
+        let message = message.into();
         Self {
             code: code.into(),
-            message: message.into(),
+            message,
             line: None,
             column: None,
         }

@@ -614,6 +614,41 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
         );
     }
     #[test]
+    fn verified_storage_caps_replace_constructor_defaults_without_source_changes() {
+        let policy = compile(source()).unwrap();
+        let source_hash = policy.source_hash.clone();
+        let mut ctx = context();
+        ctx.amount_units = 2_000_000;
+        assert_eq!(
+            evaluate_with_trace_native_payment(&policy, &ctx, &asset())
+                .0
+                .outcome,
+            "fail"
+        );
+        ctx.native_policy_storage = Some(NativePolicyStorage {
+            daily_limit_units: 8_000_000,
+            action_limit_units: 3_000_000,
+        });
+        assert_eq!(
+            evaluate_with_trace_native_payment(&policy, &ctx, &asset())
+                .0
+                .outcome,
+            "pass"
+        );
+        ctx.native_policy_storage = Some(NativePolicyStorage {
+            daily_limit_units: 500_000,
+            action_limit_units: 250_000,
+        });
+        ctx.amount_units = 250_001;
+        assert_eq!(
+            evaluate_with_trace_native_payment(&policy, &ctx, &asset())
+                .0
+                .outcome,
+            "fail"
+        );
+        assert_eq!(policy.source_hash, source_hash);
+    }
+    #[test]
     fn public_json_cannot_claim_native_host_authority_and_caps_remain_deterministic() {
         let policy = compile(source()).unwrap();
         let mut ctx = context();

@@ -366,7 +366,7 @@ fn legacy_state_remains_owner_revocable_but_cannot_authorize_daily_spending() {
     }
     let mut current = fixture(SIMPLE);
     current.mandate.core_version = "0.1.0".into();
-    let old = LegacyState {
+    let mut old = LegacyState {
         mandate: current.mandate.clone(),
         artifact: current.artifact.clone(),
         active: true,
@@ -387,4 +387,58 @@ fn legacy_state_remains_owner_revocable_but_cannot_authorize_daily_spending() {
     let roundtrip =
         allowit_contract_core::decode_custody_state(&borsh::to_vec(&state).unwrap()).unwrap();
     assert_eq!(roundtrip, state);
+    old.mandate.core_version = "0.2.0".into();
+    assert_eq!(
+        allowit_contract_core::decode_custody_state(&borsh::to_vec(&old).unwrap()),
+        Err(Error::InvalidAccount)
+    );
+}
+
+#[test]
+fn custody_wire_roundtrips_and_rejects_malformed_borsh() {
+    use borsh::BorshDeserialize;
+    let mut state = fixture(SIMPLE);
+    state.mandate.evidence_authority = Some(allowit_contract_core::EvidenceAuthority {
+        key: [6; 32],
+        key_id: "evidence-key".into(),
+        version: "evidence-version".into(),
+    });
+    let mandate_bytes = borsh::to_vec(&state.mandate).unwrap();
+    assert_eq!(
+        allowit_contract_core::Mandate::try_from_slice(&mandate_bytes).unwrap(),
+        state.mandate
+    );
+    for end in 0..mandate_bytes.len() {
+        assert!(allowit_contract_core::Mandate::try_from_slice(&mandate_bytes[..end]).is_err());
+    }
+    let mut malformed = mandate_bytes.clone();
+    // Four fixed-width identities precede the first Borsh string.
+    malformed[4 * 32 + 4] = 0xff;
+    assert!(allowit_contract_core::Mandate::try_from_slice(&malformed).is_err());
+    let mut malformed = mandate_bytes.clone();
+    let authority_tag =
+        4 * 32 + 4 + state.mandate.compiler_key_id.len() + 4 + state.mandate.compiler_version.len();
+    malformed[authority_tag] = 2;
+    assert!(allowit_contract_core::Mandate::try_from_slice(&malformed).is_err());
+
+    let bytes = borsh::to_vec(&state).unwrap();
+    assert_eq!(
+        allowit_contract_core::decode_custody_state(&bytes).unwrap(),
+        state
+    );
+    let mut malformed = bytes.clone();
+    malformed[mandate_bytes.len() + 4 + state.artifact.len()] = 2;
+    assert_eq!(
+        allowit_contract_core::decode_custody_state(&malformed),
+        Err(Error::InvalidAccount)
+    );
+    for end in bytes.len() - 24..bytes.len() {
+        assert!(allowit_contract_core::decode_custody_state(&bytes[..end]).is_err());
+    }
+    let mut trailing = bytes;
+    trailing.push(0);
+    assert_eq!(
+        allowit_contract_core::decode_custody_state(&trailing),
+        Err(Error::InvalidAccount)
+    );
 }
