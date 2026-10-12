@@ -32,7 +32,7 @@ impl CompileError {
         #[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
         let message = {
             let _ = message;
-            code.into()
+            String::new()
         };
         #[cfg(not(all(feature = "compact-contract-validation", not(feature = "std"))))]
         let message = message.into();

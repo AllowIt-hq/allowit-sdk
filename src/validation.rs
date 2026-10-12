@@ -25,8 +25,24 @@ enum Type {
 fn result(t: Type) -> Type {
     Type::Result(Box::new(t))
 }
+#[cfg(not(all(feature = "compact-contract-validation", not(feature = "std"))))]
 fn bad(message: impl Into<String>) -> CompileError {
     CompileError::new("INVALID_POLICY", message)
+}
+
+#[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
+#[inline(always)]
+fn bad(message: impl Into<String>) -> CompileError {
+    // Drop discarded diagnostics before the shared constructor so literal
+    // authoring messages do not survive as unused call arguments in Wasm.
+    let _ = message;
+    compact_invalid_policy()
+}
+
+#[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
+#[inline(never)]
+fn compact_invalid_policy() -> CompileError {
+    CompileError::new("INVALID_POLICY", "")
 }
 
 pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {

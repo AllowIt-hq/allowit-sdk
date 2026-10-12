@@ -5,7 +5,7 @@ fn compact_validation_is_opt_in_and_std_keeps_authoring_diagnostics() {
     let error = CompileError::new("INVALID_POLICY", "Detailed authoring diagnostic.");
     assert_eq!(error.code, "INVALID_POLICY");
     #[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
-    assert_eq!(error.message, "INVALID_POLICY");
+    assert!(error.message.is_empty());
     #[cfg(not(all(feature = "compact-contract-validation", not(feature = "std"))))]
     assert_eq!(error.message, "Detailed authoring diagnostic.");
 }
