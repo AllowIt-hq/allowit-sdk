@@ -90,6 +90,8 @@ jobs:
           for (const key of ['dependencies', 'devDependencies', 'optionalDependencies']) {
             assert.deepEqual(locked[key] ?? {}, manifest[key] ?? {}, `package-lock.json ${key} are stale`);
           }
+          // pnpm reads overrides from workspace config rather than npm's field.
+          fs.writeFileSync('pnpm-workspace.yaml', `overrides: ${JSON.stringify(manifest.overrides ?? {})}\n`);
           JS
       - run: pnpm import
         working-directory: native
