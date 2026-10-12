@@ -11,7 +11,8 @@ encoded `request`, expiry and opaque extension strings.
 
 The initial MPP scope is a public, canonical HTTPS GET URL without a query,
 userinfo or fragment, Tempo testnet chain 42431, and a positive single-recipient
-charge in the configured six-decimal token. Only push settlement with client-paid
+charge in the configured six-decimal token, with an explicit challenge chain ID.
+Only push settlement with client-paid
 fees is supported. Splits, pull-only requests, session/proof intents and unknown
 charge fields are rejected. The action must be `GET <exact URL>` and the merchant
 must be that URL's origin.

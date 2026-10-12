@@ -162,6 +162,13 @@ pub fn validate_mpp_request(
         .get("methodDetails")
         .map(Value::as_object)
         .transpose_option()?;
+    if details
+        .and_then(|d| d.get("chainId"))
+        .and_then(Value::as_u64)
+        != Some(chain_id)
+    {
+        return Err("MPP requires an explicit Tempo testnet chain ID".into());
+    }
     if let Some(d) = details {
         if d.keys().any(|k| {
             !matches!(
@@ -323,7 +330,13 @@ mod tests {
         }
         let mut defaults = terms();
         defaults.as_object_mut().unwrap().remove("methodDetails");
-        assert!(check(&request(defaults)).is_ok());
+        assert!(check(&request(defaults)).is_err());
+        let mut missing_chain = terms();
+        missing_chain["methodDetails"]
+            .as_object_mut()
+            .unwrap()
+            .remove("chainId");
+        assert!(check(&request(missing_chain)).is_err());
     }
     #[test]
     fn malformed_urls_expiry_and_envelopes_fail_closed() {
