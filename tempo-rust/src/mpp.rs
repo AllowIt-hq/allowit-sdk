@@ -100,6 +100,16 @@ pub fn validate_mpp_request(
     if challenge.values().any(|v| !v.is_string()) {
         return Err("MPP challenge auth-params must be strings".into());
     }
+    if challenge
+        .get("header")
+        .and_then(Value::as_str)
+        .is_some_and(|header| {
+            !header.eq_ignore_ascii_case("Authorization")
+                && !header.eq_ignore_ascii_case("Payment-Authorization")
+        })
+    {
+        return Err("Unsupported MPP credential header".into());
+    }
     if serde_json::to_vec(challenge)
         .map_err(|_| "Invalid MPP challenge")?
         .len()
@@ -377,6 +387,16 @@ mod tests {
             100
         )
         .is_err());
+        for header in ["Authorization", "Payment-Authorization", "authorization"] {
+            let mut mpp = request(terms());
+            mpp.challenge["header"] = json!(header);
+            assert!(check(&mpp).is_ok());
+        }
+        for header in ["Cookie", "X-API-Key", "", "Authorization\r\nCookie"] {
+            let mut mpp = request(terms());
+            mpp.challenge["header"] = json!(header);
+            assert!(check(&mpp).is_err());
+        }
     }
     #[test]
     fn explicit_merchant_memo_is_preserved_exactly() {

@@ -16,6 +16,8 @@ Only push settlement with client-paid
 fees is supported. Splits, pull-only requests, session/proof intents and unknown
 charge fields are rejected. The action must be `GET <exact URL>` and the merchant
 must be that URL's origin.
+Credential headers are limited to `Authorization` or `Payment-Authorization`;
+unsupported header instructions fail before authority approval.
 
 The memo follows mppx Attribution v1, with zero client attribution. An explicitly
 supplied memo must match the original realm and challenge ID. Payment identity
