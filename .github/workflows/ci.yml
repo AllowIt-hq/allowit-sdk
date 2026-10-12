@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   sdk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,7 +51,8 @@ jobs:
           path: target/sdk-distribution/
 
   tempo-sdk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: tempo-rust
@@ -67,15 +69,19 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   native-sdk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: native/package-lock.json
-      - run: npm ci --ignore-scripts
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: pnpm import
         working-directory: native
-      - run: npm test
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: native
+      - run: pnpm test
         working-directory: native

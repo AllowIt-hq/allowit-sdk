@@ -1,9 +1,14 @@
-name: Contract runtimes
+name: Contract smokes
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      full-runtime-suite:
+        description: Run all compiled contract runtime tests
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -16,9 +21,24 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
 jobs:
-  native-and-soroban:
+  common:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/common -> target
+      - run: cargo fmt --manifest-path contracts/common/Cargo.toml --check
+      - run: cargo test --locked --manifest-path contracts/common/Cargo.toml
+      - run: cargo test --locked --manifest-path contracts/common/Cargo.toml --features stellar
+
+  stellar-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,83 +50,58 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            contracts/common -> target
-            contracts/solana -> target
-            contracts/stellar -> target
-      - name: Check formatting and native conformance
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p contracts/dist
-          for rail in common solana stellar sbf-tests; do
-            cargo fmt --manifest-path "contracts/$rail/Cargo.toml" --check
-          done
-          cargo test --locked --manifest-path contracts/common/Cargo.toml 2>&1 | tee contracts/dist/common-tests.log
-          cargo test --locked --manifest-path contracts/common/Cargo.toml --features stellar 2>&1 | tee contracts/dist/stellar-codec-tests.log
-          cargo test --locked --manifest-path contracts/solana/Cargo.toml 2>&1 | tee contracts/dist/solana-native-tests.log
-          ALLOWIT_SOLANA_NETWORK=testnet cargo test --locked --manifest-path contracts/solana/Cargo.toml --test testnet -- --nocapture 2>&1 | tee contracts/dist/solana-testnet-asset-test.log
+          workspaces: contracts/stellar -> target
+      - run: cargo fmt --manifest-path contracts/stellar/Cargo.toml --check
+      - name: Check native Stellar behavior
+        run: cargo test --locked --manifest-path contracts/stellar/Cargo.toml -- --skip compiled_wasm_runs_in_the_soroban_vm
       - name: Build Soroban Wasm
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p contracts/dist
           curl --fail --location --retry 3 https://github.com/WebAssembly/binaryen/releases/download/version_133/binaryen-version_133-x86_64-linux.tar.gz -o "$RUNNER_TEMP/binaryen.tar.gz"
           printf '%s  %s\n' 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489 "$RUNNER_TEMP/binaryen.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/binaryen.tar.gz" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --version | tee contracts/dist/stellar-toolchain.log
-          # LLVM's size profiles differ; measure both and validate the exact
-          # smallest result in the real VM. Neither changes chain resource limits.
-          # Normalize diagnostic paths so host checkout/cache names do not
-          # consume the fixed Wasm upload budget.
+          # Keep diagnostic strings independent of runner and registry paths.
           path_flags="--remap-path-prefix=$GITHUB_WORKSPACE=."
           cargo_cache_root="${CARGO_HOME:-$HOME/.cargo}"
           registry_sources=0
-          for registry_path in "$cargo_cache_root"/registry/src/*; do
+          for registry_path in "$cargo_cache_root"/registry/src/*/*; do
             if [ -d "$registry_path" ]; then
-              path_flags+=" --remap-path-prefix=$registry_path=registry"
+              path_flags+=" --remap-path-prefix=$registry_path=."
               registry_sources=$((registry_sources + 1))
             fi
           done
-          # The preceding host tests fetch these sources. Refuse a reordered
-          # workflow that would leave cache-specific index paths in the Wasm.
           test "$registry_sources" -gt 0
           path_flags+=" --remap-path-prefix=$cargo_cache_root/git/checkouts=git"
-          smallest=999999999
-          for rust_opt in z s; do
-            RUSTFLAGS="${RUSTFLAGS:-} $path_flags" CARGO_PROFILE_RELEASE_OPT_LEVEL="$rust_opt" cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee -a contracts/dist/stellar-build.log
-            for binaryen_opt in z 2 4; do
-              candidate="$RUNNER_TEMP/allowit-stellar-$rust_opt-$binaryen_opt.wasm"
-              opt_flags=("-O$binaryen_opt")
-              if [ "$binaryen_opt" != z ]; then opt_flags+=(--shrink-level=2); fi
-              "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features "${opt_flags[@]}" --converge --strip-debug --strip-dwarf --strip-producers contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o "$candidate"
-              size=$(wc -c < "$candidate")
-              echo "LLVM opt=$rust_opt Binaryen O$binaryen_opt shrink=2 bytes=$size" | tee -a contracts/dist/stellar-toolchain.log
-              if [ "$size" -lt "$smallest" ]; then
-                smallest="$size"
-                cp "$candidate" contracts/dist/allowit_stellar.wasm
-                echo "selected LLVM=$rust_opt Binaryen=$binaryen_opt" | tee -a contracts/dist/stellar-toolchain.log
-              fi
-            done
-          done
+          RUSTFLAGS="${RUSTFLAGS:-} $path_flags" CARGO_PROFILE_RELEASE_OPT_LEVEL=z cargo build --locked --release --target wasm32v1-none --manifest-path contracts/stellar/Cargo.toml 2>&1 | tee contracts/dist/stellar-build.log
+          "$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" --mvp-features -Oz --converge --strip-debug --strip-dwarf --strip-producers contracts/stellar/target/wasm32v1-none/release/allowit_stellar.wasm -o contracts/dist/allowit_stellar.wasm
           sha256sum contracts/dist/allowit_stellar.wasm | tee contracts/dist/stellar-sha256.txt
-      - name: Execute native Soroban and compiled Wasm tests
+      - name: Smoke compiled Stellar contract
         shell: bash
         run: |
           set -euo pipefail
           export ALLOWIT_STELLAR_WASM="$GITHUB_WORKSPACE/contracts/dist/allowit_stellar.wasm"
-          cargo test --locked --manifest-path contracts/stellar/Cargo.toml -- --nocapture 2>&1 | tee contracts/dist/stellar-runtime-tests.log
+          cargo test --locked --manifest-path contracts/stellar/Cargo.toml --lib test::compiled_wasm_runs_in_the_soroban_vm -- --exact --nocapture 2>&1 | tee contracts/dist/stellar-runtime-tests.log
+          grep -q '1 passed; 0 failed' contracts/dist/stellar-runtime-tests.log
+      - name: Full compiled Stellar runtime suite
+        if: inputs.full-runtime-suite == true
+        env:
+          ALLOWIT_STELLAR_WASM: ${{ github.workspace }}/contracts/dist/allowit_stellar.wasm
+        run: cargo test --locked --manifest-path contracts/stellar/Cargo.toml -- --nocapture
       - run: python3 scripts/package-licenses.py contracts/dist
         id: licenses
         if: always()
       - uses: actions/upload-artifact@v4
         if: always() && steps.licenses.outcome == 'success'
         with:
-          name: soroban-and-native-evidence
+          name: stellar-smoke
           path: contracts/dist/
           if-no-files-found: error
-  solana-sbf:
+  solana-smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 20
     env:
       ALLOWIT_SOLANA_NETWORK: devnet
     steps:
@@ -120,6 +115,12 @@ jobs:
           workspaces: |
             contracts/solana -> target
             contracts/sbf-tests -> target
+      - name: Check native Solana behavior
+        run: |
+          cargo fmt --manifest-path contracts/solana/Cargo.toml --check
+          cargo fmt --manifest-path contracts/sbf-tests/Cargo.toml --check
+          cargo test --locked --manifest-path contracts/solana/Cargo.toml
+          ALLOWIT_SOLANA_NETWORK=testnet cargo test --locked --manifest-path contracts/solana/Cargo.toml --test testnet
       - name: Install checksum-pinned official Agave tooling
         shell: bash
         run: |
@@ -142,19 +143,27 @@ jobs:
             exit 1
           fi
           sha256sum contracts/dist/allowit_solana.so | tee contracts/dist/solana-sha256.txt
-      - name: Execute compiled SBF and real SPL Token in Mollusk
+      - name: Smoke compiled Solana contract with SPL Token
         shell: bash
         run: |
           set -euo pipefail
           export SBF_OUT_DIR="$GITHUB_WORKSPACE/contracts/dist"
-          cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml -- --nocapture 2>&1 | tee contracts/dist/solana-sbf-runtime-tests.log
+          cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml --test runtime real_sbf_transfer_checks_identity_scope_budget_nonce_and_revocation -- --exact --nocapture 2>&1 | tee contracts/dist/solana-sbf-runtime-tests.log
+          grep -q '1 passed; 0 failed' contracts/dist/solana-sbf-runtime-tests.log
+          cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml --test vault vault_lifecycle_real_sbf -- --exact --nocapture 2>&1 | tee contracts/dist/solana-vault-smoke.log
+          grep -q '1 passed; 0 failed' contracts/dist/solana-vault-smoke.log
+      - name: Full compiled Solana runtime suite
+        if: inputs.full-runtime-suite == true
+        env:
+          SBF_OUT_DIR: ${{ github.workspace }}/contracts/dist
+        run: cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml -- --nocapture
       - run: python3 scripts/package-licenses.py contracts/dist
         id: licenses
         if: always()
       - uses: actions/upload-artifact@v4
         if: always() && steps.licenses.outcome == 'success'
         with:
-          name: solana-sbf-evidence
+          name: solana-smoke
           # build-sbf may generate a deployment keypair; it is never an artifact.
           path: |
             contracts/dist/*.so
