@@ -32,7 +32,8 @@ pub fn set_cap_per_day(
     if limit_units == 0 {
         return Err(denied("INVALID_AMOUNT", "The limit must be positive."));
     }
-    if daily_spend(daily_spent_units, spent_day, now)?
+    if daily_spend(daily_spent_units, spent_day, now)
+        .map_err(|(code, reason)| denied(code, reason))?
         .checked_add(amount_units)
         .is_none_or(|n| n > limit_units)
     {
@@ -226,16 +227,16 @@ pub(crate) fn daily_spend(
     spent: Option<u64>,
     spent_day: Option<u64>,
     now: u64,
-) -> Result<u64, PolicyError> {
+) -> Result<u64, (&'static str, &'static str)> {
     let (Some(spent), Some(spent_day)) = (spent, spent_day) else {
-        return Err(denied(
+        return Err((
             "DAILY_ACCOUNTING_REQUIRED",
             "Authenticated daily accounting is required.",
         ));
     };
     let day = now / 86_400;
     if day < spent_day {
-        return Err(denied(
+        return Err((
             "CLOCK_WENT_BACKWARDS",
             "The current day precedes the accounting day.",
         ));

@@ -142,3 +142,36 @@ async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult {
         assert!(compile(&invalid).is_err(), "{invalid}");
     }
 }
+
+#[test]
+fn daily_accounting_errors_preserve_primitive_facade_and_runtime_diagnostics() {
+    let policy = compile("pub async fn evaluate(ctx: &Context) -> PolicyResult { set_cap_per_day(ctx, \"10\", \"USDC\")?; Ok(()) }").unwrap();
+    for (spent, day, now) in [
+        (None, Some(0), 0),
+        (Some(0), None, 0),
+        (Some(0), Some(1), 0),
+    ] {
+        let mut ctx = context();
+        ctx.daily_spent_units = spent;
+        ctx.spent_day = day;
+        ctx.now = now;
+        let primitive = allowit_sdk::set_cap_per_day(
+            spent,
+            day,
+            now,
+            ctx.amount_units,
+            "USDC",
+            10_000_000,
+            "USDC",
+            6,
+        )
+        .unwrap_err();
+        let facade = allowit_sdk::prelude::set_cap_per_day(&ctx, "10", "USDC").unwrap_err();
+        assert_eq!(facade, primitive);
+        for profile in [Profile::Contract, Profile::Oracle] {
+            let decision = evaluate(&policy, profile, &ctx);
+            assert_eq!(decision.code, primitive.code);
+            assert_eq!(decision.reason, primitive.reason);
+        }
+    }
+}

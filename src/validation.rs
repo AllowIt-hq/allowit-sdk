@@ -68,10 +68,10 @@ pub(crate) fn amount_units(amount: &str) -> Result<u64, CompileError> {
     Ok(units)
 }
 
-struct Validator {
+struct Validator<'a> {
     nodes: usize,
     config_count: usize,
-    declared_asset: Option<String>,
+    declared_asset: Option<&'a str>,
     #[cfg(feature = "typed-workflow")]
     provider_call_ids: Vec<String>,
     #[cfg(feature = "typed-workflow")]
@@ -89,7 +89,7 @@ struct Validator {
     #[cfg(feature = "oracle-ledger")]
     tier_count: usize,
 }
-impl Validator {
+impl Validator<'_> {
     #[inline(always)]
     fn typed_only(&self) -> bool {
         #[cfg(feature = "typed-workflow")]
@@ -742,7 +742,7 @@ impl Validator {
                             Some(Expr::String { value: amount }),
                             Some(Expr::String { value: token }),
                         ) if token == "USDC"
-                            || self.declared_asset.as_deref() == Some(token.as_str())
+                            || self.declared_asset == Some(token.as_str())
                             || (self.provider_profile()
                                 && !token.is_empty()
                                 && token.len() <= 128) =>
@@ -802,7 +802,7 @@ impl Validator {
                         }
                         if value != "USDC"
                             && !self.provider_profile()
-                            && self.declared_asset.as_deref() != Some(value.as_str())
+                            && self.declared_asset != Some(value.as_str())
                         {
                             return Err(bad("Version 1 supports six-decimal USDC only."));
                         }
@@ -883,7 +883,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         provider_profile: cfg!(feature = "typed-workflow") && provider_call_required(program),
         nodes: 0,
         config_count: 0,
-        declared_asset: declared_asset(program).map(String::from),
+        declared_asset: declared_asset(program),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
@@ -1134,7 +1134,7 @@ pub(crate) fn typed_nodes(
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
-        declared_asset: declared_asset(program).map(String::from),
+        declared_asset: declared_asset(program),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
@@ -1166,7 +1166,7 @@ pub(crate) fn typed_budgets(
         provider_profile: provider_call_required(program),
         nodes: 0,
         config_count: 0,
-        declared_asset: declared_asset(program).map(String::from),
+        declared_asset: declared_asset(program),
         #[cfg(feature = "oracle-ledger")]
         tier_count: 0,
     };
