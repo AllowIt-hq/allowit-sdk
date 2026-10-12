@@ -38,4 +38,15 @@ fn compact_validation_preserves_acceptance_and_rejects_unreachable_bad_calls() {
         validate_program(&invalid).unwrap_err().code,
         "INVALID_POLICY"
     );
+    let decision = allowit_sdk::evaluate_ir(
+        &invalid,
+        allowit_sdk::Profile::Contract,
+        &allowit_sdk::Context::default(),
+    );
+    assert_eq!(decision.outcome, "fail");
+    assert_eq!(decision.code, "INVALID_POLICY");
+    #[cfg(all(feature = "compact-contract-validation", not(feature = "std")))]
+    assert!(decision.reason.is_empty());
+    #[cfg(not(all(feature = "compact-contract-validation", not(feature = "std"))))]
+    assert!(!decision.reason.is_empty());
 }
