@@ -75,7 +75,7 @@ cargo build --release --locked --target wasm32v1-none \
   --manifest-path contracts/stellar/Cargo.toml
 ```
 
-Optimize the Wasm with checksum-pinned Binaryen 133 using the commands in `contracts.yml`. CI compares LLVM size profiles `z`/`s` and Binaryen `-Oz` plus optimization levels 2/4 at shrink level 2, logs the selected profile, and verifies the smallest artifact. Run the exact optimized bytes through the compiled-Wasm test before deployment. Stellar enables the pinned RustCrypto SHA-256 compact implementation; standard hash vectors and real-VM artifact validation check identical digest behavior. Upload costs count toward the network budget too; raw build output is not an accepted deployable artifact.
+Optimize the Wasm with checksum-pinned Binaryen 133 using the commands in `stellar-smoke.yml`. CI compares LLVM size profiles `z`/`s` and Binaryen `-Oz` plus optimization levels 2/4 at shrink level 2, logs the selected profile, and verifies the smallest artifact. Run the exact optimized bytes through the compiled-Wasm test before deployment. Stellar enables the pinned RustCrypto SHA-256 compact implementation; standard hash vectors and real-VM artifact validation check identical digest behavior. Upload costs count toward the network budget too; raw build output is not an accepted deployable artifact.
 
 Deploy the verified `allowit_stellar.wasm` using the chosen Stellar account/network. No constructor installs a default authority.
 
@@ -102,7 +102,7 @@ CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \
 
 The common vectors compare oracle and contract core outcomes/error codes, then test bindings, monetary boundaries, replay/revocation, confidence, semantic context and input rejection. Native Solana tests dispatch signed CPI to the actual SPL Token processor and assert balances. Soroban tests use the actual Stellar Asset Contract and authorization host, including rollback when transfer fails.
 
-[Contract runtimes CI](../.github/workflows/contracts.yml) builds the actual SBF program with checksum-pinned official Agave 4.3.0/platform-tools 1.57, runs it with the real SPL Token ELF and System Program in Mollusk 0.15.1, and uploads the ELF/hash/build logs/CU results. The maximum admitted artifact and depth-eight policy must activate and transfer within the configured resource limit. To run that suite after building:
+[Solana smoke CI](../.github/workflows/solana-smoke.yml) builds the actual SBF program with checksum-pinned official Agave 4.3.0/platform-tools 1.57, runs it with the real SPL Token ELF and System Program in Mollusk 0.15.1, and uploads the ELF/hash/build logs/CU results. The maximum admitted artifact and depth-eight policy must activate and transfer within the configured resource limit. To run that suite after building:
 
 ```sh
 SBF_OUT_DIR="$PWD/contracts/dist" ALLOWIT_SOLANA_NETWORK=devnet \
