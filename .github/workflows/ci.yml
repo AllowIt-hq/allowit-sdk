@@ -70,6 +70,32 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
 
+  stellar-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: stellar-rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stellar-rust
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Verify x402 interoperability with the official Stellar SDK
+        working-directory: stellar-rust/tests/node
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
   native-sdk:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
