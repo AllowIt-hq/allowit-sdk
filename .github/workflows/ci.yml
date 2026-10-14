@@ -86,7 +86,7 @@ jobs:
           workspaces: stellar-rust
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.14.1
       - run: cargo fmt --check
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
@@ -95,6 +95,12 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm test
+      - name: Verify merchant HTTP request binding and durable quote admission
+        working-directory: stellar-rust/merchant
+        run: |
+          cargo build --locked --manifest-path ../Cargo.toml --bin allowit-stellar-http
+          npm ci --ignore-scripts
+          ALLOWIT_STELLAR_HTTP_VERIFIER="$GITHUB_WORKSPACE/stellar-rust/target/debug/allowit-stellar-http" npm test
 
   native-sdk:
     runs-on: ubuntu-24.04

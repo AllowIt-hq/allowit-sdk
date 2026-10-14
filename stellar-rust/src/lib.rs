@@ -9,6 +9,9 @@ use stellar_strkey::{ed25519, Contract, Strkey};
 use stellar_xdr::*;
 use url::Url;
 
+pub mod http_binding;
+pub use http_binding::HTTP_BINDING_PROFILE;
+
 pub type Result<T> = std::result::Result<T, String>;
 pub const PROFILE: &str = "stellar-native-x402-v1";
 pub const USDC_PUBNET: &str = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
