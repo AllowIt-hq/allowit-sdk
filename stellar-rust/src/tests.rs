@@ -151,6 +151,37 @@ fn objects() -> (Config, PreparedPayment, DetachedApproval, SignedPayment) {
 }
 
 #[test]
+fn lowered_daily_limit_preserves_history_and_resets_next_day() {
+    let (c, p, _, _) = objects();
+    let mut state = p.state.clone();
+    state.daily_limit = 1_000;
+    state.spent = 2_000;
+    state.revision += 1;
+    let prepare_at = |time| {
+        prepare_payment(
+            &c,
+            &state,
+            p.request.clone(),
+            &p.authorization_xdr,
+            p.signature_expiration_ledger,
+            time + 100,
+            time,
+        )
+    };
+    assert_eq!(
+        prepare_at(p.created_at).unwrap_err(),
+        "Payment exceeds available policy budget"
+    );
+    let next_day = (state.spent_day + 1) * 86_400;
+    let next = prepare_at(next_day).unwrap();
+    assert_eq!(next.state.spent, 2_000);
+    let approval = authority_sign(&c, &next, &[4; 32]).unwrap();
+    let signed = sign_payment(&c, &next, &[2; 32], &approval).unwrap();
+    validate_signed(&c, &next, &signed).unwrap();
+    assert!(prepare_at(state.spent_day * 86_400 - 1).is_err());
+}
+
+#[test]
 fn separate_authority_and_executor_signatures_are_required() {
     let (c, p, a, s) = objects();
     validate_signed(&c, &p, &s).unwrap();

@@ -403,7 +403,9 @@ pub fn validate_state(c: &Config, s: &VaultState) -> Result<()> {
     {
         return Err("Live vault state differs from pinned configuration".into());
     }
-    if s.daily_limit == 0 || s.spent > s.daily_limit {
+    // Lowering a limit preserves the prior day's spend. The effective-day
+    // budget is enforced when preparing a payment, as it is by the contract.
+    if s.daily_limit == 0 {
         return Err("Invalid vault budget state".into());
     }
     Ok(())
