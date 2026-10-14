@@ -128,11 +128,12 @@ async function merchantFixture() {
   return { request, quote, calls, store, close };
 }
 
-test('original request settles once and consumes its persistent quote', async () => {
+test('original request settles once through ignored transport metadata and consumes its persistent quote', async () => {
   const m = await merchantFixture();
   try {
     const { original, credential } = await m.quote();
-    const result = await m.request('/paid?text=hi', { headers: { 'Payment-Signature': credential } });
+    const result = await m.request('/paid?text=hi', { headers: { 'Payment-Signature': credential,
+      'CF-EW-Via': '15', 'CF-Warp-Tag-Id': 'fixture-transport', 'CF-Worker': 'fixture.example' } });
     assert.equal(result.status, 200);
     assert.deepEqual(m.calls, { verify: 0, settle: 1, handler: 1, state: 1 });
     const hash = await native.run('request_hash', { request: original });

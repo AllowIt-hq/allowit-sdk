@@ -192,7 +192,7 @@ export function createRpcVaultLoader({ native, network, rpcUrl, rpcHosts, vaultW
 const ALLOWED_HEADERS = new Set(['host', 'payment-signature', 'x-allowit-request-hash', 'x-allowit-binding-nonce',
   'accept', 'accept-language', 'sec-fetch-mode', 'user-agent', 'accept-encoding', 'connection', 'content-length', 'transfer-encoding', 'content-type',
   'idempotency-key', 'x-forwarded-proto', 'x-forwarded-for', 'cf-connecting-ip', 'cf-ray', 'cf-ipcountry',
-  'cf-visitor', 'cdn-loop', 'via']);
+  'cf-visitor', 'cf-ew-via', 'cf-warp-tag-id', 'cf-worker', 'cdn-loop', 'via']);
 
 function incoming(req, origin, route) {
   requireValue(req.protocol === 'https' && req.headers.host === new URL(origin).host, 'Unexpected merchant ingress');
