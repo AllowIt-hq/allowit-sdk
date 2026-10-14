@@ -5,7 +5,8 @@ request hash before the published x402 middleware can settle or run a handler.
 It uses the native `allowit-stellar-http` verifier built from `stellar-rust`, the
 published x402 2.28.0 Stellar scheme, canonical Circle USDC and a persistent
 SQLite quote store. No vault digest, signature format or payment credential
-format changes are required.
+format changes are required. The quote quota bounds outstanding operations;
+completed history is retained separately and cannot be admitted again.
 
 Build the native verifier with `cargo build --locked --release --bin
 allowit-stellar-http`. Install this adapter's locked dependencies using `npm ci
@@ -47,8 +48,10 @@ signatures with the shared Rust implementation. It atomically claims the
 original quote before entering x402. The supported `upfront` payment flow
 settles before the handler. A consumed or uncertain claim survives restart and
 is never replaced or rerun. Client recovery uses the original chain receipt;
-it does not retransmit a paid request. Changing route semantics, code pins or
-keys invalidates outstanding quotes.
+it does not retransmit a paid request. Changing declared route bindings, code
+pins or keys invalidates outstanding quotes. Changes to handler behavior that
+preserve those declarations cannot be detected by this guard; rotate the
+attestation key when changing handler semantics, and update the trusted registry.
 
 This enforces the cooperating merchant acceptance boundary. It does not make
 HTTP routing observable to the immutable on-chain vault. An arbitrary service

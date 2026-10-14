@@ -99,7 +99,8 @@ export class QuoteStore {
         expires_at INTEGER NOT NULL, record TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'issued', credential_digest TEXT,
         claimed_at INTEGER, outcome TEXT
-      ) STRICT;`);
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS quotes_status ON quotes(status);`);
   }
   issue(requestHash, record, now) {
     requireValue(HEX.test(requestHash), 'Invalid request hash');
@@ -110,7 +111,9 @@ export class QuoteStore {
       // Never remove a claimed/uncertain operation. An unused expired quote is
       // unusable even if the executor retained a valid signature over it.
       this.db.prepare("DELETE FROM quotes WHERE status='issued' AND expires_at <= ?").run(now);
-      const count = this.db.prepare('SELECT count(*) AS n FROM quotes').get().n;
+      // Completed history remains immutable for replay refusal and inspection,
+      // but does not consume the outstanding-operation admission quota.
+      const count = this.db.prepare("SELECT count(*) AS n FROM quotes WHERE status <> 'completed'").get().n;
       requireValue(count < this.maxQuotes, 'Quote quota exhausted');
       this.db.prepare('INSERT INTO quotes(request_hash,quote_id,expires_at,record) VALUES(?,?,?,?)')
         .run(requestHash, record.quoteId, record.expiresAt, json);

@@ -65,6 +65,32 @@ test('persistent quote admission is atomic and never released by restart', async
   } finally { a?.close(); b?.close(); fs.rmSync(dir, { recursive: true }); }
 });
 
+test('completed history does not exhaust admission while uncertain claims remain reserved', () => {
+  const dir = directory();
+  const db = path.join(dir, 'quotes.sqlite');
+  let store;
+  const first = '11'.repeat(32), second = '22'.repeat(32), third = '33'.repeat(32);
+  const record = quoteId => ({ quoteId, expiresAt: now + 600, request: {} });
+  try {
+    store = new QuoteStore(db, { maxQuotes: 1 });
+    store.issue(first, record('44'.repeat(32)), now);
+    store.claim(first, 'public-fixture-first', now);
+    store.finish(first, { paymentConfirmed: true });
+    store.issue(second, record('55'.repeat(32)), now);
+    assert.equal(store.get(first).status, 'completed');
+    assert.throws(() => store.claim(first, 'public-fixture-first', now));
+    store.claim(second, 'public-fixture-second', now);
+    assert.throws(() => store.issue(third, record('66'.repeat(32)), now + 601));
+    store.finish(second, { paymentConfirmed: false });
+    store.close();
+    store = new QuoteStore(db, { maxQuotes: 1 });
+    assert.equal(store.get(first).status, 'completed');
+    assert.equal(store.get(second).status, 'uncertain');
+    assert.throws(() => store.claim(second, 'public-fixture-second', now));
+    assert.throws(() => store.issue(third, record('66'.repeat(32)), now + 601));
+  } finally { store?.close(); fs.rmSync(dir, { recursive: true }); }
+});
+
 test('native helper uses the original shared request hash and public authorization', async () => {
   assert.equal(await native.run('request_hash', { request: fixture.prepared.request }), fixture.prepared.requestHash);
   const result = await native.run('inspect', { credential: fixture.signed.paymentSignature });
