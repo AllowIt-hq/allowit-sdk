@@ -2,6 +2,11 @@
 
 AllowIt policies are a restricted, validated subset of Rust. This repository contains the source compiler, deterministic interpreter, function registry, workflow projection, CLI and stdio language server. The same `no_std + alloc` interpreter is used by the contract adapters in `contracts/`.
 
+The native [Stellar SDK](stellar-rust/README.md) prepares standard x402 v2 USDC
+payments from Soroban vaults, verifies detached policy-authority and executor
+signatures, and checks exact on-chain receipts. It adds no policy functions and
+performs no transport, key-file access, or broadcasting.
+
 ```rust
 use allowit::v1::prelude::*;
 
