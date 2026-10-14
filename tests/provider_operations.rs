@@ -672,6 +672,157 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
             "fail"
         );
     }
+
+    fn stellar(network: &str) -> (String, Context, ProviderPaymentAsset) {
+        let source = source()
+            .replace("tempo:localnet", network)
+            .replace("pathUSD", "USDC");
+        let mut ctx = context();
+        ctx.network = network.into();
+        ctx.token = "USDC".into();
+        let asset = ProviderPaymentAsset {
+            network: network.into(),
+            asset: "USDC".into(),
+            decimals: 6,
+        };
+        (source, ctx, asset)
+    }
+
+    #[test]
+    fn stellar_usdc_native_host_evaluates_both_real_networks_with_verified_policy_storage() {
+        for network in ["stellar:testnet", "stellar:pubnet"] {
+            let (source, mut ctx, asset) = stellar(network);
+            let policy = compile(&source).unwrap();
+            let (decision, trace) = evaluate_with_trace_native_payment(&policy, &ctx, &asset);
+            assert_eq!(decision.outcome, "pass", "{network}: {decision:?}");
+            assert!(trace.is_some());
+            // Storage is current owner state, rather than the source constructor
+            // defaults. Neither the daily cap nor the requested amount changes.
+            ctx.native_policy_storage
+                .as_mut()
+                .unwrap()
+                .action_limit_units = ctx.amount_units - 1;
+            assert_eq!(
+                evaluate_with_trace_native_payment(&policy, &ctx, &asset)
+                    .0
+                    .outcome,
+                "fail"
+            );
+            ctx.native_policy_storage
+                .as_mut()
+                .unwrap()
+                .action_limit_units = ctx.amount_units;
+            ctx.spent_units = 5_000_000 - ctx.amount_units + 1;
+            assert_eq!(
+                evaluate_with_trace_native_payment(&policy, &ctx, &asset)
+                    .0
+                    .outcome,
+                "fail"
+            );
+        }
+    }
+
+    #[test]
+    fn stellar_native_host_rejects_network_asset_precision_and_unverified_storage_substitution() {
+        let (source, ctx, asset) = stellar("stellar:testnet");
+        let policy = compile(&source).unwrap();
+        for wrong in [
+            ProviderPaymentAsset {
+                network: "stellar:pubnet".into(),
+                ..asset.clone()
+            },
+            ProviderPaymentAsset {
+                network: "stellar:localnet".into(),
+                ..asset.clone()
+            },
+            ProviderPaymentAsset {
+                asset: "XLM".into(),
+                ..asset.clone()
+            },
+            ProviderPaymentAsset {
+                decimals: 7,
+                ..asset.clone()
+            },
+        ] {
+            assert_eq!(
+                evaluate_with_trace_native_payment(&policy, &ctx, &wrong)
+                    .0
+                    .code,
+                "NATIVE_PAYMENT_BINDING"
+            );
+        }
+        // Even equal caller and host labels cannot admit another Stellar token.
+        let mut forged = ctx.clone();
+        forged.network = "stellar:localnet".into();
+        let wrong = ProviderPaymentAsset {
+            network: forged.network.clone(),
+            ..asset.clone()
+        };
+        assert_eq!(
+            evaluate_with_trace_native_payment(&policy, &forged, &wrong)
+                .0
+                .code,
+            "NATIVE_PAYMENT_BINDING"
+        );
+        forged = ctx.clone();
+        forged.token = "XLM".into();
+        let wrong = ProviderPaymentAsset {
+            asset: "XLM".into(),
+            ..asset.clone()
+        };
+        assert_eq!(
+            evaluate_with_trace_native_payment(&policy, &forged, &wrong)
+                .0
+                .code,
+            "NATIVE_PAYMENT_BINDING"
+        );
+        forged = ctx.clone();
+        forged.native_policy_storage = None;
+        assert_eq!(
+            evaluate_with_trace_native_payment(&policy, &forged, &asset)
+                .0
+                .code,
+            "NATIVE_PAYMENT_BINDING"
+        );
+        forged = ctx;
+        forged
+            .native_policy_storage
+            .as_mut()
+            .unwrap()
+            .daily_limit_units = 50_000_001;
+        assert_eq!(
+            evaluate_with_trace_native_payment(&policy, &forged, &asset)
+                .0
+                .code,
+            "INVALID_NATIVE_STORAGE"
+        );
+    }
+
+    #[test]
+    fn stellar_public_json_cannot_acquire_native_host_storage_or_payment_authority() {
+        let (source, ctx, _) = stellar("stellar:testnet");
+        for trace in [false, true] {
+            let request = serde_json::json!({"operation":"evaluate","source":source,"profile":"oracle","context":ctx,"trace":trace});
+            let response = allowit_sdk::process_value(request);
+            assert_eq!(response["ok"], false);
+            assert_eq!(response["error"]["code"], "INVALID_CONTEXT");
+        }
+        let mut without_storage = ctx;
+        without_storage.native_policy_storage = None;
+        let response = allowit_sdk::process_value(
+            serde_json::json!({"operation":"evaluate","source":source,"profile":"oracle","context":without_storage}),
+        );
+        assert_ne!(response["decision"]["outcome"], "pass");
+        assert_eq!(
+            evaluate(
+                &compile(&source).unwrap(),
+                Profile::Contract,
+                &without_storage
+            )
+            .outcome,
+            "fail"
+        );
+    }
 }
 
 #[test]
