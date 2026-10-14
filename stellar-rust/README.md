@@ -94,5 +94,9 @@ npm test
 The independent Node checks use pinned official `@stellar/stellar-sdk` and
 `@x402/stellar`. They verify Rust's C-account envelope, canonical tuple digest,
 both Ed25519 signatures, standard payload, and facilitator-rewritten receipt.
+They also execute the published facilitator verifier for both credential arms,
+including a successful authorization and token event exported from a real
+compiled Soroban vault host test. RPC plumbing and resource fees are mocked;
+these tests establish protocol compatibility without claiming a live settlement.
 All fixture keys and bytecode are public test material; the mock vault fixture
 is not deployable and no tests perform payments or network requests.
