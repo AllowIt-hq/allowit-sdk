@@ -405,9 +405,8 @@ pub fn validate_state(c: &Config, s: &VaultState) -> Result<()> {
     }
     // Lowering a limit preserves the prior day's spend. The effective-day
     // budget is enforced when preparing a payment, as it is by the contract.
-    if s.daily_limit == 0 {
-        return Err("Invalid vault budget state".into());
-    }
+    // Zero is the contract's paused limit. Owner lifecycle reads remain valid;
+    // every positive payment still fails the available-budget check.
     Ok(())
 }
 fn transfer_args(c: &Config, offer: &Value) -> Result<InvokeContractArgs> {

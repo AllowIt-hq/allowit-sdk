@@ -151,6 +151,50 @@ fn objects() -> (Config, PreparedPayment, DetachedApproval, SignedPayment) {
 }
 
 #[test]
+fn zero_daily_limit_is_valid_paused_state_and_never_authorizes_spend() {
+    let (c, p, _, _) = objects();
+    let mut state = p.state.clone();
+    state.daily_limit = 0;
+    state.spent = 2_000;
+    state.revision += 1;
+    validate_config(&c).unwrap();
+    validate_state(&c, &state).unwrap();
+    let mut state_xdr: ScVal = read_xdr(fixture()["stateResultXdr"].as_str().unwrap()).unwrap();
+    let ScVal::Map(Some(fields)) = &mut state_xdr else {
+        panic!("Expected state map");
+    };
+    fields
+        .0
+        .iter_mut()
+        .find(|f| f.key == symbol("daily_limit").unwrap())
+        .unwrap()
+        .val = ScVal::U64(0);
+    let paused_read = parse_vault_state(&write_xdr(&state_xdr).unwrap()).unwrap();
+    assert_eq!(paused_read.daily_limit, 0);
+    validate_state(&c, &paused_read).unwrap();
+    for time in [p.created_at, (state.spent_day + 1) * 86_400] {
+        assert_eq!(
+            prepare_payment(
+                &c,
+                &state,
+                p.request.clone(),
+                &p.authorization_xdr,
+                p.signature_expiration_ledger,
+                time + 100,
+                time,
+            )
+            .unwrap_err(),
+            "Payment exceeds available policy budget"
+        );
+    }
+    let mut altered = p.clone();
+    altered.state = state;
+    assert!(authority_sign(&c, &altered, &[4; 32]).is_err());
+    altered.state.owner = altered.state.executor.clone();
+    assert!(validate_state(&c, &altered.state).is_err());
+}
+
+#[test]
 fn lowered_daily_limit_preserves_history_and_resets_next_day() {
     let (c, p, _, _) = objects();
     let mut state = p.state.clone();
