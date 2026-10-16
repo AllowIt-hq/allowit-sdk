@@ -323,7 +323,9 @@ impl ApprovalCommitment {
         }
         if let Some(wallet) = self.recipient_wallet {
             if associated_token_address(self.mint, wallet, false)? != self.recipient {
-                return Err(Error::config("Approval recipient does not match its wallet ATA"));
+                return Err(Error::config(
+                    "Approval recipient does not match its wallet ATA",
+                ));
             }
         }
         Ok(digest(serde_json::to_vec(self).map_err(|_| {
@@ -439,11 +441,15 @@ impl NativeClient {
         let amount = options.amount.as_deref().map(units).transpose()?;
         if let Some(wallet) = options.recipient_wallet {
             if !matches!(method, "deploy" | "fund" | "execute") {
-                return Err(Error::config("Recipient wallet applies only to setup, funding or execution"));
+                return Err(Error::config(
+                    "Recipient wallet applies only to setup, funding or execution",
+                ));
             }
             let destination = self.recipient_token_account(wallet, method != "execute")?;
             if method == "execute" && options.recipient != Some(destination) {
-                return Err(Error::config("Execution recipient does not match its wallet ATA"));
+                return Err(Error::config(
+                    "Execution recipient does not match its wallet ATA",
+                ));
             }
         }
         if matches!(
@@ -814,12 +820,16 @@ impl NativeClient {
         };
         if let Some(wallet) = options.recipient_wallet {
             if !matches!(method, "deploy" | "fund" | "execute") {
-                return Err(Error::config("Recipient wallet applies only to setup, funding or execution"));
+                return Err(Error::config(
+                    "Recipient wallet applies only to setup, funding or execution",
+                ));
             }
             let destination = associated_token_address(b.mint, wallet, false)?;
             if method == "execute" {
                 if options.recipient != Some(destination) {
-                    return Err(Error::config("Execution recipient does not match its wallet ATA"));
+                    return Err(Error::config(
+                        "Execution recipient does not match its wallet ATA",
+                    ));
                 }
                 // The ATA program checks owner and mint atomically before transfer.
                 operation.insert(0, ata(b.executor, destination, wallet, b.mint)?);

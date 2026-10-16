@@ -226,14 +226,19 @@ impl NativeClient {
     /// Resolve an ordinary wallet to its canonical classic-token ATA. Missing
     /// accounts are allowed only during owner-funded idempotent setup.
     pub fn recipient_token_account(&self, wallet: Key, allow_missing: bool) -> Result<Key> {
-        let mint = self.config.mint.ok_or_else(|| Error::config("Missing token mint"))?;
+        let mint = self
+            .config
+            .mint
+            .ok_or_else(|| Error::config("Missing token mint"))?;
         let address = associated_token_address(mint, wallet, false)?;
         if let Some(account) = rpc::account(self.rpc.as_ref(), wallet, None)? {
             if account.owner != Key::parse("11111111111111111111111111111111")?
                 || account.executable
                 || !account.data.is_empty()
             {
-                return Err(Error::config("Recipient must be an ordinary wallet address"));
+                return Err(Error::config(
+                    "Recipient must be an ordinary wallet address",
+                ));
             }
         }
         let present = rpc::account(self.rpc.as_ref(), address, None)?.is_some();

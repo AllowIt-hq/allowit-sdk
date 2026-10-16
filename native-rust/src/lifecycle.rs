@@ -1021,7 +1021,9 @@ fn verify_receipt(
             }
             let entry = entry.ok_or_else(|| Error::config("Missing token balance proof"))?;
             if index == destination
-                && intent.recipient_wallet.is_some_and(|wallet| entry["owner"] != wallet.to_string())
+                && intent
+                    .recipient_wallet
+                    .is_some_and(|wallet| entry["owner"] != wallet.to_string())
             {
                 return Err(Error::config("Recipient token balance owner differs"));
             }
