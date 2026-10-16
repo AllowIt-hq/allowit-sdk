@@ -1220,16 +1220,29 @@ mod tests {
         let wallet = state.binding.owner;
         let destination = associated_token_address(state.binding.mint, wallet, false).unwrap();
         let mut approval = ApprovalCommitment::new(
-            &policy, &state, "wallet-approval-001", destination, "0.001", 100,
-            &"12".repeat(32), None,
-        ).unwrap();
+            &policy,
+            &state,
+            "wallet-approval-001",
+            destination,
+            "0.001",
+            100,
+            &"12".repeat(32),
+            None,
+        )
+        .unwrap();
         let legacy_digest = approval.digest().unwrap();
         approval.recipient_wallet = Some(wallet);
         assert_ne!(approval.digest().unwrap(), legacy_digest);
-        let instructions = client.expected_instructions(
-            &policy, &state.binding, "execute", &approval.options().unwrap(),
-            Some(&state.nonce), Some(&state.revision),
-        ).unwrap();
+        let instructions = client
+            .expected_instructions(
+                &policy,
+                &state.binding,
+                "execute",
+                &approval.options().unwrap(),
+                Some(&state.nonce),
+                Some(&state.revision),
+            )
+            .unwrap();
         assert_eq!(instructions[2].program, Key::parse(ATA_PROGRAM).unwrap());
         assert_eq!(instructions[2].data, vec![1]);
         assert_eq!(instructions[2].accounts[0].key, state.binding.executor);

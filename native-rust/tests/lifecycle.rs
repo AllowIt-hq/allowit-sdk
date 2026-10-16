@@ -1097,23 +1097,42 @@ fn wallet_ata_receipt_accepts_only_exact_post_owner_and_proven_new_destination()
         let f = Fixture::new();
         let wallet = f.owner.public_key();
         let b = f.sdk.public_binding(&f.policy, wallet).unwrap();
-        let destination = allowit_native::client::associated_token_address(
-            b.mint, wallet, false,
-        ).unwrap();
+        let destination =
+            allowit_native::client::associated_token_address(b.mint, wallet, false).unwrap();
         let mut options = f.options("1");
         options.recipient = Some(destination);
         options.recipient_wallet = Some(wallet);
-        let record = f.submit("execute", &options, "wallet-receipt-001", &AtomicUsize::new(0)).unwrap();
+        let record = f
+            .submit(
+                "execute",
+                &options,
+                "wallet-receipt-001",
+                &AtomicUsize::new(0),
+            )
+            .unwrap();
         let proof = Signed::parse(
-            &base64::engine::general_purpose::STANDARD.decode(&record.signed_bytes).unwrap(),
-        ).unwrap();
-        let index = |key| proof.keys.iter().position(|entry| entry.key == key).unwrap();
-        let balance = |key, amount: &str| json!({
-            "accountIndex":index(key),"mint":b.mint,"owner":wallet,
-            "uiTokenAmount":{"amount":amount}
-        });
+            &base64::engine::general_purpose::STANDARD
+                .decode(&record.signed_bytes)
+                .unwrap(),
+        )
+        .unwrap();
+        let index = |key| {
+            proof
+                .keys
+                .iter()
+                .position(|entry| entry.key == key)
+                .unwrap()
+        };
+        let balance = |key, amount: &str| {
+            json!({
+                "accountIndex":index(key),"mint":b.mint,"owner":wallet,
+                "uiTokenAmount":{"amount":amount}
+            })
+        };
         let mut before = vec![balance(b.token_account, "2000000")];
-        if !absent_pre { before.push(balance(destination, "0")); }
+        if !absent_pre {
+            before.push(balance(destination, "0"));
+        }
         let receipt = json!({
             "transaction":[record.signed_bytes,"base64"],
             "meta":{
@@ -1131,11 +1150,21 @@ fn wallet_ata_receipt_accepts_only_exact_post_owner_and_proven_new_destination()
             network.status = "settled".into();
             network.receipt = receipt.clone();
         }
-        assert_eq!(f.life().recover(&record.id, &f.policy, wallet).unwrap().status, "settled");
+        assert_eq!(
+            f.life()
+                .recover(&record.id, &f.policy, wallet)
+                .unwrap()
+                .status,
+            "settled"
+        );
         for field in ["owner", "mint"] {
             f.rpc.data.lock().unwrap().receipt = receipt.clone();
-            f.rpc.data.lock().unwrap().receipt["meta"]["postTokenBalances"][1][field] = json!(Key([31;32]));
-            assert!(f.life().recover(&record.id, &f.policy, wallet).is_err(), "{field}");
+            f.rpc.data.lock().unwrap().receipt["meta"]["postTokenBalances"][1][field] =
+                json!(Key([31; 32]));
+            assert!(
+                f.life().recover(&record.id, &f.policy, wallet).is_err(),
+                "{field}"
+            );
         }
         f.rpc.data.lock().unwrap().receipt = receipt;
         f.rpc.data.lock().unwrap().receipt["meta"]["preTokenBalances"] = json!([]);

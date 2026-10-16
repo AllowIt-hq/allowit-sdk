@@ -416,9 +416,19 @@ mod tests {
         }
         let wallet = LocalSigner::from_secret(
             &ed25519_dalek::SigningKey::from_bytes(&[18; 32]).to_keypair_bytes(),
-        ).unwrap().public_key();
+        )
+        .unwrap()
+        .public_key();
         let mint = Key([3; 32]);
-        for mode in ["valid", "missing", "owner", "mint", "frozen", "program", "unavailable"] {
+        for mode in [
+            "valid",
+            "missing",
+            "owner",
+            "mint",
+            "frozen",
+            "program",
+            "unavailable",
+        ] {
             let mut bytes = vec![0; 165];
             bytes[..32].copy_from_slice(&mint.0);
             bytes[32..64].copy_from_slice(&wallet.0);
@@ -432,16 +442,33 @@ mod tests {
             let token = if mode == "missing" {
                 json!({"context":{"slot":1},"value":null})
             } else {
-                account(&bytes, if mode == "program" { Key([20; 32]) } else {
-                    Key::parse(TOKEN_PROGRAM).unwrap()
-                }, 1)
+                account(
+                    &bytes,
+                    if mode == "program" {
+                        Key([20; 32])
+                    } else {
+                        Key::parse(TOKEN_PROGRAM).unwrap()
+                    },
+                    1,
+                )
             };
             let mut c = client(json!(null));
             c.config.mint = Some(mint);
-            c.rpc = Arc::new(WalletRpc { wallet, token, unavailable: mode == "unavailable" });
-            assert_eq!(c.recipient_token_account(wallet, true).is_ok(),
-                matches!(mode, "valid" | "missing"), "{mode}");
-            assert_eq!(c.recipient_token_account(wallet, false).is_ok(), mode == "valid", "{mode}");
+            c.rpc = Arc::new(WalletRpc {
+                wallet,
+                token,
+                unavailable: mode == "unavailable",
+            });
+            assert_eq!(
+                c.recipient_token_account(wallet, true).is_ok(),
+                matches!(mode, "valid" | "missing"),
+                "{mode}"
+            );
+            assert_eq!(
+                c.recipient_token_account(wallet, false).is_ok(),
+                mode == "valid",
+                "{mode}"
+            );
         }
     }
 
