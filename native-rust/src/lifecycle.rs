@@ -725,7 +725,7 @@ impl<'a> PolicyLifecycle<'a> {
                 .sdk
                 .state(policy, owner, false, None)?
                 .ok_or_else(|| Error::config("Deploy the native policy first"))?;
-            let expected_approval = ApprovalCommitment::new(
+            let mut expected_approval = ApprovalCommitment::new(
                 policy,
                 &state,
                 &id,
@@ -735,6 +735,8 @@ impl<'a> PolicyLifecycle<'a> {
                 &authorized.approval.request_digest,
                 authorized.approval.assessment_digest.as_deref(),
             )?;
+            expected_approval.recipient_wallet = authorized.approval.recipient_wallet;
+            expected_approval.digest()?;
             if authorized.approval != expected_approval
                 || authorized.nonce != state.nonce
                 || authorized.revision != state.revision
@@ -1004,10 +1006,25 @@ fn verify_receipt(
             .position(|k| Some(k.key) == intent.recipient)
             .ok_or_else(|| Error::config("Missing token balance proof"))?;
         let balance = |kind: &str, index: usize| -> Result<u64> {
-            let entry = receipt["meta"][kind]
+            let entries = receipt["meta"][kind]
                 .as_array()
-                .and_then(|xs| xs.iter().find(|x| x["accountIndex"] == index))
                 .ok_or_else(|| Error::config("Missing token balance proof"))?;
+            let entry = entries.iter().find(|x| x["accountIndex"] == index);
+            // Only the signed, canonical wallet-ATA creation permits a missing
+            // destination pre-balance. All source and post balances stay required.
+            if entry.is_none()
+                && kind == "preTokenBalances"
+                && index == destination
+                && intent.recipient_wallet.is_some()
+            {
+                return Ok(0);
+            }
+            let entry = entry.ok_or_else(|| Error::config("Missing token balance proof"))?;
+            if index == destination
+                && intent.recipient_wallet.is_some_and(|wallet| entry["owner"] != wallet.to_string())
+            {
+                return Err(Error::config("Recipient token balance owner differs"));
+            }
             if entry["mint"] != b.mint.to_string() {
                 return Err(Error::config("Missing token balance proof"));
             }

@@ -219,6 +219,8 @@ pub struct ApprovalCommitment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assessment_digest: Option<String>,
     pub decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_wallet: Option<Key>,
 }
 impl ApprovalCommitment {
     #[allow(clippy::too_many_arguments)]
@@ -282,6 +284,7 @@ impl ApprovalCommitment {
             request_digest,
             assessment_digest,
             decision: "allow".into(),
+            recipient_wallet: None,
         })
     }
     pub fn digest(&self) -> Result<String> {
@@ -318,6 +321,11 @@ impl ApprovalCommitment {
         ] {
             number(value)?;
         }
+        if let Some(wallet) = self.recipient_wallet {
+            if associated_token_address(self.mint, wallet, false)? != self.recipient {
+                return Err(Error::config("Approval recipient does not match its wallet ATA"));
+            }
+        }
         Ok(digest(serde_json::to_vec(self).map_err(|_| {
             Error::config("Invalid approval commitment")
         })?))
@@ -326,6 +334,7 @@ impl ApprovalCommitment {
         Ok(Options {
             amount: Some(decimal(number(&self.amount_units)?)),
             recipient: Some(self.recipient),
+            recipient_wallet: self.recipient_wallet,
             expires_at: Some(self.expires_at),
             commitment: Some(self.digest()?),
             instance_slot: Some(number(&self.instance_slot)?),
@@ -429,10 +438,13 @@ impl NativeClient {
         let s = self.state(policy, owner, recovery, None)?;
         let amount = options.amount.as_deref().map(units).transpose()?;
         if let Some(wallet) = options.recipient_wallet {
-            if !matches!(method, "deploy" | "fund") {
-                return Err(Error::config("Recipient wallet applies only to setup or funding"));
+            if !matches!(method, "deploy" | "fund" | "execute") {
+                return Err(Error::config("Recipient wallet applies only to setup, funding or execution"));
             }
-            self.recipient_token_account(wallet, true)?;
+            let destination = self.recipient_token_account(wallet, method != "execute")?;
+            if method == "execute" && options.recipient != Some(destination) {
+                return Err(Error::config("Execution recipient does not match its wallet ATA"));
+            }
         }
         if matches!(
             method,
@@ -801,11 +813,19 @@ impl NativeClient {
             _ => return Err(Error::config("Unsupported persisted operation")),
         };
         if let Some(wallet) = options.recipient_wallet {
-            if !matches!(method, "deploy" | "fund") {
-                return Err(Error::config("Recipient wallet applies only to setup or funding"));
+            if !matches!(method, "deploy" | "fund" | "execute") {
+                return Err(Error::config("Recipient wallet applies only to setup, funding or execution"));
             }
             let destination = associated_token_address(b.mint, wallet, false)?;
-            operation.push(ata(b.owner, destination, wallet, b.mint)?);
+            if method == "execute" {
+                if options.recipient != Some(destination) {
+                    return Err(Error::config("Execution recipient does not match its wallet ATA"));
+                }
+                // The ATA program checks owner and mint atomically before transfer.
+                operation.insert(0, ata(b.executor, destination, wallet, b.mint)?);
+            } else {
+                operation.push(ata(b.owner, destination, wallet, b.mint)?);
+            }
         }
         let mut instructions = compute_budget(method)?;
         instructions.append(&mut operation);
