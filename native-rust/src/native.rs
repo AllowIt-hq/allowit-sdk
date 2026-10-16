@@ -19,6 +19,9 @@ pub struct Options {
     pub amount: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recipient: Option<Key>,
+    /// Explicit wallet owner whose canonical ATA is created in owner setup/funding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipient_wallet: Option<Key>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -425,6 +428,12 @@ impl NativeClient {
         let b = self.binding(policy, owner, recovery)?;
         let s = self.state(policy, owner, recovery, None)?;
         let amount = options.amount.as_deref().map(units).transpose()?;
+        if let Some(wallet) = options.recipient_wallet {
+            if !matches!(method, "deploy" | "fund") {
+                return Err(Error::config("Recipient wallet applies only to setup or funding"));
+            }
+            self.recipient_token_account(wallet, true)?;
+        }
         if matches!(
             method,
             "deploy" | "fund" | "execute" | "withdraw" | "tune" | "tune_action"
@@ -791,6 +800,13 @@ impl NativeClient {
             }
             _ => return Err(Error::config("Unsupported persisted operation")),
         };
+        if let Some(wallet) = options.recipient_wallet {
+            if !matches!(method, "deploy" | "fund") {
+                return Err(Error::config("Recipient wallet applies only to setup or funding"));
+            }
+            let destination = associated_token_address(b.mint, wallet, false)?;
+            operation.push(ata(b.owner, destination, wallet, b.mint)?);
+        }
         let mut instructions = compute_budget(method)?;
         instructions.append(&mut operation);
         Ok(instructions)
@@ -1130,6 +1146,42 @@ mod tests {
             vec![state.binding.executor, state.binding.authority]
         );
         assert!(tx.message.len() + 129 <= 1232);
+    }
+
+    #[test]
+    fn wallet_recipient_setup_is_one_owner_signature_and_exact_idempotent_ata() {
+        let (client, policy, state) = fixture();
+        let wallet = state.binding.executor;
+        let destination = associated_token_address(state.binding.mint, wallet, false).unwrap();
+        for method in ["deploy", "fund"] {
+            let options = Options {
+                amount: Some("0.1".into()),
+                recipient_wallet: Some(wallet),
+                ..Options::default()
+            };
+            let instructions = client
+                .expected_instructions(&policy, &state.binding, method, &options, None, None)
+                .unwrap();
+            let ata_instruction = instructions.last().unwrap();
+            assert_eq!(ata_instruction.program, Key::parse(ATA_PROGRAM).unwrap());
+            assert_eq!(ata_instruction.data, vec![1]);
+            assert_eq!(ata_instruction.accounts[0].key, state.binding.owner);
+            assert_eq!(ata_instruction.accounts[1].key, destination);
+            assert_eq!(ata_instruction.accounts[2].key, wallet);
+            assert_eq!(ata_instruction.accounts[3].key, state.binding.mint);
+            let tx = Transaction::new(state.binding.owner, Key([10; 32]), instructions).unwrap();
+            assert_eq!(tx.signers, vec![state.binding.owner]);
+            assert!(tx.message.len() + 65 <= 1232);
+        }
+        let invalid = Options {
+            recipient_wallet: Some(wallet),
+            ..Options::default()
+        };
+        assert!(
+            client
+                .expected_instructions(&policy, &state.binding, "revoke", &invalid, None, Some("7"))
+                .is_err()
+        );
     }
 
     #[test]

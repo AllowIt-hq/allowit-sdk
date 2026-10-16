@@ -29,6 +29,8 @@ struct Intent {
     commitment: Option<String>,
     instance_slot: Option<u64>,
     binding: Binding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recipient_wallet: Option<Key>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,6 +127,7 @@ pub fn intent_for(
         commitment: options.commitment.clone(),
         instance_slot: options.instance_slot,
         binding,
+        recipient_wallet: options.recipient_wallet,
     };
     serde_json::to_string(&intent).map_err(|_| Error::config("Invalid operation intent"))
 }
@@ -143,6 +146,7 @@ pub fn validate_record(
     let options = Options {
         amount: intent.amount,
         recipient: intent.recipient,
+        recipient_wallet: intent.recipient_wallet,
         expires_at: intent.expires_at,
         commitment: intent.commitment,
         instance_slot: intent.instance_slot,
