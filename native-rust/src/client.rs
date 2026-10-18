@@ -223,6 +223,34 @@ impl NativeClient {
         }
         Ok(())
     }
+    /// Resolve an ordinary wallet to its canonical classic-token ATA. Missing
+    /// accounts are allowed only during owner-funded idempotent setup.
+    pub fn recipient_token_account(&self, wallet: Key, allow_missing: bool) -> Result<Key> {
+        let mint = self
+            .config
+            .mint
+            .ok_or_else(|| Error::config("Missing token mint"))?;
+        let address = associated_token_address(mint, wallet, false)?;
+        if let Some(account) = rpc::account(self.rpc.as_ref(), wallet, None)? {
+            if account.owner != Key::parse("11111111111111111111111111111111")?
+                || account.executable
+                || !account.data.is_empty()
+            {
+                return Err(Error::config(
+                    "Recipient must be an ordinary wallet address",
+                ));
+            }
+        }
+        let present = rpc::account(self.rpc.as_ref(), address, None)?.is_some();
+        if !present && allow_missing {
+            return Ok(address);
+        }
+        let token = self.token(address)?;
+        if token.mint != mint || token.owner != wallet {
+            return Err(Error::config("Recipient ATA mint or wallet owner changed"));
+        }
+        Ok(address)
+    }
     pub fn token(&self, address: Key) -> Result<TokenAccount> {
         let a = rpc::account(self.rpc.as_ref(), address, None)?
             .ok_or_else(|| Error::config("Expected a classic SPL Token account"))?;
@@ -368,6 +396,82 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn wallet_ata_resolution_distinguishes_absence_from_invalid_or_unavailable_accounts() {
+        struct WalletRpc {
+            wallet: Key,
+            token: serde_json::Value,
+            unavailable: bool,
+        }
+        impl Rpc for WalletRpc {
+            fn call(&self, _: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+                if self.unavailable {
+                    return Err(Error::uncertain("Unavailable fixture RPC"));
+                }
+                if params[0] == self.wallet.to_string() {
+                    return Ok(json!({"context":{"slot":1},"value":null}));
+                }
+                Ok(self.token.clone())
+            }
+        }
+        let wallet = LocalSigner::from_secret(
+            &ed25519_dalek::SigningKey::from_bytes(&[18; 32]).to_keypair_bytes(),
+        )
+        .unwrap()
+        .public_key();
+        let mint = Key([3; 32]);
+        for mode in [
+            "valid",
+            "missing",
+            "owner",
+            "mint",
+            "frozen",
+            "program",
+            "unavailable",
+        ] {
+            let mut bytes = vec![0; 165];
+            bytes[..32].copy_from_slice(&mint.0);
+            bytes[32..64].copy_from_slice(&wallet.0);
+            bytes[108] = 1;
+            match mode {
+                "owner" => bytes[32..64].fill(20),
+                "mint" => bytes[..32].fill(20),
+                "frozen" => bytes[108] = 2,
+                _ => (),
+            }
+            let token = if mode == "missing" {
+                json!({"context":{"slot":1},"value":null})
+            } else {
+                account(
+                    &bytes,
+                    if mode == "program" {
+                        Key([20; 32])
+                    } else {
+                        Key::parse(TOKEN_PROGRAM).unwrap()
+                    },
+                    1,
+                )
+            };
+            let mut c = client(json!(null));
+            c.config.mint = Some(mint);
+            c.rpc = Arc::new(WalletRpc {
+                wallet,
+                token,
+                unavailable: mode == "unavailable",
+            });
+            assert_eq!(
+                c.recipient_token_account(wallet, true).is_ok(),
+                matches!(mode, "valid" | "missing"),
+                "{mode}"
+            );
+            assert_eq!(
+                c.recipient_token_account(wallet, false).is_ok(),
+                mode == "valid",
+                "{mode}"
+            );
+        }
+    }
+
     #[test]
     fn mint_accepts_an_optional_freeze_authority() {
         let program = Key::parse(TOKEN_PROGRAM).unwrap();

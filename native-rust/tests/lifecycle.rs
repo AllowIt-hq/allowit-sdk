@@ -1092,6 +1092,87 @@ fn orphaned_owner_proof_blocks_a_new_operation_after_slot_write_crash() {
     );
 }
 #[test]
+fn wallet_ata_receipt_accepts_only_exact_post_owner_and_proven_new_destination() {
+    for absent_pre in [false, true] {
+        let f = Fixture::new();
+        let wallet = f.owner.public_key();
+        let b = f.sdk.public_binding(&f.policy, wallet).unwrap();
+        let destination =
+            allowit_native::client::associated_token_address(b.mint, wallet, false).unwrap();
+        let mut options = f.options("1");
+        options.recipient = Some(destination);
+        options.recipient_wallet = Some(wallet);
+        let record = f
+            .submit(
+                "execute",
+                &options,
+                "wallet-receipt-001",
+                &AtomicUsize::new(0),
+            )
+            .unwrap();
+        let proof = Signed::parse(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&record.signed_bytes)
+                .unwrap(),
+        )
+        .unwrap();
+        let index = |key| {
+            proof
+                .keys
+                .iter()
+                .position(|entry| entry.key == key)
+                .unwrap()
+        };
+        let balance = |key, amount: &str| {
+            json!({
+                "accountIndex":index(key),"mint":b.mint,"owner":wallet,
+                "uiTokenAmount":{"amount":amount}
+            })
+        };
+        let mut before = vec![balance(b.token_account, "2000000")];
+        if !absent_pre {
+            before.push(balance(destination, "0"));
+        }
+        let receipt = json!({
+            "transaction":[record.signed_bytes,"base64"],
+            "meta":{
+                "err":null,
+                "innerInstructions":[{"instructions":[
+                    {"programIdIndex":index(b.policy)},
+                    {"programIdIndex":index(Key::parse(allowit_native::client::TOKEN_PROGRAM).unwrap())}
+                ]}],
+                "preTokenBalances":before,
+                "postTokenBalances":[balance(b.token_account,"1000000"),balance(destination,"1000000")]
+            }
+        });
+        {
+            let mut network = f.rpc.data.lock().unwrap();
+            network.status = "settled".into();
+            network.receipt = receipt.clone();
+        }
+        assert_eq!(
+            f.life()
+                .recover(&record.id, &f.policy, wallet)
+                .unwrap()
+                .status,
+            "settled"
+        );
+        for field in ["owner", "mint"] {
+            f.rpc.data.lock().unwrap().receipt = receipt.clone();
+            f.rpc.data.lock().unwrap().receipt["meta"]["postTokenBalances"][1][field] =
+                json!(Key([31; 32]));
+            assert!(
+                f.life().recover(&record.id, &f.policy, wallet).is_err(),
+                "{field}"
+            );
+        }
+        f.rpc.data.lock().unwrap().receipt = receipt;
+        f.rpc.data.lock().unwrap().receipt["meta"]["preTokenBalances"] = json!([]);
+        assert!(f.life().recover(&record.id, &f.policy, wallet).is_err());
+    }
+}
+
+#[test]
 fn settled_requires_saved_message_both_cpis_and_exact_token_deltas() {
     let f = Fixture::new();
     let count = AtomicUsize::new(0);
