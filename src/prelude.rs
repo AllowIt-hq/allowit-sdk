@@ -112,8 +112,20 @@ pub fn require_merchant(ctx: &Context, merchant: &str) -> PolicyResult {
         Err(error("MERCHANT_NOT_ALLOWED", "Merchant is not permitted."))
     }
 }
+/// Exact recipient match, except that two `0x` + 40-hex EVM addresses compare
+/// case-insensitively: EIP-55 checksum casing is presentation, not identity, and
+/// hosts pass EVM recipients lowercased. Base58 and Stellar strkeys contain no
+/// `0`, so Solana and Stellar recipients always compare exactly.
+pub(crate) fn recipient_matches(actual: &str, required: &str) -> bool {
+    fn evm(value: &str) -> bool {
+        value.len() == 42
+            && value.starts_with("0x")
+            && value.bytes().skip(2).all(|b| b.is_ascii_hexdigit())
+    }
+    actual == required || (evm(actual) && evm(required) && actual.eq_ignore_ascii_case(required))
+}
 pub fn require_recipient(ctx: &Context, recipient: &str) -> PolicyResult {
-    if ctx.recipient == recipient {
+    if recipient_matches(&ctx.recipient, recipient) {
         Ok(())
     } else {
         Err(error(

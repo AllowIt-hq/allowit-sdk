@@ -40,6 +40,10 @@ name = "decision_trace"
 required-features = ["compiler"]
 
 [[test]]
+name = "evm_recipient"
+required-features = ["compiler"]
+
+[[test]]
 name = "execution_requirements"
 required-features = ["compiler"]
 
