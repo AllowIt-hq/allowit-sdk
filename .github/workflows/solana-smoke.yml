@@ -1,8 +1,7 @@
 name: Solana smoke
 on:
-  push:
-    branches: [main]
-  pull_request:
+  schedule:
+    - cron: "17 4 * * *"
   workflow_dispatch:
     inputs:
       full-runtime-suite:
@@ -77,7 +76,7 @@ jobs:
           cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml --test vault vault_lifecycle_real_sbf -- --exact --nocapture 2>&1 | tee contracts/dist/solana-vault-smoke.log
           grep -q 'test result: ok. 1 passed; 0 failed' contracts/dist/solana-vault-smoke.log
       - name: Full compiled Solana runtime suite
-        if: inputs.full-runtime-suite == true
+        if: github.event_name == 'schedule' || inputs.full-runtime-suite == true
         env:
           SBF_OUT_DIR: ${{ github.workspace }}/contracts/dist
         run: cargo test --locked --manifest-path contracts/sbf-tests/Cargo.toml -- --nocapture

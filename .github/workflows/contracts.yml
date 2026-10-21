@@ -1,8 +1,7 @@
 name: Contract checks
 on:
-  push:
-    branches: [main]
-  pull_request:
+  schedule:
+    - cron: "17 4 * * *"
   workflow_dispatch:
 permissions:
   contents: read
