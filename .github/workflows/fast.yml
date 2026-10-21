@@ -1,0 +1,69 @@
+name: Focused CI
+on:
+  pull_request:
+  push:
+    branches: [main, prod]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: focused-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verifier-flows:
+    name: Verifier (${{ matrix.flow }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        flow: [transaction, frame, refusal, failure_boundary]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test verifier acceptance and rejection
+        env:
+          TEST_FLOW: ${{ matrix.flow }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s verification/tests -p "test_${TEST_FLOW}.py" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/tests.log"
+  scalar-policy:
+    name: Scalar policy (${{ matrix.selector }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        selector:
+          - purchase_tiers_require_the_ledger_feature_before_evaluation
+          - native_storage_fields_require_the_trusted_host_profile
+          - scalar_build_rejects_host_workflow_ir_before_any_evaluation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Exercise one policy feature boundary
+        env:
+          TEST_SELECTOR: ${{ matrix.selector }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --no-default-features --test feature_profiles "$TEST_SELECTOR" -- --exact 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$RUNNER_TEMP/tests.log"
+  paysh-wire:
+    name: PaySH signed request vector
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/paysh-interface
+      - name: Compare the independent PaySH wire vector
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path crates/paysh-interface/Cargo.toml --lib tests::independent_python_pay_vector -- --exact 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$RUNNER_TEMP/tests.log"
