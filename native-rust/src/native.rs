@@ -445,7 +445,7 @@ impl NativeClient {
                     "Recipient wallet applies only to setup, funding or execution",
                 ));
             }
-            let destination = self.recipient_token_account(wallet, method != "execute")?;
+            let destination = self.recipient_token_account(wallet, true)?;
             if method == "execute" && options.recipient != Some(destination) {
                 return Err(Error::config(
                     "Execution recipient does not match its wallet ATA",
@@ -506,14 +506,18 @@ impl NativeClient {
                     if amount.unwrap() > number(&state.balance)? {
                         return Err(Error::denied("Insufficient vault balance"));
                     }
-                    let a = self.token(
-                        options
-                            .recipient
-                            .ok_or_else(|| Error::config("Specify the recipient"))?,
-                    )?;
-                    if a.mint != b.mint || a.owner == b.vault {
-                        return Err(Error::config("Invalid destination token account"));
+                    if options.recipient_wallet.is_none() {
+                        let a = self.token(
+                            options
+                                .recipient
+                                .ok_or_else(|| Error::config("Specify the recipient"))?,
+                        )?;
+                        if a.mint != b.mint || a.owner == b.vault {
+                            return Err(Error::config("Invalid destination token account"));
+                        }
                     }
+                    // Wallet destinations were checked above. Their canonical ATA may
+                    // be created atomically by the idempotent instruction before transfer.
                     let now = self.chain_time()?;
                     let expires_at = options
                         .expires_at

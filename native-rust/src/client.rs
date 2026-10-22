@@ -223,8 +223,8 @@ impl NativeClient {
         }
         Ok(())
     }
-    /// Resolve an ordinary wallet to its canonical classic-token ATA. Missing
-    /// accounts are allowed only during owner-funded idempotent setup.
+    /// Resolve an ordinary wallet to its canonical classic-token ATA. Callers
+    /// allowing absence must compose idempotent ATA creation before transfer.
     pub fn recipient_token_account(&self, wallet: Key, allow_missing: bool) -> Result<Key> {
         let mint = self
             .config
@@ -396,6 +396,199 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn prepare_wallet_payment_creates_only_a_missing_canonical_ata_and_keeps_limits() {
+        use crate::native::Options;
+        use std::collections::BTreeMap;
+        struct PaymentRpc {
+            accounts: BTreeMap<String, serde_json::Value>,
+        }
+        impl Rpc for PaymentRpc {
+            fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+                Ok(match method {
+                    "getGenesisHash" => json!(genesis("solana:devnet").unwrap()),
+                    "getAccountInfo" => self
+                        .accounts
+                        .get(params[0].as_str().unwrap())
+                        .cloned()
+                        .unwrap_or_else(|| json!({"context":{"slot":99},"value":null})),
+                    "getSlot" => json!(99),
+                    "getBlockTime" => json!(100),
+                    "getLatestBlockhash" => {
+                        json!({"value":{"blockhash":Key([88;32]),"lastValidBlockHeight":120}})
+                    }
+                    "simulateTransaction" => {
+                        json!({"context":{"slot":99},"value":{"err":null,"unitsConsumed":1000}})
+                    }
+                    _ => panic!("Unexpected payment RPC {method}"),
+                })
+            }
+        }
+        let signer = |n| {
+            LocalSigner::from_secret(
+                &ed25519_dalek::SigningKey::from_bytes(&[n; 32]).to_keypair_bytes(),
+            )
+            .unwrap()
+            .public_key()
+        };
+        let owner = signer(1);
+        let executor = signer(2);
+        let authority = signer(3);
+        let wallet = signer(4);
+        let mint = Key([11; 32]);
+        let program = Key([5; 32]);
+        let policy =
+            Policy::generate("solana:devnet", "Spend up to 2 test tokens per day").unwrap();
+        let config = Config {
+            network: policy.network.clone(),
+            mint: Some(mint),
+            executor: Some(executor),
+            authority: Some(authority),
+            deployment: Some(Deployment {
+                network: policy.network.clone(),
+                source_bundle: release().source_bundle.clone(),
+                policy: program,
+                policy_data: Key::find_program_address(&[&program.0], Key::parse(LOADER).unwrap())
+                    .unwrap()
+                    .0,
+                custody: Key([6; 32]),
+            }),
+        };
+        let token = |token_mint: Key, token_owner: Key, balance: u64, state: u8| {
+            let mut bytes = vec![0; 165];
+            bytes[..32].copy_from_slice(&token_mint.0);
+            bytes[32..64].copy_from_slice(&token_owner.0);
+            bytes[64..72].copy_from_slice(&balance.to_le_bytes());
+            bytes[108] = state;
+            account(&bytes, Key::parse(TOKEN_PROGRAM).unwrap(), 99)
+        };
+        for mode in [
+            "missing",
+            "valid",
+            "wrong-owner",
+            "wrong-mint",
+            "frozen",
+            "program-wallet",
+            "action-cap",
+            "daily-cap",
+            "balance",
+        ] {
+            let mut c = NativeClient::new(config.clone(), Arc::new(FakeRpc(json!(null)))).unwrap();
+            let b = c.public_binding(&policy, owner).unwrap();
+            let destination = associated_token_address(mint, wallet, false).unwrap();
+            let mut state = vec![0; 352];
+            state[0] = 2;
+            state[1] = b.bump;
+            for (i, key) in [b.owner, b.executor, b.mint, b.token_account, b.policy]
+                .iter()
+                .enumerate()
+            {
+                state[2 + i * 32..34 + i * 32].copy_from_slice(&key.0);
+            }
+            for (offset, value) in [
+                (162, &policy.source_bundle),
+                (194, &policy.policy_artifact),
+                (226, &policy.id),
+            ] {
+                state[offset..offset + 32].copy_from_slice(&hex32(value).unwrap());
+            }
+            for (offset, value) in [
+                (
+                    258,
+                    if mode == "daily-cap" {
+                        400_000u64
+                    } else {
+                        2_000_000
+                    },
+                ),
+                (290, 1),
+                (331, 1_000_000),
+                (339, 77),
+            ] {
+                state[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            state[298] = 1;
+            state[299..331].copy_from_slice(&authority.0);
+            let mut accounts = BTreeMap::new();
+            accounts.insert(b.vault.to_string(), account(&state, b.custody, 99));
+            accounts.insert(
+                b.token_account.to_string(),
+                token(
+                    mint,
+                    b.vault,
+                    if mode == "balance" {
+                        100_000
+                    } else {
+                        2_000_000
+                    },
+                    1,
+                ),
+            );
+            if mode != "missing" {
+                accounts.insert(
+                    destination.to_string(),
+                    token(
+                        if mode == "wrong-mint" {
+                            Key([42; 32])
+                        } else {
+                            mint
+                        },
+                        if mode == "wrong-owner" { owner } else { wallet },
+                        0,
+                        if mode == "frozen" { 2 } else { 1 },
+                    ),
+                );
+            }
+            if mode == "program-wallet" {
+                accounts.insert(
+                    wallet.to_string(),
+                    account(&[], Key::parse(TOKEN_PROGRAM).unwrap(), 99),
+                );
+            }
+            c.rpc = Arc::new(PaymentRpc { accounts });
+            // Cache only immutable program verification; exercise real state, recipient, limits, composition and simulation.
+            *c.verified.lock().unwrap() =
+                Some((digest(serde_json::to_vec(&config).unwrap()), true));
+            let mut options = Options {
+                amount: Some(if mode == "action-cap" { "1.1" } else { "0.5" }.into()),
+                recipient: Some(destination),
+                recipient_wallet: Some(wallet),
+                expires_at: Some(200),
+                commitment: Some("11".repeat(32)),
+                instance_slot: Some(77),
+                ..Options::default()
+            };
+            let result = c.prepare(&policy, owner, "execute", &options);
+            assert_eq!(
+                result.is_ok(),
+                matches!(mode, "missing" | "valid"),
+                "{mode}: {:?}",
+                result.as_ref().err()
+            );
+            if let Ok(prepared) = result {
+                let ata = &prepared.transaction.instructions[2];
+                assert_eq!(ata.program, Key::parse(ATA_PROGRAM).unwrap());
+                assert_eq!(ata.data, vec![1]);
+                assert_eq!(ata.accounts[0].key, executor);
+                assert_eq!(ata.accounts[1].key, destination);
+                assert_eq!(ata.accounts[2].key, wallet);
+                options.recipient = Some(owner);
+                assert!(
+                    c.prepare(&policy, owner, "execute", &options).is_err(),
+                    "wallet must commit its canonical ATA"
+                );
+            }
+            if mode == "missing" {
+                options.recipient = Some(destination);
+                options.recipient_wallet = None;
+                assert!(
+                    c.prepare(&policy, owner, "execute", &options).is_err(),
+                    "legacy token-account payments cannot invent an account"
+                );
+            }
+        }
+    }
+
     #[test]
     fn wallet_ata_resolution_distinguishes_absence_from_invalid_or_unavailable_accounts() {
         struct WalletRpc {
