@@ -803,7 +803,10 @@ impl Evaluator<'_> {
                         Value::Unit
                     }
                     "require_recipient" => {
-                        if string(&values, 1)? != self.context.recipient {
+                        if !crate::prelude::recipient_matches(
+                            &self.context.recipient,
+                            &string(&values, 1)?,
+                        ) {
                             return Err(failure(
                                 "RECIPIENT_NOT_ALLOWED",
                                 "This recipient is not permitted by the policy.",

@@ -79,7 +79,7 @@ pub fn require_merchant(merchant: &str, required: &str) -> PolicyResult {
     }
 }
 pub fn require_recipient(recipient: &str, required: &str) -> PolicyResult {
-    if recipient == required {
+    if crate::prelude::recipient_matches(recipient, required) {
         Ok(())
     } else {
         Err(denied(
