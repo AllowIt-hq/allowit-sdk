@@ -1,0 +1,20 @@
+[package]
+name = "allowit-stellar"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+description = "Native Stellar x402 authorization and receipt verification for AllowIt vaults"
+
+[dependencies]
+base64 = "0.22"
+ed25519-dalek = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+stellar-strkey = "0.0.13"
+stellar-xdr = { version = "=28.0.0", features = ["std", "base64"] }
+url = "2"
+
+[workspace]

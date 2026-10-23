@@ -1,0 +1,17 @@
+{
+  "name": "@allowit/stellar-http-binding",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24.14.1" },
+  "exports": "./index.mjs",
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": {
+    "@stellar/stellar-sdk": "16.3.0",
+    "@x402/core": "2.28.0",
+    "@x402/express": "2.28.0",
+    "@x402/stellar": "2.28.0"
+  },
+  "devDependencies": { "express": "5.1.0" }
+}

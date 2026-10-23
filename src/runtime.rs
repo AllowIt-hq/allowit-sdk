@@ -993,6 +993,8 @@ fn validate_context(
             || asset.asset.is_empty()
             || asset.asset.len() > 32
             || !asset.asset.bytes().all(|b| b.is_ascii_alphanumeric())
+            || matches!(asset.network.as_str(), "stellar:testnet" | "stellar:pubnet")
+                && asset.asset != "USDC"
             || !matches!(
                 asset.network.as_str(),
                 "tempo:localnet"
@@ -1000,6 +1002,8 @@ fn validate_context(
                     | "solana:localnet"
                     | "solana:devnet"
                     | "solana:testnet"
+                    | "stellar:testnet"
+                    | "stellar:pubnet"
             )
             || ctx.native_policy_storage.is_none()
     }) {
