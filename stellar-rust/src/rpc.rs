@@ -194,6 +194,13 @@ pub fn status_by_hash(
     transaction_hash: &[u8; 32],
 ) -> Result<OperationStatus> {
     let v = rpc.call("getTransaction", json!({"hash":hex(transaction_hash)}))?;
+    verify_settlement(&v, network, transaction_hash)
+}
+fn verify_settlement(
+    v: &Value,
+    network: &str,
+    transaction_hash: &[u8; 32],
+) -> Result<OperationStatus> {
     if matches!(v["status"].as_str(), Some("SUCCESS" | "FAILED")) {
         let envelope: TransactionEnvelope = read(
             v["envelopeXdr"]
@@ -227,6 +234,46 @@ pub fn status_by_hash(
         Some("NOT_FOUND") => OperationStatus::SubmissionUnknown,
         _ => return Err("Unknown Stellar settlement state".into()),
     })
+}
+/// A chain result bound to the requested network and exact transaction bytes.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifiedReceipt {
+    pub transaction_hash: [u8; 32],
+    pub status: OperationStatus,
+    pub ledger: u32,
+    pub envelope_xdr: String,
+    pub result_xdr: String,
+}
+/// Read a verified terminal receipt. Absence remains unknown and does not release reservations.
+pub fn receipt_by_hash(
+    rpc: &dyn Rpc,
+    network: &str,
+    transaction_hash: &[u8; 32],
+) -> Result<Option<VerifiedReceipt>> {
+    let v = rpc.call("getTransaction", json!({"hash":hex(transaction_hash)}))?;
+    let status = verify_settlement(&v, network, transaction_hash)?;
+    if !matches!(status, OperationStatus::Confirmed | OperationStatus::Failed) {
+        return Ok(None);
+    }
+    let ledger = v["ledger"]
+        .as_u64()
+        .and_then(|v| u32::try_from(v).ok())
+        .filter(|v| *v > 0)
+        .ok_or("Settlement ledger is required")?;
+    Ok(Some(VerifiedReceipt {
+        transaction_hash: *transaction_hash,
+        status,
+        ledger,
+        envelope_xdr: v["envelopeXdr"]
+            .as_str()
+            .ok_or("Settlement envelope is required")?
+            .into(),
+        result_xdr: v["resultXdr"]
+            .as_str()
+            .ok_or("Settlement result is required")?
+            .into(),
+    }))
 }
 pub fn recover(
     rpc: &dyn Rpc,

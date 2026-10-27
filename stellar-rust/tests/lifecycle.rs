@@ -323,7 +323,7 @@ impl rpc::Rpc for FakeRpc {
                     ext: TransactionResultExt::V0,
                 };
                 Ok(
-                    json!({"status":"SUCCESS","envelopeXdr":self.signed.transaction_xdr,"resultXdr":result.to_xdr_base64(Limits::none()).unwrap()}),
+                    json!({"status":"SUCCESS","ledger":777,"envelopeXdr":self.signed.transaction_xdr,"resultXdr":result.to_xdr_base64(Limits::none()).unwrap()}),
                 )
             }
             _ => Err("unexpected rpc".into()),
@@ -543,4 +543,25 @@ fn native_state_uses_network_and_real_account_xdr_with_explicit_usage() {
         wrong_network: true,
     };
     assert!(rpc::trusted_state(&wrong, &c, Some(accounting)).is_err());
+}
+
+#[test]
+fn verified_receipt_retains_exact_network_transaction_and_ledger() {
+    let (c, r, s) = fixture(WalletRoute::Native, false);
+    let p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let signed = sign_native(&p);
+    let rpc = FakeRpc {
+        calls: Mutex::new(vec![]),
+        signed: signed.clone(),
+        fail_send: false,
+    };
+    let receipt = rpc::receipt_by_hash(&rpc, &c.network, &signed.transaction_hash)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.ledger, 777);
+    assert_eq!(receipt.transaction_hash, signed.transaction_hash);
+    assert_eq!(receipt.envelope_xdr, signed.transaction_xdr);
+    assert_eq!(receipt.status, OperationStatus::Confirmed);
+    assert!(rpc::receipt_by_hash(&rpc, "stellar:mainnet", &signed.transaction_hash).is_err());
+    assert!(rpc::receipt_by_hash(&rpc, &c.network, &[0; 32]).is_err());
 }
