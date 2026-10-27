@@ -209,3 +209,26 @@ fn unit_values_cannot_be_conditions_and_strkey_checksum_is_checked() {
     );
     assert!(compile_stellar_policy(&source(r#"allowit::require_recipient(ctx, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHA")?; Ok(())"#)).is_err());
 }
+
+#[test]
+fn source_profile_declares_only_the_actual_native_wrapper_effect() {
+    let source = source("Ok(())");
+    let policy = compile_stellar_policy(&source).unwrap();
+    assert_eq!(policy.source_profile.profile, "allowit-stellar-transfer-v1");
+    assert_eq!(policy.source_profile.version, 1);
+    assert_eq!(policy.source_profile.source_hash, policy.source_hash);
+    assert_eq!(policy.source_profile.public_entrypoint, "execute");
+    assert_eq!(policy.source_profile.private_entrypoint, "_execute");
+    assert_eq!(
+        policy.source_profile.admitted_operations,
+        vec!["stellar::sep41_transfer"]
+    );
+    assert_eq!(
+        policy.source_profile.permitted_effects,
+        vec!["bound_asset_debit", "recipient_credit"]
+    );
+    assert_eq!(
+        policy.source_profile.argument_schema_digest,
+        policy.argument_schema_hash
+    );
+}

@@ -8,7 +8,8 @@ mod compiler;
 mod stellar_codegen;
 #[cfg(feature = "compiler")]
 pub use stellar_codegen::{
-    STELLAR_ARGUMENT_SCHEMA, StellarPolicy, StellarPolicyContext, compile_stellar_policy,
+    STELLAR_ARGUMENT_SCHEMA, STELLAR_SOURCE_PROFILE, StellarPolicy, StellarPolicyContext,
+    StellarSourceProfile, compile_stellar_policy,
 };
 #[cfg(feature = "compiler")]
 mod editing;

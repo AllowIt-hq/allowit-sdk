@@ -38,8 +38,22 @@ enum Step {
     Return(Guard),
     If(Guard, Vec<Step>, Vec<Step>),
 }
+pub const STELLAR_SOURCE_PROFILE: &str = "allowit-stellar-transfer-v1";
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StellarSourceProfile {
+    pub profile: String,
+    pub version: u32,
+    pub source_hash: [u8; 32],
+    pub public_entrypoint: String,
+    pub private_entrypoint: String,
+    pub argument_schema_digest: [u8; 32],
+    pub admitted_operations: Vec<String>,
+    pub permitted_effects: Vec<String>,
+}
 #[derive(Clone, Debug)]
 pub struct StellarPolicy {
+    pub source_profile: StellarSourceProfile,
     pub source_hash: [u8; 32],
     pub argument_schema_hash: [u8; 32],
     pub rust_source: String,
@@ -476,7 +490,7 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
     let source_hash = digest(source.as_bytes());
     let argument_schema_hash = digest(STELLAR_ARGUMENT_SCHEMA);
     let mut rust_source = format!(
-        "// Generated from the exact authored source by allowit-sdk.\nuse allowit_wallet_protocol::PolicyContext;\npub const SOURCE_HASH: [u8; 32] = {source_hash:?};\npub const ARGUMENT_SCHEMA_HASH: [u8; 32] = {argument_schema_hash:?};\npub fn execute(ctx: &PolicyContext) -> bool {{\n    if ctx.amount <= 0 || ctx.spent_daily < 0 || ctx.spent_total < ctx.spent_daily {{ return false; }}\n    let result = (|| -> Result<(), ()> {{\n"
+        "// Generated from the exact authored source by allowit-sdk.\nuse allowit_wallet_protocol::PolicyContext;\npub const SOURCE_PROFILE: &str = \"allowit-stellar-transfer-v1\";\npub const SOURCE_PROFILE_VERSION: u32 = 1;\npub const ADMITTED_OPERATION: &str = \"stellar::sep41_transfer\";\npub const SOURCE_HASH: [u8; 32] = {source_hash:?};\npub const ARGUMENT_SCHEMA_HASH: [u8; 32] = {argument_schema_hash:?};\npub fn execute(ctx: &PolicyContext) -> bool {{\n    if ctx.amount <= 0 || ctx.spent_daily < 0 || ctx.spent_total < ctx.spent_daily {{ return false; }}\n    let result = (|| -> Result<(), ()> {{\n"
     );
     for guard in &mandatory {
         rust_source += &format!("        let _ = {{ {} }}?;\n", code(guard));
@@ -485,6 +499,16 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
     rust_source += &block_code(&steps, 1);
     rust_source += "    Err(())\n}\n";
     Ok(StellarPolicy {
+        source_profile: StellarSourceProfile {
+            profile: STELLAR_SOURCE_PROFILE.into(),
+            version: 1,
+            source_hash,
+            public_entrypoint: "execute".into(),
+            private_entrypoint: "_execute".into(),
+            argument_schema_digest: argument_schema_hash,
+            admitted_operations: vec!["stellar::sep41_transfer".into()],
+            permitted_effects: vec!["bound_asset_debit".into(), "recipient_credit".into()],
+        },
         source_hash,
         argument_schema_hash,
         rust_source,
