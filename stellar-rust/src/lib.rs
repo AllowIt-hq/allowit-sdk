@@ -60,6 +60,12 @@ pub fn passphrase(network: &str) -> Result<&'static str> {
 pub fn network_id(network: &str) -> Result<[u8; 32]> {
     Ok(hash(passphrase(network)?))
 }
+/// Decode a canonical local Ed25519 seed. Never include this value in an export bundle.
+pub fn decode_seed(value: &str) -> Result<[u8; 32]> {
+    ed25519::PrivateKey::from_string(value)
+        .map(|v| v.0)
+        .map_err(|_| "Expected a canonical Stellar S seed".into())
+}
 pub fn account_for_seed(seed: &[u8; 32]) -> String {
     ed25519::PublicKey(SigningKey::from_bytes(seed).verifying_key().to_bytes()).to_string()
 }

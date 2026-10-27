@@ -232,3 +232,14 @@ fn source_profile_declares_only_the_actual_native_wrapper_effect() {
         policy.argument_schema_hash
     );
 }
+
+#[test]
+fn native_effect_is_catalogued_without_generic_callable_admission() {
+    let entry = allowit_sdk::registry()
+        .into_iter()
+        .find(|v| v.name == "stellar::sep41_transfer")
+        .unwrap();
+    assert_eq!(entry.effect, "native_effect");
+    assert!(entry.typed_signature.is_none());
+    assert!(allowit_sdk::compile_stellar_policy("use allowit::v1::prelude::*; async fn _execute(ctx:&Context)->PolicyResult { stellar::sep41_transfer(ctx)?; Ok(()) }").is_err());
+}
