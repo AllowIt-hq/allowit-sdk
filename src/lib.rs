@@ -5,6 +5,13 @@ extern crate alloc;
 #[cfg(feature = "compiler")]
 mod compiler;
 #[cfg(feature = "compiler")]
+mod stellar_codegen;
+#[cfg(feature = "compiler")]
+pub use stellar_codegen::{
+    STELLAR_ARGUMENT_SCHEMA, STELLAR_SOURCE_PROFILE, StellarPolicy, StellarPolicyContext,
+    StellarSourceProfile, compile_stellar_policy,
+};
+#[cfg(feature = "compiler")]
 mod editing;
 #[cfg(feature = "compiler")]
 pub mod lsp;

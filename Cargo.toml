@@ -68,6 +68,10 @@ name = "primitive_params"
 required-features = ["compiler"]
 
 [[test]]
+name = "stellar_codegen"
+required-features = ["compiler"]
+
+[[test]]
 name = "private_execute"
 required-features = ["compiler"]
 
