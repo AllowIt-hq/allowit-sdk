@@ -2347,6 +2347,26 @@
       ]
     },
     {
+      "name": "crate-git-revision",
+      "version": "0.0.9",
+      "crateSha256": "54851b5b3f24621804b1cded2820975623c205e3055d2d44031cdb1237339ac8",
+      "crateUrl": "https://static.crates.io/crates/crate-git-revision/crate-git-revision-0.0.9.crate",
+      "declaredLicense": "Apache-2.0",
+      "declaredLicenseFile": null,
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/1d8e79dfd4c7a8702e6fa49e45a2f1b4b553a9507b29b2dc14d3656b7c47862f.txt",
+          "sha256": "1d8e79dfd4c7a8702e6fa49e45a2f1b4b553a9507b29b2dc14d3656b7c47862f",
+          "source": "https://static.crates.io/crates/crate-git-revision/crate-git-revision-0.0.9.crate",
+          "originalPath": "LICENSE"
+        }
+      ]
+    },
+    {
       "name": "crunchy",
       "version": "0.2.4",
       "crateSha256": "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5",
@@ -14128,6 +14148,26 @@
           "path": "licenses/dependencies/texts/1d8e79dfd4c7a8702e6fa49e45a2f1b4b553a9507b29b2dc14d3656b7c47862f.txt",
           "sha256": "1d8e79dfd4c7a8702e6fa49e45a2f1b4b553a9507b29b2dc14d3656b7c47862f",
           "source": "https://static.crates.io/crates/stellar-xdr/stellar-xdr-26.0.1.crate",
+          "originalPath": "LICENSE"
+        }
+      ]
+    },
+    {
+      "name": "stellar-xdr",
+      "version": "28.0.0",
+      "crateSha256": "f93d09ff8b9f919b084f664003c4c546ac66a76affd5429460dbe29f4b326f8e",
+      "crateUrl": "https://static.crates.io/crates/stellar-xdr/stellar-xdr-28.0.0.crate",
+      "declaredLicense": "Apache-2.0",
+      "declaredLicenseFile": null,
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/1d8e79dfd4c7a8702e6fa49e45a2f1b4b553a9507b29b2dc14d3656b7c47862f.txt",
+          "sha256": "1d8e79dfd4c7a8702e6fa49e45a2f1b4b553a9507b29b2dc14d3656b7c47862f",
+          "source": "https://static.crates.io/crates/stellar-xdr/stellar-xdr-28.0.0.crate",
           "originalPath": "LICENSE"
         }
       ]

@@ -104,6 +104,14 @@ pub fn registry() -> Vec<FunctionInfo> {
     ] {
         result.push(FunctionInfo{name:name.into(),title:"Typed asset budget".into(),description:"Checks complete same-asset debit and cumulative fee bounds against an owner-authored total budget and protected prior consumption. Other assets need separate guards. The host atomically reserves the approved plan before signing.".into(),signature:alloc::format!("{name}(request: &{ty}, budget_id: &str, asset_id: &str, decimals: u64, total_budget_units: u64, max_debit_units: u64, max_fee_units: u64) -> PolicyResult"),effect:"budget_guard".into(),typed_signature:crate::typed_workflow::signature(name)});
     }
+    result.push(FunctionInfo {
+        name: "stellar::sep41_transfer".into(),
+        title: "Stellar token transfer".into(),
+        description: "Transfers the exact bound asset and native amount through the installed Stellar execute wrapper after its private policy approves. The compiler-bound Stellar source profile admits this effect; it is not a callable pure policy function.".into(),
+        signature: "stellar::sep41_transfer(token: AccountId, from: AccountId, to: AccountId, amount: i128) -> Result<TransferReceipt>".into(),
+        effect: "native_effect".into(),
+        typed_signature: None,
+    });
     result
 }
 
@@ -116,7 +124,9 @@ pub(crate) fn function(name: &str) -> Option<FunctionInfo> {
 /// Vendor operations need their own implementation before registration.
 #[cfg(feature = "compiler")]
 pub(crate) fn canonical_function(name: &str) -> Option<String> {
-    function(name)?;
+    if function(name)?.effect == "native_effect" {
+        return None;
+    }
     if name == "paysh::call" || crate::typed_workflow::signature(name).is_some() {
         return Some(name.into());
     }

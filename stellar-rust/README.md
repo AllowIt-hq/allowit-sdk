@@ -1,0 +1,9 @@
+# Stellar wallet SDK
+
+This crate maps the canonical `ExecutionRequest` to the admitted `stellar::sep41_transfer` profile. Native classic custody uses the owner/agent/engine 3/1/1 account with thresholds 2/2/3. ODC custody calls its generated public `execute` wrapper with the private `_execute` entrypoint, exact native arguments, installed executable, schema and source identity.
+
+The same authored policy source passes `compile_stellar_policy` before either route signs. `stellar-native POLICY.rs` emits static Rust checks for the ODC artifact. The source profile admits local asset, recipient and monetary guards, boolean control flow and explicit rejection. Unsupported or external-evidence expressions fail admission. USDC helper monetary constants retain their declared six-decimal meaning and lower to seven-decimal SAC comparisons. Native request amounts and counters remain exact `i128` base units. Raw source integer amount fields are rejected because their unit projection is ambiguous. XLM supports admitted asset and recipient guards; the USDC financial helpers cannot be used for XLM.
+
+Use `rpc::trusted_state` to read network, accounts and ODC bindings. Native accounting must come from the durable policy coordinator. `prepare`, `sign` and `authorize` bind the exact request and signatures. ODC preparation needs resource simulation before signing. `rpc::submit` retains signed bytes before broadcast. `recover` queries the original transaction hash. An uncertain broadcast never authorizes a replacement payment or releases its reservation. Terminal settlement remains distinct from external delivery.
+
+The signing seed stays with its actor. Wallet configuration contains public installation data. Exported executor bundles carry scoped capabilities and must remain private. Production promotion is a separate operation.
