@@ -108,7 +108,7 @@ pub fn registry() -> Vec<FunctionInfo> {
         name: "stellar::sep41_transfer".into(),
         title: "Stellar token transfer".into(),
         description: "Transfers the exact bound asset and native amount through the installed Stellar execute wrapper after its private policy approves. The compiler-bound Stellar source profile admits this effect; it is not a callable pure policy function.".into(),
-        signature: "stellar::sep41_transfer(request: &ExecutionRequest) -> OperationReceipt".into(),
+        signature: "stellar::sep41_transfer(token: AccountId, from: AccountId, to: AccountId, amount: i128) -> Result<TransferReceipt>".into(),
         effect: "native_effect".into(),
         typed_signature: None,
     });

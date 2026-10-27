@@ -240,6 +240,10 @@ fn native_effect_is_catalogued_without_generic_callable_admission() {
         .find(|v| v.name == "stellar::sep41_transfer")
         .unwrap();
     assert_eq!(entry.effect, "native_effect");
+    assert_eq!(
+        entry.signature,
+        "stellar::sep41_transfer(token: AccountId, from: AccountId, to: AccountId, amount: i128) -> Result<TransferReceipt>"
+    );
     assert!(entry.typed_signature.is_none());
     assert!(allowit_sdk::compile_stellar_policy("use allowit::v1::prelude::*; async fn _execute(ctx:&Context)->PolicyResult { stellar::sep41_transfer(ctx)?; Ok(()) }").is_err());
 }
