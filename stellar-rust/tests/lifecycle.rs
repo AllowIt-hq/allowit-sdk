@@ -562,6 +562,10 @@ fn verified_receipt_retains_exact_network_transaction_and_ledger() {
     assert_eq!(receipt.transaction_hash, signed.transaction_hash);
     assert_eq!(receipt.envelope_xdr, signed.transaction_xdr);
     assert_eq!(receipt.status, OperationStatus::Confirmed);
+    rpc::validate_receipt(&receipt, &c.network, &signed.transaction_hash).unwrap();
+    let mut changed = receipt.clone();
+    changed.status = OperationStatus::Failed;
+    assert!(rpc::validate_receipt(&changed, &c.network, &signed.transaction_hash).is_err());
     assert!(rpc::receipt_by_hash(&rpc, "stellar:mainnet", &signed.transaction_hash).is_err());
     assert!(rpc::receipt_by_hash(&rpc, &c.network, &[0; 32]).is_err());
 }

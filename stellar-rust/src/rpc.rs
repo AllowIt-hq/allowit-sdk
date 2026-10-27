@@ -245,6 +245,27 @@ pub struct VerifiedReceipt {
     pub envelope_xdr: String,
     pub result_xdr: String,
 }
+/// Recheck a retained receipt before projecting it through another interface.
+pub fn validate_receipt(
+    receipt: &VerifiedReceipt,
+    network: &str,
+    expected_hash: &[u8; 32],
+) -> Result<()> {
+    if receipt.transaction_hash != *expected_hash
+        || receipt.ledger == 0
+        || !matches!(
+            receipt.status,
+            OperationStatus::Confirmed | OperationStatus::Failed
+        )
+    {
+        return Err("Invalid retained Stellar receipt identity".into());
+    }
+    let value = json!({"status":if receipt.status==OperationStatus::Confirmed {"SUCCESS"} else {"FAILED"},"envelopeXdr":receipt.envelope_xdr,"resultXdr":receipt.result_xdr});
+    if verify_settlement(&value, network, expected_hash)? != receipt.status {
+        return Err("Retained Stellar receipt result differs".into());
+    }
+    Ok(())
+}
 /// Read a verified terminal receipt. Absence remains unknown and does not release reservations.
 pub fn receipt_by_hash(
     rpc: &dyn Rpc,
