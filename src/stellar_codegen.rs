@@ -21,7 +21,9 @@ pub struct StellarPolicyContext {
 enum Guard {
     Pass,
     Fail,
+    Boolean(bool),
     Transaction(i128, String),
+    AmountAtMost(i128, String),
     Daily(i128, String),
     Recipient(String),
     Asset(String),
@@ -76,19 +78,28 @@ fn units(expr: &Expr) -> Result<i128, CompileError> {
 fn native_guard(expr: &Expr, bindings: &BTreeMap<String, Guard>) -> Result<Guard, CompileError> {
     match expr {
         Expr::Try { value } => native_guard(value, bindings),
-        Expr::Boolean { value } => Ok(if *value { Guard::Pass } else { Guard::Fail }),
+        Expr::Boolean { value } => Ok(Guard::Boolean(*value)),
         Expr::Variable { name } => bindings.get(name).cloned().ok_or_else(unsupported),
-        Expr::Not { value } => Ok(Guard::Not(Box::new(native_guard(value, bindings)?))),
+        Expr::Not { value } => {
+            let guard = native_guard(value, bindings)?;
+            if !is_boolean(&guard) {
+                return Err(unsupported());
+            }
+            Ok(Guard::Not(Box::new(guard)))
+        }
         Expr::Binary { op, left, right }
             if op == "<="
                 && field(left, "amount_units")
                 && matches!(&**right, Expr::Integer { .. }) =>
         {
-            Ok(Guard::Transaction(units(right)?, "USDC".into()))
+            Ok(Guard::AmountAtMost(units(right)?, "USDC".into()))
         }
         Expr::Binary { op, left, right } if op == "&&" || op == "||" => {
             let a = Box::new(native_guard(left, bindings)?);
             let b = Box::new(native_guard(right, bindings)?);
+            if !is_boolean(&a) || !is_boolean(&b) {
+                return Err(unsupported());
+            }
             Ok(if op == "&&" {
                 Guard::And(a, b)
             } else {
@@ -133,18 +144,13 @@ fn native_guard(expr: &Expr, bindings: &BTreeMap<String, Guard>) -> Result<Guard
             "amount_at_most"
                 if args.len() == 2 && (context(&args[0]) || field(&args[0], "amount_units")) =>
             {
-                Ok(Guard::Transaction(units(&args[1])?, "USDC".into()))
+                Ok(Guard::AmountAtMost(units(&args[1])?, "USDC".into()))
             }
             "require_recipient"
                 if args.len() == 2 && (context(&args[0]) || field(&args[0], "recipient")) =>
             {
                 let address = literal(&args[1]).ok_or_else(unsupported)?;
-                if address.len() != 56
-                    || !matches!(address.as_bytes()[0], b'G' | b'C')
-                    || !address
-                        .bytes()
-                        .all(|c| c.is_ascii_uppercase() || (b'2'..=b'7').contains(&c))
-                {
+                if !valid_strkey(address) {
                     return Err(unsupported());
                 }
                 Ok(Guard::Recipient(address.into()))
@@ -180,6 +186,52 @@ fn guard_expr(expr: &Expr, bindings: &BTreeMap<String, Guard>) -> Result<Guard, 
         _ => native_guard(expr, bindings),
     }
 }
+fn is_boolean(g: &Guard) -> bool {
+    matches!(
+        g,
+        Guard::Boolean(_)
+            | Guard::AmountAtMost(..)
+            | Guard::Not(_)
+            | Guard::And(..)
+            | Guard::Or(..)
+    )
+}
+fn valid_strkey(text: &str) -> bool {
+    if text.len() != 56 {
+        return false;
+    }
+    let mut out = Vec::new();
+    let mut accumulator = 0u32;
+    let mut bits = 0;
+    for byte in text.bytes() {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'2'..=b'7' => byte - b'2' + 26,
+            _ => return false,
+        };
+        accumulator = (accumulator << 5) | u32::from(value);
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((accumulator >> bits) & 255) as u8);
+        }
+    }
+    if out.len() != 35 || !matches!(out[0], 16 | 48) {
+        return false;
+    }
+    let mut crc = 0u16;
+    for byte in &out[..33] {
+        crc ^= u16::from(*byte) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc == u16::from_le_bytes([out[33], out[34]])
+}
 fn lower(
     block: &[Statement],
     bindings: &mut BTreeMap<String, Guard>,
@@ -188,100 +240,166 @@ fn lower(
     for statement in block {
         match statement {
             Statement::Let { name, value, .. } => {
-                let guard = native_guard(value, bindings)?;
+                let guard = guard_expr(value, bindings)?;
+                out.push(Step::Check(guard.clone()));
                 bindings.insert(name.clone(), guard);
             }
             Statement::Expression {
                 value, semicolon, ..
             } => {
                 let guard = guard_expr(value, bindings)?;
+                if !*semicolon && is_boolean(&guard) {
+                    return Err(unsupported());
+                }
                 out.push(if *semicolon {
                     Step::Check(guard)
                 } else {
                     Step::Return(guard)
                 });
             }
-            Statement::Return { value, .. } => out.push(Step::Return(guard_expr(value, bindings)?)),
+            Statement::Return { value, .. } => {
+                let guard = guard_expr(value, bindings)?;
+                if is_boolean(&guard) {
+                    return Err(unsupported());
+                }
+                out.push(Step::Return(guard));
+            }
             Statement::If {
                 condition,
                 then_branch,
                 else_branch,
                 ..
-            } => out.push(Step::If(
-                native_guard(condition, bindings)?,
-                lower(then_branch, &mut bindings.clone())?,
-                lower(else_branch, &mut bindings.clone())?,
-            )),
+            } => {
+                let guard = native_guard(condition, bindings)?;
+                if !is_boolean(&guard) {
+                    return Err(unsupported());
+                }
+                out.push(Step::If(
+                    guard,
+                    lower(then_branch, &mut bindings.clone())?,
+                    lower(else_branch, &mut bindings.clone())?,
+                ));
+            }
             _ => return Err(unsupported()),
         }
     }
     Ok(out)
 }
-fn check(guard: &Guard, c: &StellarPolicyContext) -> bool {
+#[derive(Clone, Copy)]
+enum NativeValue {
+    Unit,
+    Bool(bool),
+}
+fn boolean(value: NativeValue) -> Result<bool, ()> {
+    match value {
+        NativeValue::Bool(v) => Ok(v),
+        NativeValue::Unit => Err(()),
+    }
+}
+fn unit(condition: bool) -> Result<NativeValue, ()> {
+    if condition {
+        Ok(NativeValue::Unit)
+    } else {
+        Err(())
+    }
+}
+fn check(guard: &Guard, c: &StellarPolicyContext) -> Result<NativeValue, ()> {
     match guard {
-        Guard::Pass => true,
-        Guard::Fail => false,
+        Guard::Pass => Ok(NativeValue::Unit),
+        Guard::Fail => Err(()),
+        Guard::Boolean(v) => Ok(NativeValue::Bool(*v)),
         Guard::Transaction(limit, token) => {
-            c.token == *token && c.decimals == 7 && c.amount <= *limit
+            unit(c.token == *token && c.decimals == 7 && c.amount <= *limit)
         }
-        Guard::Daily(limit, token) => {
+        Guard::AmountAtMost(limit, token) => {
+            if c.token != *token || c.decimals != 7 {
+                return Err(());
+            }
+            Ok(NativeValue::Bool(c.amount <= *limit))
+        }
+        Guard::Daily(limit, token) => unit(
             c.token == *token
                 && c.decimals == 7
                 && c.now / 86400 >= c.spent_day
-                && if c.now / 86400 == c.spent_day {
+                && (if c.now / 86400 == c.spent_day {
                     c.spent_daily
                 } else {
                     0
-                }
+                })
                 .checked_add(c.amount)
-                .is_some_and(|v| v <= *limit)
-        }
-        Guard::Recipient(to) => c.recipient == *to,
-        Guard::Asset(token) => c.token == *token && c.decimals == 7,
-        Guard::Actions(actions) => actions.iter().any(|a| a == "stellar::sep41_transfer"),
-        Guard::Not(v) => !check(v, c),
-        Guard::And(a, b) => check(a, c) && check(b, c),
-        Guard::Or(a, b) => check(a, c) || check(b, c),
+                .is_some_and(|v| v <= *limit),
+        ),
+        Guard::Recipient(to) => unit(c.recipient == *to),
+        Guard::Asset(token) => unit(c.token == *token && c.decimals == 7),
+        Guard::Actions(actions) => unit(actions.iter().any(|a| a == "stellar::sep41_transfer")),
+        Guard::Not(v) => Ok(NativeValue::Bool(!boolean(check(v, c)?)?)),
+        Guard::And(a, b) => Ok(NativeValue::Bool(
+            boolean(check(a, c)?)? && boolean(check(b, c)?)?,
+        )),
+        Guard::Or(a, b) => Ok(NativeValue::Bool(
+            boolean(check(a, c)?)? || boolean(check(b, c)?)?,
+        )),
     }
 }
-fn run(block: &[Step], c: &StellarPolicyContext) -> Option<bool> {
+fn run(block: &[Step], c: &StellarPolicyContext) -> Result<Option<()>, ()> {
     for step in block {
         match step {
             Step::Check(g) => {
-                if !check(g, c) {
-                    return Some(false);
-                }
+                check(g, c)?;
             }
-            Step::Return(g) => return Some(check(g, c)),
+            Step::Return(g) => {
+                if !matches!(check(g, c)?, NativeValue::Unit) {
+                    return Err(());
+                }
+                return Ok(Some(()));
+            }
             Step::If(g, a, b) => {
-                if let Some(value) = run(if check(g, c) { a } else { b }, c) {
-                    return Some(value);
+                let selected = if boolean(check(g, c)?)? { a } else { b };
+                if let Some(()) = run(selected, c)? {
+                    return Ok(Some(()));
                 }
             }
         }
     }
-    None
+    Ok(None)
+}
+fn unit_code(condition: String) -> String {
+    format!("if {condition} {{ Ok::<(), ()>(()) }} else {{ Err::<(), ()>(()) }}")
 }
 fn code(guard: &Guard) -> String {
     match guard {
-        Guard::Pass => "true".into(),
-        Guard::Fail => "false".into(),
-        Guard::Transaction(limit, token) => format!(
-            "(ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 && ctx.amount <= {limit}i128)"
+        Guard::Pass => "Ok::<(), ()>(())".into(),
+        Guard::Fail => "Err::<(), ()>(())".into(),
+        Guard::Boolean(v) => format!("Ok::<bool, ()>({v})"),
+        Guard::Transaction(limit, token) => unit_code(format!(
+            "ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 && ctx.amount <= {limit}i128"
+        )),
+        Guard::AmountAtMost(limit, token) => format!(
+            "if ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 {{ Ok::<bool, ()>(ctx.amount <= {limit}i128) }} else {{ Err::<bool, ()>(()) }}"
         ),
-        Guard::Daily(limit, token) => format!(
-            "(ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 && ctx.now / 86400 >= ctx.spent_day && (if ctx.now / 86400 == ctx.spent_day {{ ctx.spent_daily }} else {{ 0i128 }}).checked_add(ctx.amount).is_some_and(|next| next <= {limit}i128))"
+        Guard::Daily(limit, token) => unit_code(format!(
+            "ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 && ctx.now / 86400 >= ctx.spent_day && (if ctx.now / 86400 == ctx.spent_day {{ ctx.spent_daily }} else {{ 0i128 }}).checked_add(ctx.amount).is_some_and(|next| next <= {limit}i128)"
+        )),
+        Guard::Recipient(to) => unit_code(format!(
+            "ctx.recipient == soroban_sdk::Address::from_str(ctx.recipient.env(), {to:?})"
+        )),
+        Guard::Asset(token) => unit_code(format!(
+            "ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7"
+        )),
+        Guard::Actions(a) => {
+            unit_code(a.iter().any(|v| v == "stellar::sep41_transfer").to_string())
+        }
+        Guard::Not(v) => format!("Ok::<bool, ()>(!({{ {} }}?))", code(v)),
+        Guard::And(a, b) => format!(
+            "Ok::<bool, ()>(({{ {} }}?) && ({{ {} }}?))",
+            code(a),
+            code(b)
         ),
-        Guard::Recipient(to) => format!(
-            "(ctx.recipient == soroban_sdk::Address::from_str(ctx.recipient.env(), {to:?}))"
+        Guard::Or(a, b) => format!(
+            "Ok::<bool, ()>(({{ {} }}?) || ({{ {} }}?))",
+            code(a),
+            code(b)
         ),
-        Guard::Asset(token) => format!(
-            "(ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7)"
-        ),
-        Guard::Actions(a) => a.iter().any(|v| v == "stellar::sep41_transfer").to_string(),
-        Guard::Not(v) => format!("!({})", code(v)),
-        Guard::And(a, b) => format!("({} && {})", code(a), code(b)),
-        Guard::Or(a, b) => format!("({} || {})", code(a), code(b)),
     }
 }
 fn block_code(steps: &[Step], depth: usize) -> String {
@@ -289,15 +407,15 @@ fn block_code(steps: &[Step], depth: usize) -> String {
     let pad = "    ".repeat(depth);
     for step in steps {
         match step {
-            Step::Check(g) => out += &format!("{pad}if !({}) {{ return false; }}\n", code(g)),
-            Step::Return(g) => out += &format!("{pad}return {};\n", code(g)),
+            Step::Check(g) => out += &format!("{pad}let _ = {{ {} }}?;\n", code(g)),
+            Step::Return(g) => out += &format!("{pad}return {{ {} }};\n", code(g)),
             Step::If(g, a, b) => {
                 out += &format!(
-                    "{pad}if {} {{\n{}{pad}}} else {{\n{}{pad}}}\n",
+                    "{pad}if {{ {} }}? {{\n{}{pad}}} else {{\n{}{pad}}}\n",
                     code(g),
                     block_code(a, depth + 1),
                     block_code(b, depth + 1)
-                );
+                )
             }
         }
     }
@@ -358,14 +476,14 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
     let source_hash = digest(source.as_bytes());
     let argument_schema_hash = digest(STELLAR_ARGUMENT_SCHEMA);
     let mut rust_source = format!(
-        "// Generated from the exact authored source by allowit-sdk.\nuse allowit_wallet_protocol::PolicyContext;\npub const SOURCE_HASH: [u8; 32] = {source_hash:?};\npub const ARGUMENT_SCHEMA_HASH: [u8; 32] = {argument_schema_hash:?};\npub fn execute(ctx: &PolicyContext) -> bool {{\n    if ctx.amount <= 0 || ctx.spent_daily < 0 || ctx.spent_total < ctx.spent_daily {{ return false; }}\n"
+        "// Generated from the exact authored source by allowit-sdk.\nuse allowit_wallet_protocol::PolicyContext;\npub const SOURCE_HASH: [u8; 32] = {source_hash:?};\npub const ARGUMENT_SCHEMA_HASH: [u8; 32] = {argument_schema_hash:?};\npub fn execute(ctx: &PolicyContext) -> bool {{\n    if ctx.amount <= 0 || ctx.spent_daily < 0 || ctx.spent_total < ctx.spent_daily {{ return false; }}\n    let result = (|| -> Result<(), ()> {{\n"
     );
     for guard in &mandatory {
-        rust_source += &format!("    if !({}) {{ return false; }}\n", code(guard));
+        rust_source += &format!("        let _ = {{ {} }}?;\n", code(guard));
     }
-    rust_source += "    _execute(ctx)\n}\n#[allow(unreachable_code, unused_variables)]\nfn _execute(ctx: &PolicyContext) -> bool {\n";
+    rust_source += "        _execute(ctx)\n    })();\n    result.is_ok()\n}\n#[allow(unreachable_code, unused_variables)]\nfn _execute(ctx: &PolicyContext) -> Result<(), ()> {\n";
     rust_source += &block_code(&steps, 1);
-    rust_source += "    false\n}\n";
+    rust_source += "    Err(())\n}\n";
     Ok(StellarPolicy {
         source_hash,
         argument_schema_hash,
@@ -375,11 +493,11 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
     })
 }
 impl StellarPolicy {
-    pub fn evaluate(&self, context: &StellarPolicyContext) -> bool {
-        context.amount > 0
-            && context.spent_daily >= 0
-            && context.spent_total >= context.spent_daily
-            && self.mandatory.iter().all(|g| check(g, context))
-            && run(&self.steps, context) == Some(true)
+    pub fn evaluate(&self, c: &StellarPolicyContext) -> bool {
+        c.amount > 0
+            && c.spent_daily >= 0
+            && c.spent_total >= c.spent_daily
+            && self.mandatory.iter().all(|g| check(g, c).is_ok())
+            && matches!(run(&self.steps, c), Ok(Some(())))
     }
 }

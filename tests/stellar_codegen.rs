@@ -140,3 +140,72 @@ fn native_request_units_are_never_rounded_and_unsupported_xlm_helpers_reject() {
         .is_err()
     );
 }
+
+fn core_pass(source: &str, native: &StellarPolicyContext) -> bool {
+    let compiled = allowit_sdk::compile(source).unwrap();
+    let mut c: allowit_sdk::Context =
+        serde_json::from_str(include_str!("../examples/context.json")).unwrap();
+    c.amount_units = u64::try_from(native.amount / 10).unwrap();
+    c.spent_units = u64::try_from(native.spent_total / 10).unwrap();
+    c.daily_spent_units = Some(u64::try_from(native.spent_daily / 10).unwrap());
+    c.spent_day = Some(native.spent_day);
+    c.now = native.now;
+    c.token = native.token.clone();
+    c.recipient = native.recipient.clone();
+    allowit_sdk::evaluate(&compiled, allowit_sdk::Profile::Contract, &c).outcome == "pass"
+}
+#[test]
+fn unused_fallible_unit_bindings_still_propagate_errors() {
+    for body in [
+        r#"let checked = allowit::cap_per_transaction(ctx, "1", "USDC")?; Ok(())"#,
+        r#"let checked = allowit::require_recipient(ctx, "CBNVWW23LNNVWW23LNNVWW23LNNVWW23LNNVWW23LNNVWW23LNNVXQOK")?; Ok(())"#,
+        r#"let checked = allowit::require_asset(ctx, "XLM")?; Ok(())"#,
+    ] {
+        let source = source(body);
+        assert!(allowit_sdk::compile(&source).is_err());
+        assert!(compile_stellar_policy(&source).is_err());
+    }
+}
+#[test]
+fn false_predicates_are_values_and_unused_results_do_not_reject() {
+    for body in [
+        r#"let fits = allowit::amount_at_most(ctx, "1")?; Ok(())"#,
+        r#"let fits = false; Ok(())"#,
+    ] {
+        let source = source(body);
+        let p = compile_stellar_policy(&source).unwrap();
+        let c = context();
+        assert!(core_pass(&source, &c), "{body}");
+        assert!(p.evaluate(&c), "{body}");
+    }
+}
+#[test]
+fn boolean_not_and_or_never_convert_errors_into_approval() {
+    for body in [
+        r#"if !allowit::amount_at_most(ctx, "1")? { return Ok(()); } allowit::fail("small")"#,
+        r#"if allowit::amount_at_most(ctx, "1")? || true { return Ok(()); } allowit::fail("small")"#,
+    ] {
+        let source = source(body);
+        let p = compile_stellar_policy(&source).unwrap();
+        let mut c = context();
+        c.token = "XLM".into();
+        assert!(!p.evaluate(&c), "{body}");
+    }
+    let p=compile_stellar_policy(&source(r#"if true || allowit::amount_at_most(ctx, "1")? { return Ok(()); } allowit::fail("small")"#)).unwrap();
+    let mut c = context();
+    c.token = "XLM".into();
+    assert!(p.evaluate(&c));
+}
+#[test]
+fn unit_values_cannot_be_conditions_and_strkey_checksum_is_checked() {
+    let discarded = source(r#"allowit::amount_at_most(ctx, "1")?; Ok(())"#);
+    assert!(allowit_sdk::compile(&discarded).is_err());
+    assert!(compile_stellar_policy(&discarded).is_err());
+    assert!(
+        compile_stellar_policy(&source(
+            r#"if !allowit::require_asset(ctx, "USDC")? { return Ok(()); } Ok(())"#
+        ))
+        .is_err()
+    );
+    assert!(compile_stellar_policy(&source(r#"allowit::require_recipient(ctx, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHA")?; Ok(())"#)).is_err());
+}
