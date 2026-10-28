@@ -279,13 +279,21 @@ fn json_wire_protocol_is_exact() {
         )["error"]["code"],
         "INVALID_PROFILE"
     );
-    assert_eq!(
-        process_value(json!({"operation":"registry"}))["functions"]
-            .as_array()
-            .unwrap()
-            .len(),
-        50
-    );
+    let registry = process_value(json!({"operation":"registry"}));
+    assert_eq!(registry["ok"], true);
+    assert_eq!(registry["language"], "allowit-rust-v1");
+    assert!(registry["registry_version"].is_string());
+    let mut names = std::collections::BTreeSet::new();
+    for function in registry["functions"].as_array().unwrap() {
+        let name = function["name"].as_str().unwrap();
+        assert!(!name.is_empty() && names.insert(name));
+        for field in ["signature", "effect", "description"] {
+            assert!(!function[field].as_str().unwrap().is_empty());
+        }
+    }
+    assert!(names.contains("allowit::require_asset"));
+    assert!(names.contains("allowit::require_recipient"));
+    assert!(names.contains("allowit::check_preference"));
 }
 #[test]
 fn deep_and_large_source_is_bounded() {

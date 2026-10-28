@@ -16,7 +16,14 @@ fn diagnostics_hover_completion_and_workflow_share_the_compiler() {
             .contains("Daily spending limit")
     );
     let completion = server.handle(json!({"id":3,"method":"textDocument/completion","params":{}}));
-    assert_eq!(completion[0]["result"].as_array().unwrap().len(), 50);
+    let items = completion[0]["result"].as_array().unwrap();
+    let labels: std::collections::BTreeSet<_> = items
+        .iter()
+        .map(|item| item["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels.len(), items.len());
+    assert!(labels.contains("allowit::require_recipient"));
+    assert!(labels.contains("allowit::check_preference"));
     let workflow=server.handle(json!({"id":4,"method":"allowit/workflow","params":{"textDocument":{"uri":"file:///policy.rs"}}}));
     assert_eq!(
         workflow[0]["result"]["policy"]["workflow"][0]["name"],
