@@ -1248,3 +1248,51 @@ fn odc_exact_resource_bound_preauthorization_completes_current_customer_quorum()
     .unwrap();
     assert!(attach_simulation(&before_simulation, &altered).is_err());
 }
+
+#[test]
+fn retained_packet_validation_does_not_recompile_source_or_grant_execution() {
+    let (c, r, state) = fixture(WalletRoute::Native, false);
+    let prepared = prepare(&c, &r, &state, 86401, 86700).unwrap();
+    let mut signed = sign_native(&prepared);
+    // Model source metadata from a retired compiler namespace. The already signed
+    // native body and effects stay byte-for-byte identical; this is proof, not admission.
+    signed.prepared.config.policy_source="use allowit::v1::prelude::*; async fn _execute(ctx:&Context)->PolicyResult { retired_vendor::check(ctx)?; Ok(()) }".into();
+    signed.prepared.config.source_hash = hash(&signed.prepared.config.policy_source);
+    signed.prepared.state.source_hash = signed.prepared.config.source_hash;
+    let original = serde_json::to_vec(&signed).unwrap();
+    validate_retained_prepared(&signed.prepared).unwrap();
+    validate_retained_signed(&signed).unwrap();
+    assert!(validate_prepared(&signed.prepared, 86401).is_err());
+    assert!(sign(&signed.prepared, &[2; 32], 86401).is_err());
+    assert!(validate_signed(&signed, 86401).is_err());
+    let rpc = FakeRpc {
+        calls: Mutex::new(vec![]),
+        signed: signed.clone(),
+        fail_send: false,
+    };
+    assert!(rpc::submit(&rpc, &mut Store::default(), &signed, 86401).is_err());
+    assert!(rpc.calls.lock().unwrap().is_empty());
+    let mut store = Store {
+        value: Some((signed.clone(), OperationStatus::SubmissionUnknown)),
+    };
+    assert_eq!(
+        rpc::submit(&rpc, &mut store, &signed, 90000).unwrap(),
+        OperationStatus::Confirmed
+    );
+    assert_eq!(*rpc.calls.lock().unwrap(), vec!["getTransaction"]);
+    assert_eq!(
+        serde_json::to_vec(&store.value.as_ref().unwrap().0).unwrap(),
+        original
+    );
+    assert_eq!(
+        rpc::recover(&rpc, &mut store, r.operation.nonce).unwrap(),
+        OperationStatus::Confirmed
+    );
+    assert_eq!(*rpc.calls.lock().unwrap(), vec!["getTransaction"]);
+    let mut changed = signed.clone();
+    changed.prepared.config.policy_source.push(' ');
+    assert!(validate_retained_signed(&changed).is_err());
+    let mut changed = signed;
+    changed.transaction_hash[0] ^= 1;
+    assert!(validate_retained_signed(&changed).is_err());
+}

@@ -151,12 +151,12 @@ pub fn submit(
     signed: &SignedOperation,
     now: u64,
 ) -> Result<OperationStatus> {
-    validate_signed(signed, now)?;
     let id = signed.prepared.request.operation.nonce;
     if let Some((previous, status)) = store.load(id)? {
         if previous != *signed {
             return Err("Operation ID already binds different signed bytes".into());
         }
+        validate_retained_signed(&previous)?;
         if matches!(status, OperationStatus::Confirmed | OperationStatus::Failed) {
             return Ok(status);
         }
@@ -170,6 +170,7 @@ pub fn submit(
             return Ok(observed);
         }
     }
+    validate_signed(signed, now)?;
     store.record(id, signed, OperationStatus::SubmissionUnknown)?;
     match rpc.call(
         "sendTransaction",
@@ -309,6 +310,10 @@ pub fn recover(
     operation_id: [u8; 32],
 ) -> Result<OperationStatus> {
     let (signed, previous) = store.load(operation_id)?.ok_or("No retained operation")?;
+    if signed.prepared.request.operation.nonce != operation_id {
+        return Err("Retained operation identity differs".into());
+    }
+    validate_retained_signed(&signed)?;
     if matches!(
         previous,
         OperationStatus::Confirmed | OperationStatus::Failed

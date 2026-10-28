@@ -573,9 +573,12 @@ fn build(
     now: u64,
     expires: u64,
     retained_native_lower_bound: bool,
+    admit_policy: bool,
 ) -> Result<Transaction> {
     let t = transfer_from_request(c, r)?;
-    verify_policy(c, r, state, now)?;
+    if admit_policy {
+        verify_policy(c, r, state, now)?;
+    }
     if c.route == WalletRoute::Native
         && expires
             > (now / 86400)
@@ -692,7 +695,7 @@ pub fn prepare(
     now: u64,
     expires_at: u64,
 ) -> Result<PreparedOperation> {
-    prepare_with_bounds(c, r, state, now, expires_at, false)
+    prepare_with_bounds(c, r, state, now, expires_at, false, true)
 }
 fn prepare_with_bounds(
     c: &WalletConfig,
@@ -701,8 +704,17 @@ fn prepare_with_bounds(
     now: u64,
     expires_at: u64,
     retained_native_lower_bound: bool,
+    admit_policy: bool,
 ) -> Result<PreparedOperation> {
-    let tx = build(c, r, state, now, expires_at, retained_native_lower_bound)?;
+    let tx = build(
+        c,
+        r,
+        state,
+        now,
+        expires_at,
+        retained_native_lower_bound,
+        admit_policy,
+    )?;
     Ok(PreparedOperation {
         version: 1,
         config: c.clone(),
@@ -724,6 +736,15 @@ pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
     if p.version != 1 || p.created_at > now || now >= p.expires_at {
         return Err("Prepared operation is stale".into());
     }
+    verify_policy(&p.config, &p.request, &p.state, p.created_at)?;
+    validate_retained_prepared(p)
+}
+/// Verify retained transport and effect identity for read-only history or recovery.
+/// This does not compile source, grant authorization, or permit a broadcast.
+pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
+    if p.version != 1 {
+        return Err("Unsupported retained operation version".into());
+    }
     let retained_native_lower_bound = if p.config.route == WalletRoute::Native {
         match native_lower_bound(p)? {
             0 => false,
@@ -740,6 +761,7 @@ pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
         p.created_at,
         p.expires_at,
         retained_native_lower_bound,
+        false,
     )?;
     if let Some(data) = &p.simulation_data {
         expected = attach_simulation(&expected, data)?;
@@ -900,6 +922,12 @@ pub fn authorize(
 }
 pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
     validate_prepared(&s.prepared, now)?;
+    validate_retained_signed(s)
+}
+/// Verify an original signed packet without reauthorizing retired policy source.
+/// Callers must compare their durable original identity and use it only for status/recovery.
+pub fn validate_retained_signed(s: &SignedOperation) -> Result<()> {
+    validate_retained_prepared(&s.prepared)?;
     if s.transaction_hash != s.prepared.transaction_hash {
         return Err("Signed transaction identity differs".into());
     }
