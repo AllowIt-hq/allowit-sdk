@@ -23,7 +23,4 @@ jobs:
       - run: cargo fmt --manifest-path native-rust/Cargo.toml --check
       - run: cargo test --manifest-path native-rust/Cargo.toml --locked
       - run: cargo test --manifest-path native-rust/Cargo.toml --locked --features serde_json/preserve_order
-      - run: cargo fmt --manifest-path crates/paysh-interface/Cargo.toml --check
-      - run: cargo test --manifest-path crates/paysh-interface/Cargo.toml --locked
-      - run: cargo clippy --manifest-path crates/paysh-interface/Cargo.toml --locked --all-targets -- -D warnings
       - run: cargo clippy --manifest-path native-rust/Cargo.toml --locked --all-targets -- -D warnings

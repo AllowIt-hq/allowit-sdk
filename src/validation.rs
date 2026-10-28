@@ -89,9 +89,9 @@ struct Validator<'a> {
     config_count: usize,
     declared_asset: Option<&'a str>,
     #[cfg(feature = "typed-workflow")]
-    provider_call_ids: Vec<String>,
+    service_call_ids: Vec<String>,
     #[cfg(feature = "typed-workflow")]
-    provider_profile: bool,
+    service_profile: bool,
     #[cfg(feature = "typed-workflow")]
     loop_depth: usize,
     #[cfg(feature = "typed-workflow")]
@@ -118,10 +118,10 @@ impl Validator<'_> {
         }
     }
     #[inline(always)]
-    fn provider_profile(&self) -> bool {
+    fn service_profile(&self) -> bool {
         #[cfg(feature = "typed-workflow")]
         {
-            self.provider_profile
+            self.service_profile
         }
         #[cfg(not(feature = "typed-workflow"))]
         {
@@ -529,7 +529,7 @@ impl Validator<'_> {
                         crate::typed_workflow::WorkflowType::named("ExecutionRequest")
                     )],
                     #[cfg(feature = "typed-workflow")]
-                    "paysh::payment_request_from_curl" => alloc::vec![
+                    "allowit::payment_request_from_curl" => alloc::vec![
                         Type::Workflow(crate::typed_workflow::WorkflowType::named("CurlOutcome")),
                         Type::Workflow(crate::typed_workflow::WorkflowType::named("CurlRequest"))
                     ],
@@ -552,7 +552,7 @@ impl Validator<'_> {
                         ]
                     }
                     #[cfg(feature = "typed-workflow")]
-                    "paysh::call" => alloc::vec![
+                    "allowit::service_call" => alloc::vec![
                         Type::String,
                         Type::String,
                         Type::Integer,
@@ -635,7 +635,7 @@ impl Validator<'_> {
                                 matches!(
                                     node.operation.as_str(),
                                     "allowit::execution_request_validate"
-                                        | "paysh::payment_request_from_curl"
+                                        | "allowit::payment_request_from_curl"
                                 )
                             }))
                     {
@@ -686,7 +686,7 @@ impl Validator<'_> {
                     });
                 }
                 #[cfg(feature = "typed-workflow")]
-                if name == "paysh::call" {
+                if name == "allowit::service_call" {
                     if self.loop_depth > 0 {
                         return Err(bad(
                             "Effectful calls are not supported inside bounded loops.",
@@ -699,25 +699,22 @@ impl Validator<'_> {
                             .any(|arg| !matches!(arg, Expr::Integer { .. }))
                     {
                         return Err(bad(
-                            "Provider operation arguments must be source literals or initialized constructor constants.",
+                            "Service operation arguments must be source literals or initialized constructor constants.",
                         ));
                     }
                     for arg in &args[..2] {
                         if let Expr::String { value } = arg
                             && (value.trim().is_empty() || value.len() > 200)
                         {
-                            return Err(bad("Provider identifiers require 1 to 200 bytes."));
+                            return Err(bad("Service identifiers require 1 to 200 bytes."));
                         }
                     }
                     if let Expr::String { value } = &args[0] {
-                        if self.provider_call_ids.len() >= 8
-                            || self.provider_call_ids.contains(value)
+                        if self.service_call_ids.len() >= 8 || self.service_call_ids.contains(value)
                         {
-                            return Err(bad(
-                                "Declare at most eight distinct provider services per policy.",
-                            ));
+                            return Err(bad("Declare at most eight distinct services per policy."));
                         }
-                        self.provider_call_ids.push(value.clone());
+                        self.service_call_ids.push(value.clone());
                     }
                 }
                 if self.typed_only()
@@ -759,7 +756,7 @@ impl Validator<'_> {
                             Some(Expr::String { value: token }),
                         ) if token == "USDC"
                             || self.declared_asset == Some(token.as_str())
-                            || (self.provider_profile()
+                            || (self.service_profile()
                                 && !token.is_empty()
                                 && token.len() <= 128) =>
                         {
@@ -789,7 +786,7 @@ impl Validator<'_> {
                             Some(Expr::Integer { value: count }),
                             Some(Expr::String { value: token }),
                         ) if (token == "USDC"
-                            || (self.provider_profile()
+                            || (self.service_profile()
                                 && !token.is_empty()
                                 && token.len() <= 128))
                             && *count > 0
@@ -813,11 +810,11 @@ impl Validator<'_> {
                         amount_units(value)?;
                     }
                     if let Some(Expr::String { value }) = args.get(2) {
-                        if self.provider_profile() && (value.is_empty() || value.len() > 128) {
-                            return Err(bad("Provider asset identifiers require 1 to 128 bytes."));
+                        if self.service_profile() && (value.is_empty() || value.len() > 128) {
+                            return Err(bad("Service asset identifiers require 1 to 128 bytes."));
                         }
                         if value != "USDC"
-                            && !self.provider_profile()
+                            && !self.service_profile()
                             && self.declared_asset != Some(value.as_str())
                         {
                             return Err(bad("Version 1 supports six-decimal USDC only."));
@@ -839,7 +836,7 @@ impl Validator<'_> {
                     return Err(bad("The function argument must not be empty."));
                 }
                 #[cfg(feature = "typed-workflow")]
-                if name == "paysh::call" {
+                if name == "allowit::service_call" {
                     return Ok(Type::Boolean);
                 }
                 if name == "confidence" || name == "semantic" {
@@ -871,7 +868,7 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         return Err(bad("Unsupported canonical IR version."));
     }
     #[cfg(feature = "typed-workflow")]
-    if (crate::typed_workflow::required(program) && provider_call_required(program))
+    if (crate::typed_workflow::required(program) && service_call_required(program))
         || (!crate::typed_workflow::required(program) && program.version != IR_VERSION)
         || ![IR_VERSION, crate::TYPED_IR_VERSION].contains(&program.version.as_str())
         || (crate::typed_workflow::required(program) && program.version != crate::TYPED_IR_VERSION)
@@ -892,11 +889,11 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         #[cfg(feature = "typed-workflow")]
         typed_only: cfg!(feature = "typed-workflow")
             && crate::typed_workflow::required(program)
-            && !provider_call_required(program),
+            && !service_call_required(program),
         #[cfg(feature = "typed-workflow")]
-        provider_call_ids: Vec::new(),
+        service_call_ids: Vec::new(),
         #[cfg(feature = "typed-workflow")]
-        provider_profile: cfg!(feature = "typed-workflow") && provider_call_required(program),
+        service_profile: cfg!(feature = "typed-workflow") && service_call_required(program),
         nodes: 0,
         config_count: 0,
         declared_asset: declared_asset(program),
@@ -907,11 +904,11 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         return Err(bad("Each path must return Ok(()) or fail(\"reason\")."));
     }
     #[cfg(feature = "typed-workflow")]
-    if validator.provider_profile()
-        && provider_asset_id(program).is_none_or(|asset| ["USDC", "SOL"].contains(&asset))
+    if validator.service_profile()
+        && service_asset_id(program).is_none_or(|asset| ["USDC", "SOL"].contains(&asset))
     {
         return Err(bad(
-            "Provider policies require an unconditional require_asset or cap guard with a literal asset identifier, not a currency symbol.",
+            "Service policies require an unconditional require_asset or cap guard with a literal asset identifier, not a currency symbol.",
         ));
     }
     if let Some(first) = asset_declarations(program).next()
@@ -948,7 +945,7 @@ fn declared_asset(program: &Program) -> Option<&str> {
 
 /// Payment asset binding is independent of funding and optional daily caps.
 #[cfg(feature = "typed-workflow")]
-pub(crate) fn provider_asset_id(program: &Program) -> Option<&str> {
+pub(crate) fn service_asset_id(program: &Program) -> Option<&str> {
     asset_declarations(program).next()
 }
 fn asset_declarations(program: &Program) -> impl Iterator<Item = &str> {
@@ -1041,9 +1038,9 @@ pub(crate) fn native_storage_required(program: &Program) -> bool {
     false
 }
 
-/// Provider operations require host settlement even when an IR branch is not taken.
+/// Service operations require host settlement even when an IR branch is not taken.
 #[cfg(feature = "typed-workflow")]
-pub(crate) fn provider_call_required(program: &Program) -> bool {
+pub(crate) fn service_call_required(program: &Program) -> bool {
     let mut statements: Vec<&Statement> = program.statements.iter().collect();
     let mut expressions = Vec::new();
     while let Some(statement) = statements.pop() {
@@ -1085,7 +1082,7 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
                 expressions.push(object);
             }
             Expr::Call { name, args, .. } => {
-                if name == "paysh::call" {
+                if name == "allowit::service_call" {
                     return true;
                 }
                 expressions.extend(args);
@@ -1111,7 +1108,7 @@ pub(crate) fn provider_call_required(program: &Program) -> bool {
 }
 
 #[cfg(not(feature = "typed-workflow"))]
-pub(crate) fn provider_call_required(_program: &Program) -> bool {
+pub(crate) fn service_call_required(_program: &Program) -> bool {
     false
 }
 
@@ -1143,11 +1140,11 @@ pub(crate) fn typed_nodes(
         #[cfg(feature = "typed-workflow")]
         binding_states: BTreeMap::new(),
         #[cfg(feature = "typed-workflow")]
-        typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
+        typed_only: crate::typed_workflow::required(program) && !service_call_required(program),
         #[cfg(feature = "typed-workflow")]
-        provider_call_ids: Vec::new(),
+        service_call_ids: Vec::new(),
         #[cfg(feature = "typed-workflow")]
-        provider_profile: provider_call_required(program),
+        service_profile: service_call_required(program),
         nodes: 0,
         config_count: 0,
         declared_asset: declared_asset(program),
@@ -1175,11 +1172,11 @@ pub(crate) fn typed_budgets(
         #[cfg(feature = "typed-workflow")]
         binding_states: BTreeMap::new(),
         #[cfg(feature = "typed-workflow")]
-        typed_only: crate::typed_workflow::required(program) && !provider_call_required(program),
+        typed_only: crate::typed_workflow::required(program) && !service_call_required(program),
         #[cfg(feature = "typed-workflow")]
-        provider_call_ids: Vec::new(),
+        service_call_ids: Vec::new(),
         #[cfg(feature = "typed-workflow")]
-        provider_profile: provider_call_required(program),
+        service_profile: service_call_required(program),
         nodes: 0,
         config_count: 0,
         declared_asset: declared_asset(program),

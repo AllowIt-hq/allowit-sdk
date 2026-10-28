@@ -120,12 +120,12 @@ pub fn process_value(request: Value) -> Value {
         };
         if request
             .get("context")
-            .and_then(|v| v.get("provider_call_input"))
+            .and_then(|v| v.get("service_call_input"))
             .is_some()
         {
             return failure(
                 "INVALID_CONTEXT",
-                "Request JSON cannot supply authenticated provider input. Use the trusted typed adapter.",
+                "Request JSON cannot supply authenticated service input. Use the trusted typed adapter.",
             );
         }
         if request

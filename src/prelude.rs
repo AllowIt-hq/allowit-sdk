@@ -1,6 +1,5 @@
 //! Rust type-checking facade for policy source. Authoritative execution uses the validated IR.
 //! The async approval facade fails closed; the oracle interpreter supplies authenticated answers.
-pub use crate::paysh;
 pub use crate::primitives::OwnerLimit;
 pub use crate::{ConfidenceInterval, Context};
 use alloc::string::String;
@@ -217,15 +216,6 @@ pub async fn require_user_input(_ctx: &Context, _prompt: &str) -> PolicyResult {
         "USER_INPUT_REQUIRED",
         "Use the trusted oracle to obtain an authenticated answer.",
     ))
-}
-
-/// Jev preference evidence and owner-feedback checks.
-/// The trusted oracle supplies evidence and authenticated owner answers.
-pub mod jev {
-    pub use super::semantic;
-    #[cfg(feature = "std")]
-    pub use crate::primitives::check_preference;
-    pub use crate::primitives::preference_evidence;
 }
 
 pub fn require_asset(ctx: &Context, required: &str) -> PolicyResult {

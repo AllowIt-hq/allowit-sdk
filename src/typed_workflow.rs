@@ -62,7 +62,7 @@ pub enum EvidenceKind {
     Quote,
     PaymentChallenge,
     ExternalClaim,
-    ProviderMessage,
+    ServiceMessage,
     PreferenceAssessment,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,7 +399,7 @@ pub fn signature(name: &str) -> Option<WorkflowSignature> {
             alloc::vec![param("request", "ExecutionRequest")],
             WorkflowType::Result(boxed(named("ValidatedExecutionRequest"))),
         ),
-        "paysh::payment_request_from_curl" => (
+        "allowit::payment_request_from_curl" => (
             alloc::vec![
                 param("outcome", "CurlOutcome"),
                 param("request", "CurlRequest")

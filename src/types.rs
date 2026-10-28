@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
-pub const REGISTRY_VERSION: &str = "1.5.0";
+pub const REGISTRY_VERSION: &str = "1.6.0";
 /// Canonical expression schema. New registered host operations use the source registry
 /// version and explicit target-profile admission without changing the expression encoding.
 pub const IR_VERSION: &str = "1.0.0";
@@ -209,7 +209,7 @@ pub struct CompiledPolicy {
     pub registry_version: String,
     pub execution_requirements: ExecutionRequirements,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub provider_call_requirements: Vec<ProviderCallRequirement>,
+    pub service_call_requirements: Vec<ServiceCallRequirement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub typed_workflow_requirements: Vec<crate::typed_workflow::TypedWorkflowNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -246,7 +246,7 @@ pub enum ExecutionFeature {
     PurchaseHistory,
     RuntimeContextU64,
     SemanticEvidence,
-    ProviderCall,
+    ServiceCall,
     PaidHttpCall,
     NativeSettlement,
     TypedWorkflow,
@@ -313,7 +313,7 @@ pub struct NativePolicyStorage {
 /// Exact native payment asset supplied by the authenticated wallet adapter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProviderPaymentAsset {
+pub struct ServicePaymentAsset {
     pub network: String,
     pub asset: String,
     pub decimals: u8,
@@ -322,31 +322,31 @@ pub struct ProviderPaymentAsset {
 /// Host-authenticated canonical input. Public JSON evaluation cannot supply this binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProviderCallInput {
-    pub payment_asset: ProviderPaymentAsset,
+pub struct ServiceCallInput {
+    pub payment_asset: ServicePaymentAsset,
     pub service_id: String,
     pub input_key: String,
     pub request_digest: String,
 }
 
-/// Source-bound provider requirements, extracted from validated folded IR before funding.
+/// Source-bound service requirements, extracted from validated folded IR before funding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProviderCallRequirement {
+pub struct ServiceCallRequirement {
     pub payment_asset_id: String,
     pub operation: String,
     pub service_id: String,
     pub input_key: String,
     pub max_payment_units: u64,
-    pub max_swap_lamports: u64,
-    pub max_service_fee_lamports_per_execution: u64,
+    pub max_rail_debit_units: u64,
+    pub max_service_fee_units: u64,
 }
 
-/// A source-admitted provider effect. This is neither a payment nor a delivery receipt.
+/// A source-admitted service effect. This is neither a payment nor a delivery receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProviderCallPlan {
-    pub payment_asset: ProviderPaymentAsset,
+pub struct ServiceCallPlan {
+    pub payment_asset: ServicePaymentAsset,
     pub operation: String,
     pub service_id: String,
     pub input_key: String,
@@ -354,8 +354,8 @@ pub struct ProviderCallPlan {
     /// Exact trusted amount checked by the policy and required for native settlement.
     pub payment_units: u64,
     pub max_payment_units: u64,
-    pub max_swap_lamports: u64,
-    pub max_service_fee_lamports_per_execution: u64,
+    pub max_rail_debit_units: u64,
+    pub max_service_fee_units: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,7 +376,7 @@ pub struct Context {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(skip_deserializing)]
     #[cfg(feature = "typed-workflow")]
-    pub provider_call_input: Option<ProviderCallInput>,
+    pub service_call_input: Option<ServiceCallInput>,
     /// Trusted current native account state. Adapters must overwrite caller-supplied values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_policy_storage: Option<NativePolicyStorage>,
@@ -435,7 +435,7 @@ impl Default for Context {
             #[cfg(feature = "typed-workflow")]
             curl_outcome: None,
             #[cfg(feature = "typed-workflow")]
-            provider_call_input: None,
+            service_call_input: None,
             native_policy_storage: None,
             amount_units: 0,
             allocation_units: 0,
@@ -470,7 +470,7 @@ pub struct Decision {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(skip_deserializing)]
     #[cfg(feature = "typed-workflow")]
-    pub system_operations: Vec<ProviderCallPlan>,
+    pub system_operations: Vec<ServiceCallPlan>,
     pub outcome: String,
     pub code: String,
     pub reason: String,

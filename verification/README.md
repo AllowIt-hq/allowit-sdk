@@ -2,7 +2,7 @@
 
 This space owns Lean specifications, completeness obligations, independent expected outcomes and assurance reports. Contract, SDK, gateway, CLI and frontend agents own their implementations. The verification owner reviews those implementations against independently stated requirements and records remaining gaps; implementation tests alone do not define the expected behavior.
 
-Start with [completeness](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/completeness.md). [The obligation ledger](obligations.json) is the machine-readable inventory. [Lean](lean/README.md) contains executable specifications and checked proofs. The [October 4 research plan](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/docs/lean-verification-plan.md) is background; the native-source and daily-limit requirements below supersede its generic-template assumptions.
+Start with completeness. [The obligation ledger](obligations.json) is the machine-readable inventory. [Lean](lean/README.md) contains executable specifications and checked proofs. The October 4 research plan is background; the native-source and daily-limit requirements below supersede its generic-template assumptions.
 
 ## Current scope
 
@@ -20,7 +20,7 @@ The [extracted kernel refinement](refinement/README.md) checks the historical pu
 
 The Lean 4.11 model and earlier receipts retain their historical scope. Full historical extraction acceptance still rejects the reconstructed Rust library identity. Historical adapter, trace, refusal and isolation acceptance also requires the pinned Rust dependency caches. Current tests do not replace those historical acceptance checks.
 
-The verification owner maintains requirement IDs and domains, formal statements, source/model mappings, expected vectors, counterexamples, proof acceptance and evidence freshness. Each implementation team supplies its operation/schema inventory, exact source/build revisions and reproducible execution traces. [Required evidence](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/completeness.md#implementation-handoff) specifies the packet.
+The verification owner maintains requirement IDs and domains, formal statements, source/model mappings, expected vectors, counterexamples, proof acceptance and evidence freshness. Each implementation team supplies its operation/schema inventory, exact source/build revisions and reproducible execution traces. Required evidence specifies the packet.
 
 Delivery validation and formal assurance are separate milestones. This space does not add a full-refinement gate to the immediate demonstration. It reports which claims have model proofs, tested correspondence, implementation proofs or only external assumptions. A demonstration can pass while formal refinement remains open; it must not be described as complete formal verification.
 
@@ -42,13 +42,13 @@ The separate [single-fault transfer witnesses](isolation/README.md) leave spendi
 
 The existing 13 theorems establish only their bounded model. The separate native model has 16 checked theorems; [source-bound host replay](native-correspondence.json) reports finite correspondence and mutation detection. The [ledger](obligations.json) records that partial evidence while keeping production obligations open. Future universal statements about compiled contracts remain conditional on the identified compilation and chain-runtime trust boundaries.
 
-The [9:13 p.m. readiness check](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/readiness/2026-10-04-2113.json) is retained as a historical snapshot of the uncommitted candidates. It does not describe the subsequent committed contract handoff.
+The 9:13 p.m. readiness check is retained as a historical snapshot of the uncommitted candidates. It does not describe the subsequent committed contract handoff.
 
-The [published contract handoff](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/published-handoff.md) now has committed targets and a separate source-bundle/artifact intake checker. Its 2,907-vector host receipt preserves the earlier frozen evidence. Source inspection finds the announced artifact and ceiling hardening; adapter/client/deployment and universal source refinement remain open.
+The published contract handoff now has committed targets and a separate source-bundle/artifact intake checker. Its 2,907-vector host receipt preserves the earlier frozen evidence. Source inspection finds the announced artifact and ceiling hardening; adapter/client/deployment and universal source refinement remain open.
 
-[Transaction rollback preparation](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/runtime/README.md) specifies a separate signed-transaction/store experiment. It records pinned upstream source research only; no new runtime execution or release obligation is claimed.
+Transaction rollback preparation specifies a separate signed-transaction/store experiment. It records pinned upstream source research only; no new runtime execution or release obligation is claimed.
 
-The separate [LiteSVM loader preflight](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/verification/runtime/loader.md) built the pinned upstream and observed both unchanged published SBF files loading, accessor-byte equality and invalid-ELF refusal. It executes no instruction/transaction and adds no rollback/readiness or dependency-closed refinement claim.
+The separate LiteSVM loader preflight built the pinned upstream and observed both unchanged published SBF files loading, accessor-byte equality and invalid-ELF refusal. It executes no instruction/transaction and adds no rollback/readiness or dependency-closed refinement claim.
 
 The separate [signed transaction/store experiment](runtime/transaction/README.md) records seven submissions, a committing multi-transfer control, a transfer-prefix/unsupported-instruction abort and nonce reuse, plus signature/blockhash negatives. Independent strict Python wire/account checks support finite LiteSVM store correspondence, with no Lean transaction theorem or fully closed build provenance.
 
@@ -56,4 +56,4 @@ The separate [custody failure boundaries](runtime/failure-boundary/README.md) ex
 
 The separate [retained transaction frame proofs](runtime/frame/README.md) add 10 generic fee/failure statements, 16 finite certificates and three derived nonce corollaries against unchanged observations. Fresh Lean checks link seven failure frames and three successful nonce reuses to independently written models. No fresh VM execution, universal rollback or adapter refinement is claimed.
 
-The frame checker pins its README as an exact-byte test input. Its historical review record is retained in the [main project wiki](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/revisions/1da2738d3dc5d544829d9e012533b007e0ceafcc/docs/reviews/2026-10-05-transaction-frames.md).
+The frame checker pins its README as an exact-byte test input. Its historical review record is retained in the main project wiki.

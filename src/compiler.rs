@@ -315,7 +315,7 @@ impl Parser {
             {
                 return Err(error(
                     reader.span(),
-                    "Use jev::preference_evidence(ctx, the same literal question).",
+                    "Use allowit::preference_evidence(ctx, the same literal question).",
                 ));
             }
             let read_question = self.expr(&reader.args[1], depth + 1)?;
@@ -1367,17 +1367,17 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         ir_hash,
         registry_version: REGISTRY_VERSION.into(),
         execution_requirements: crate::requirements::extract(&ir)?,
-        provider_call_requirements: crate::requirements::provider_calls(&ir)?,
+        service_call_requirements: crate::requirements::service_calls(&ir)?,
         typed_workflow_requirements: crate::validation::typed_nodes(&ir)?,
         typed_budget_requirements: crate::validation::typed_budgets(&ir)?,
         limit: String::new(),
         daily_limit,
         token: if crate::typed_workflow::required(&ir)
-            && !crate::validation::provider_call_required(&ir)
+            && !crate::validation::service_call_required(&ir)
         {
             String::new()
         } else {
-            crate::validation::provider_asset_id(&ir)
+            crate::validation::service_asset_id(&ir)
                 .unwrap_or("USDC")
                 .into()
         },
@@ -1635,8 +1635,6 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                         || ident == "return"
                         || ident == "Ok"
                         || ident == "allowit"
-                        || ident == "jev"
-                        || ident == "paysh"
                         || crate::registry::function(&ident.to_string()).is_some() =>
                 {
                     current.after_if_body = false;
@@ -1698,9 +1696,7 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                 stack.push(frame(group.stream(), scope, depth));
             }
             TokenTree::Ident(ident) => {
-                if current.scope != Scope::File
-                    && (ident == "allowit" || ident == "jev" || ident == "paysh")
-                {
+                if current.scope != Scope::File && ident == "allowit" {
                     let mut lookahead = current.iter.clone();
                     if matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':' && p.spacing() == proc_macro2::Spacing::Joint)
                         && matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':')

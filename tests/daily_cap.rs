@@ -92,7 +92,7 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
         daily_limit_units: 1_000_000,
         action_limit_units: 500_000,
     });
-    let asset = allowit_sdk::ProviderPaymentAsset {
+    let asset = allowit_sdk::ServicePaymentAsset {
         network: "tempo:localnet".into(),
         asset: "AlphaUSD".into(),
         decimals: 6,

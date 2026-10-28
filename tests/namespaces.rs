@@ -35,8 +35,9 @@ fn qualified_calls_preserve_effects_requirements_and_contract_decisions() {
     assert!(entry.signature.starts_with("allowit::set_cap_per_day("));
 }
 #[test]
-fn jev_preferences_lower_to_existing_evidence_and_owner_input() {
-    for namespace in ["allowit", "jev"] {
+fn allowit_preferences_lower_to_existing_evidence_and_owner_input() {
+    {
+        let namespace = "allowit";
         let p = compile(&source(&format!(
             "{namespace}::check_preference(ctx, \"Research?\", None, None).await?; Ok(())"
         )))
@@ -59,7 +60,7 @@ fn jev_preferences_lower_to_existing_evidence_and_owner_input() {
     }
     let plain = compile(&source("let score = semantic(ctx, \"Research?\")?; Ok(())")).unwrap();
     let p = compile(&source(
-        "let score = jev::semantic(ctx, \"Research?\")?; Ok(())",
+        "let score = allowit::semantic(ctx, \"Research?\")?; Ok(())",
     ))
     .unwrap();
     assert_eq!(p.execution_requirements, plain.execution_requirements);
@@ -72,6 +73,9 @@ fn exact_registry_rejects_unknown_vendors_operations_and_type_paths() {
         "stripe::pay",
         "jev::set_cap_per_day",
         "jev::confidence",
+        "jev::semantic",
+        "paysh::call",
+        "paysh::payment_request_from_curl",
         "allowit::pay",
         "allowit::Ok",
         "::allowit::set_cap_per_day",
@@ -123,8 +127,8 @@ mod native_facade {
             "USDC",
             6,
         )?;
-        jev::check_preference(
-            jev::preference_evidence(ctx, "Research?"),
+        allowit::check_preference(
+            allowit::preference_evidence(ctx, "Research?"),
             "Research?",
             None,
             None,
@@ -154,8 +158,8 @@ mod versioned_facade {
             "USDC",
             6,
         )?;
-        jev::check_preference(
-            jev::preference_evidence(ctx, "Research?"),
+        allowit::check_preference(
+            allowit::preference_evidence(ctx, "Research?"),
             "Research?",
             None,
             auto("approve"),
@@ -233,14 +237,14 @@ fn runtime_artifacts_require_canonical_operation_names() {
 }
 
 #[test]
-fn daily_accounting_registry_rejects_older_artifacts() {
+fn service_registry_rejects_older_artifacts() {
     let source = source("set_cap_per_day(ctx, \"100\", \"USDC\")?; Ok(())");
     let mut policy = compile(&source).unwrap();
-    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.5.0");
-    assert_eq!(policy.registry_version, "1.5.0");
+    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.6.0");
+    assert_eq!(policy.registry_version, "1.6.0");
     assert_eq!(policy.ir.version, "1.0.0");
     let hash = policy.ir_hash.clone();
-    policy.registry_version = "1.0.0".into();
+    policy.registry_version = "1.5.0".into();
     assert_eq!(
         evaluate(&policy, Profile::Oracle, &context()).code,
         "INVALID_ARTIFACT"
@@ -255,7 +259,8 @@ fn daily_accounting_registry_rejects_older_artifacts() {
 
 #[test]
 fn qualified_preference_signature_matches_the_rust_facade() {
-    for namespace in ["allowit", "jev"] {
+    {
+        let namespace = "allowit";
         assert!(compile(&source(&format!(r#"{namespace}::check_preference(ctx, "Research?", true, "85", true, "40").await?; Ok(())"#))).is_err());
     }
 }
@@ -271,8 +276,39 @@ fn namespace_spacing_does_not_relax_exact_path_resolution() {
     for call in [
         "r#allowit::set_cap_per_day",
         "allowit::r#set_cap_per_day",
-        "jev::jev::semantic",
+        "allowit::allowit::semantic",
     ] {
         assert!(compile(&source(&format!("{call}(ctx, \"5\", \"USDC\")?; Ok(())"))).is_err());
     }
+}
+
+#[test]
+fn retired_vendor_namespaces_have_no_new_execution_aliases() {
+    assert!(
+        registry()
+            .iter()
+            .all(|f| !f.name.starts_with("paysh::") && !f.name.starts_with("jev::"))
+    );
+    for body in [
+        r#"jev::semantic(ctx, "Research?")?; Ok(())"#,
+        r#"jev::check_preference(ctx, "Research?", None, None).await?; Ok(())"#,
+        r#"paysh::call("air-quality", "request", 1000, 5000000, 100000); Ok(())"#,
+    ] {
+        assert!(compile(&source(body)).is_err(), "{body}");
+    }
+}
+
+#[test]
+fn nonvendor_source_and_ir_identity_remain_stable_across_registry_update() {
+    let policy = compile(include_str!("fixtures/registry-stable-policy.rs")).unwrap();
+    assert_eq!(policy.registry_version, "1.6.0");
+    // Original registry 1.5 compiler output for these exact authored source bytes.
+    assert_eq!(
+        policy.source_hash,
+        "d24f0125d6d1e71948f92547cfaaae6200e5efd637b610858371b371537a06bc"
+    );
+    assert_eq!(
+        policy.ir_hash,
+        "864dd1f3fa8332dacc4f52fc8691044c03794a957f862128d6fcfdef175e5af8"
+    );
 }

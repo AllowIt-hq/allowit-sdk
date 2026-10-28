@@ -12,7 +12,7 @@ fn constructor_and_primitives_preserve_real_accounting() {
     let source = include_str!("fixtures/constructor-policy.rs");
     let policy = compile(source).unwrap();
     assert_eq!(policy.daily_limit, "5");
-    assert_eq!(policy.registry_version, "1.5.0");
+    assert_eq!(policy.registry_version, "1.6.0");
     for profile in [Profile::Oracle, Profile::Contract] {
         let mut ctx = context();
         ctx.amount_units = 2_000_000;
@@ -134,7 +134,7 @@ mod complete_template_rust_build {
 
 fn preference_source(deny: &str, approve: &str) -> String {
     source(&format!(
-        "jev::check_preference(jev::preference_evidence(ctx, \"Research?\"), \"Research?\", {deny}, {approve}).await?; Ok(())"
+        "allowit::check_preference(allowit::preference_evidence(ctx, \"Research?\"), \"Research?\", {deny}, {approve}).await?; Ok(())"
     ))
 }
 #[test]
@@ -183,16 +183,16 @@ fn explicit_preference_evidence_preserves_thresholds_and_owner_continuation() {
 fn preference_guard_rejects_forged_or_mismatched_evidence() {
     let good = preference_source("0.40", "0.85");
     for (from, to) in [
-        ("jev::preference_evidence(ctx, \"Research?\")", "ctx"),
-        ("jev::preference_evidence(ctx, \"Research?\")", "None"),
-        ("jev::preference_evidence(ctx, \"Research?\")", "8500"),
+        ("allowit::preference_evidence(ctx, \"Research?\")", "ctx"),
+        ("allowit::preference_evidence(ctx, \"Research?\")", "None"),
+        ("allowit::preference_evidence(ctx, \"Research?\")", "8500"),
         (
-            "jev::preference_evidence(ctx, \"Research?\")",
-            "jev::preference_evidence(ctx, \"Other?\")",
+            "allowit::preference_evidence(ctx, \"Research?\")",
+            "allowit::preference_evidence(ctx, \"Other?\")",
         ),
         (
-            "jev::preference_evidence(ctx, \"Research?\")",
-            "jev::semantic(ctx, \"Research?\")?",
+            "allowit::preference_evidence(ctx, \"Research?\")",
+            "allowit::semantic(ctx, \"Research?\")?",
         ),
     ] {
         assert!(compile(&good.replace(from, to)).is_err(), "accepted {to}");

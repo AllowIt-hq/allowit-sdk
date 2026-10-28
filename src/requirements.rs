@@ -8,7 +8,7 @@ struct Collector {
     features: BTreeSet<ExecutionFeature>,
     keys: BTreeSet<String>,
     dynamic: bool,
-    provider_calls: Vec<crate::ProviderCallRequirement>,
+    service_calls: Vec<crate::ServiceCallRequirement>,
 }
 
 impl Collector {
@@ -16,7 +16,7 @@ impl Collector {
         match expr {
             Expr::Call { name, args, .. } => {
                 let feature = match name.as_str() {
-                    "paysh::call" => {
+                    "allowit::service_call" => {
                         let [
                             Expr::String { value: service_id },
                             Expr::String { value: input_key },
@@ -24,34 +24,33 @@ impl Collector {
                                 value: max_payment_units,
                             },
                             Expr::Integer {
-                                value: max_swap_lamports,
+                                value: max_rail_debit_units,
                             },
                             Expr::Integer {
-                                value: max_service_fee_lamports_per_execution,
+                                value: max_service_fee_units,
                             },
                         ] = args.as_slice()
                         else {
                             return Err(CompileError::new(
                                 "UNSUPPORTED_REQUIREMENT",
-                                "Provider requirements require validated source constants.",
+                                "Service requirements require validated source constants.",
                             ));
                         };
-                        self.provider_calls.push(crate::ProviderCallRequirement {
+                        self.service_calls.push(crate::ServiceCallRequirement {
                             payment_asset_id: String::new(),
                             operation: name.clone(),
                             service_id: service_id.clone(),
                             input_key: input_key.clone(),
                             max_payment_units: *max_payment_units,
-                            max_swap_lamports: *max_swap_lamports,
-                            max_service_fee_lamports_per_execution:
-                                *max_service_fee_lamports_per_execution,
+                            max_rail_debit_units: *max_rail_debit_units,
+                            max_service_fee_units: *max_service_fee_units,
                         });
                         self.features.insert(ExecutionFeature::PaidHttpCall);
                         self.features.insert(ExecutionFeature::NativeSettlement);
-                        Some(ExecutionFeature::ProviderCall)
+                        Some(ExecutionFeature::ServiceCall)
                     }
                     "allowit::execution_request_validate"
-                    | "paysh::payment_request_from_curl"
+                    | "allowit::payment_request_from_curl"
                     | "allowit::execution_request_cap"
                     | "allowit::payment_request_cap" => Some(ExecutionFeature::TypedWorkflow),
                     "semantic" => Some(ExecutionFeature::SemanticEvidence),
@@ -161,23 +160,23 @@ pub(crate) fn extract(program: &Program) -> Result<ExecutionRequirements, Compil
     })
 }
 
-pub(crate) fn provider_calls(
+pub(crate) fn service_calls(
     program: &Program,
-) -> Result<Vec<crate::ProviderCallRequirement>, CompileError> {
+) -> Result<Vec<crate::ServiceCallRequirement>, CompileError> {
     let mut collector = Collector::default();
     collector.block(&program.statements)?;
-    if !collector.provider_calls.is_empty() {
-        let asset = crate::validation::provider_asset_id(program).ok_or_else(|| {
+    if !collector.service_calls.is_empty() {
+        let asset = crate::validation::service_asset_id(program).ok_or_else(|| {
             CompileError::new(
                 "UNSUPPORTED_REQUIREMENT",
-                "Provider payment asset requires an unconditional numeric guard.",
+                "Service payment asset requires an unconditional numeric guard.",
             )
         })?;
-        for call in &mut collector.provider_calls {
+        for call in &mut collector.service_calls {
             call.payment_asset_id = asset.into();
         }
     }
-    Ok(collector.provider_calls)
+    Ok(collector.service_calls)
 }
 
 #[cfg(test)]

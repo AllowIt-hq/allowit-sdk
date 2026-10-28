@@ -405,7 +405,7 @@ fn no_early_loop_approval_or_effectful_loop() {
     assert!(
         compile(&EXEC.replace(
             "if effect.max_burn > 0",
-            "if paysh::call(\"service\", \"input\", 1, 1, 1)"
+            "if allowit::service_call(\"service\", \"input\", 1, 1, 1)"
         ))
         .is_err()
     );
@@ -421,7 +421,7 @@ fn old_ir_cannot_smuggle_new_semantics() {
     ir.version = "1.0.0".into();
     assert!(allowit_sdk::validate_program(&ir).is_err());
     let registry = allowit_sdk::process_value(serde_json::json!({"operation":"registry"}));
-    assert_eq!(registry["registry_version"], "1.5.0");
+    assert_eq!(registry["registry_version"], "1.6.0");
     assert_eq!(registry["type_declarations"][0], "ExecutionRequest");
 }
 
@@ -616,7 +616,10 @@ fn producer_families_repetition_clock_and_transfer_coverage_fail_closed() {
         .is_err()
     );
     assert!(compile(&EXEC.replace("for effect in &validated.request.effect_bounds {", "for effect in &validated.request.effect_bounds { allowit::execution_request_validate(&request)?;")).is_err());
-    assert!(compile(&EXEC.replace("Ok(())", "paysh::call(\"s\",\"i\",1,1,1); Ok(())")).is_err());
+    assert!(
+        compile(&EXEC.replace("Ok(())", "allowit::service_call(\"s\",\"i\",1,1,1); Ok(())"))
+            .is_err()
+    );
     let (p, mut c) = execution();
     c.workflow.as_mut().unwrap().evaluated_at_seconds = 0;
     assert_eq!(evaluate(&p, Profile::Oracle, &c).code, "WORKFLOW_BINDING");

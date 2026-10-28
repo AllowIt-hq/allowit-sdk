@@ -52,25 +52,12 @@ pub fn registry() -> Vec<FunctionInfo> {
             _=>function.signature.replace(&function.name,&qualified.name)
         };
         result.push(qualified);
-        if matches!(
-            function.name.as_str(),
-            "semantic" | "check_preference" | "preference_evidence"
-        ) {
-            let mut qualified = function.clone();
-            qualified.name = alloc::format!("jev::{}", function.name);
-            qualified.signature = if function.name == "check_preference" {
-                "async jev::check_preference(evidence: Option<ConfidenceInterval>, question: &str, deny: Threshold, approve: Threshold) -> PolicyResult".into()
-            } else {
-                function.signature.replace(&function.name, &qualified.name)
-            };
-            result.push(qualified);
-        }
     }
     result.push(FunctionInfo {
-        name: "paysh::call".into(), title: "Paid provider call".into(),
-        description: "Admits one call using authenticated run input and exact payment, swap and service-fee ceilings. True means admitted plan, not payment or delivery. The host settles through the selected native wallet and provider adapter after every policy guard passes.".into(),
-        signature: "paysh::call(service_id: &str, input_key: &str, max_payment_units: u64, max_swap_lamports: u64, max_service_fee_lamports_per_execution: u64) -> bool".into(),
-        effect: "provider_call".into(), typed_signature:None,
+        name: "allowit::service_call".into(), title: "Paid service call".into(),
+        description: "Admits one call using authenticated run input and exact payment, swap and service-fee ceilings. True means admitted plan, not payment or delivery. The host settles through the selected native wallet and service adapter after every policy guard passes.".into(),
+        signature: "allowit::service_call(service_id: &str, input_key: &str, max_payment_units: u64, max_rail_debit_units: u64, max_service_fee_units: u64) -> bool".into(),
+        effect: "service_call".into(), typed_signature:None,
     });
     for (name, title, description, signature) in [
         (
@@ -80,10 +67,10 @@ pub fn registry() -> Vec<FunctionInfo> {
             "allowit::execution_request_validate(request: &ExecutionRequest) -> Result<ValidatedExecutionRequest>",
         ),
         (
-            "paysh::payment_request_from_curl",
+            "allowit::payment_request_from_curl",
             "Convert payment challenge",
             "Converts an authenticated bound challenge into unsigned payment facts. None means a valid bound free response; failures remain errors.",
-            "paysh::payment_request_from_curl(outcome: &CurlOutcome, request: &CurlRequest) -> Result<Option<PaymentRequest>>",
+            "allowit::payment_request_from_curl(outcome: &CurlOutcome, request: &CurlRequest) -> Result<Option<PaymentRequest>>",
         ),
     ] {
         result.push(FunctionInfo {
@@ -127,7 +114,7 @@ pub(crate) fn canonical_function(name: &str) -> Option<String> {
     if function(name)?.effect == "native_effect" {
         return None;
     }
-    if name == "paysh::call" || crate::typed_workflow::signature(name).is_some() {
+    if name == "allowit::service_call" || crate::typed_workflow::signature(name).is_some() {
         return Some(name.into());
     }
     Some(name.rsplit("::").next()?.into())

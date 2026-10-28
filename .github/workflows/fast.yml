@@ -51,22 +51,20 @@ jobs:
           set -euo pipefail
           cargo test --locked --no-default-features --test feature_profiles "$TEST_SELECTOR" -- --exact 2>&1 | tee "$RUNNER_TEMP/tests.log"
           grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$RUNNER_TEMP/tests.log"
-  paysh-wire:
-    name: PaySH signed request vector
+  service-policy:
+    name: Service policy budget boundaries
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: crates/paysh-interface
-      - name: Compare the independent PaySH wire vector
+      - name: Check generic service admission and exact budget limits
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --locked --manifest-path crates/paysh-interface/Cargo.toml --lib tests::independent_python_pay_vector -- --exact 2>&1 | tee "$RUNNER_TEMP/tests.log"
-          grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$RUNNER_TEMP/tests.log"
+          cargo test --locked --test service_operations 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' "$RUNNER_TEMP/tests.log"
   stellar-policy:
     name: Stellar compiled policy
     runs-on: ubuntu-24.04

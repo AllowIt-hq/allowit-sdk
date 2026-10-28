@@ -69,7 +69,7 @@ Stellar uses the owner-controlled ODC and shared veto engine in [allowit-contrac
 
 ## Verification and deployment boundary
 
-The [2026-09-28 target validation receipt](https://github.com/ackrate/ackrate-project/blob/main/instance/artifacts/107-allowit-repository-artifacts/AllowIt-sdk/contracts/review/runtime-validation-2026-09-28.md) records passing compiled SBF and Soroban VM runs, exact artifact hashes, resource measurements and the Opus 5.5 source-review identities.
+The 2026-09-28 target validation receipt records passing compiled SBF and Soroban VM runs, exact artifact hashes, resource measurements and the Opus 5.5 source-review identities.
 
 ```sh
 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \

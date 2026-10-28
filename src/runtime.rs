@@ -37,7 +37,7 @@ struct Evaluator<'a> {
     binding: String,
     steps: usize,
     #[cfg(feature = "typed-workflow")]
-    system_operations: Vec<crate::ProviderCallPlan>,
+    system_operations: Vec<crate::ServiceCallPlan>,
     #[cfg(feature = "typed-workflow")]
     workflow_outputs: Vec<crate::typed_workflow::WorkflowOutput>,
     #[cfg(feature = "typed-workflow")]
@@ -460,7 +460,7 @@ impl Evaluator<'_> {
                         value
                     }
                     #[cfg(feature = "typed-workflow")]
-                    "paysh::payment_request_from_curl" => {
+                    "allowit::payment_request_from_curl" => {
                         let [
                             Value::Workflow {
                                 ty: crate::typed_workflow::WorkflowType::Named(a),
@@ -635,26 +635,26 @@ impl Evaluator<'_> {
                         Value::Unit
                     }
                     #[cfg(feature = "typed-workflow")]
-                    "paysh::call" => {
+                    "allowit::service_call" => {
                         if self.profile != Profile::Oracle {
                             return Err(failure(
                                 "PROVIDER_PROFILE_UNSUPPORTED",
-                                "Provider effects require an authenticated host adapter.",
+                                "Service effects require an authenticated host adapter.",
                             ));
                         }
                         if !self.system_operations.is_empty() {
                             return Err(failure(
                                 "PROVIDER_CALL_LIMIT",
-                                "Only one provider call is supported per run.",
+                                "Only one service call is supported per run.",
                             ));
                         }
                         let service_id = string(&values, 0)?;
                         let input_key = string(&values, 1)?;
                         let binding =
-                            self.context.provider_call_input.as_ref().ok_or_else(|| {
+                            self.context.service_call_input.as_ref().ok_or_else(|| {
                                 failure(
                                     "PROVIDER_INPUT_REQUIRED",
-                                    "Authenticated provider input is required.",
+                                    "Authenticated service input is required.",
                                 )
                             })?;
                         if service_id.is_empty()
@@ -675,8 +675,8 @@ impl Evaluator<'_> {
                             ));
                         }
                         let max_payment_units = integer(&values, 2)?;
-                        let max_swap_lamports = integer(&values, 3)?;
-                        let max_service_fee_lamports_per_execution = integer(&values, 4)?;
+                        let max_rail_debit_units = integer(&values, 3)?;
+                        let max_service_fee_units = integer(&values, 4)?;
                         if self.context.amount_units > max_payment_units {
                             return Err(failure(
                                 "PROVIDER_PAYMENT_UNBOUND",
@@ -689,16 +689,16 @@ impl Evaluator<'_> {
                                 "A paid call requires a positive payment ceiling.",
                             ));
                         }
-                        self.system_operations.push(crate::ProviderCallPlan {
+                        self.system_operations.push(crate::ServiceCallPlan {
                             payment_asset: binding.payment_asset.clone(),
-                            operation: "paysh::call".into(),
+                            operation: "allowit::service_call".into(),
                             service_id,
                             input_key,
                             request_digest: binding.request_digest.clone(),
                             payment_units: self.context.amount_units,
                             max_payment_units,
-                            max_swap_lamports,
-                            max_service_fee_lamports_per_execution,
+                            max_rail_debit_units,
+                            max_service_fee_units,
                         });
                         Value::Boolean(true)
                     }
@@ -978,15 +978,15 @@ fn invalid() -> alloc::boxed::Box<Decision> {
 
 fn validate_context(
     ctx: &Context,
-    provider_profile: bool,
-    private_provider_localnet: bool,
-    native_payment_asset: Option<&crate::ProviderPaymentAsset>,
-    native_provider_funding: bool,
+    service_profile: bool,
+    private_service_localnet: bool,
+    native_payment_asset: Option<&crate::ServicePaymentAsset>,
+    native_service_funding: bool,
 ) -> Result<(), alloc::boxed::Box<Decision>> {
     #[cfg(not(feature = "typed-workflow"))]
-    let _ = provider_profile;
+    let _ = service_profile;
     if native_payment_asset.is_some_and(|asset| {
-        provider_profile
+        service_profile
             || asset.network != ctx.network
             || asset.asset != ctx.token
             || asset.decimals != 6
@@ -1009,11 +1009,11 @@ fn validate_context(
         ));
     }
     #[cfg(feature = "typed-workflow")]
-    if native_payment_asset.is_none() && provider_profile {
-        let binding = ctx.provider_call_input.as_ref().ok_or_else(|| {
+    if native_payment_asset.is_none() && service_profile {
+        let binding = ctx.service_call_input.as_ref().ok_or_else(|| {
             failure(
                 "PROVIDER_INPUT_REQUIRED",
-                "Authenticated provider input is required.",
+                "Authenticated service input is required.",
             )
         })?;
         let asset = &binding.payment_asset;
@@ -1042,7 +1042,7 @@ fn validate_context(
         ));
     }
     if native_payment_asset.is_none()
-        && !(private_provider_localnet && provider_profile && ctx.network == "solana:localnet")
+        && !(private_service_localnet && service_profile && ctx.network == "solana:localnet")
         && ![
             "mainnet",
             "mainnet-beta",
@@ -1064,13 +1064,13 @@ fn validate_context(
             "The requested network is not supported.",
         ));
     }
-    if ctx.amount_units == 0 || (!native_provider_funding && ctx.allocation_units == 0) {
+    if ctx.amount_units == 0 || (!native_service_funding && ctx.allocation_units == 0) {
         return Err(failure(
             "INVALID_AMOUNT",
             "The request and allocation amounts must be greater than zero.",
         ));
     }
-    if !native_provider_funding
+    if !native_service_funding
         && ctx
             .spent_units
             .checked_add(ctx.amount_units)
@@ -1180,9 +1180,9 @@ fn run_inner(
     profile: Profile,
     ctx: &Context,
     binding: String,
-    private_provider_localnet: bool,
-    native_payment_asset: Option<&crate::ProviderPaymentAsset>,
-    native_provider_funding: bool,
+    private_service_localnet: bool,
+    native_payment_asset: Option<&crate::ServicePaymentAsset>,
+    native_service_funding: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
     if let Err(error) = validate_program(ir) {
@@ -1238,10 +1238,10 @@ fn run_inner(
         }
     }
     #[cfg(feature = "typed-workflow")]
-    if profile == Profile::Contract && crate::validation::provider_call_required(ir) {
+    if profile == Profile::Contract && crate::validation::service_call_required(ir) {
         return Decision::fail(
             "PROVIDER_PROFILE_UNSUPPORTED",
-            "This contract profile cannot execute provider operations; use the authenticated host settlement adapter.",
+            "This contract profile cannot execute service operations; use the authenticated host settlement adapter.",
         );
     }
     #[cfg(feature = "std")]
@@ -1267,7 +1267,7 @@ fn run_inner(
     }
     let typed_only = cfg!(feature = "typed-workflow")
         && crate::typed_workflow::required(ir)
-        && !crate::validation::provider_call_required(ir);
+        && !crate::validation::service_call_required(ir);
     if let Err(error) = if typed_only {
         #[cfg(feature = "typed-workflow")]
         {
@@ -1280,10 +1280,10 @@ fn run_inner(
     } else {
         validate_context(
             ctx,
-            cfg!(feature = "typed-workflow") && crate::validation::provider_call_required(ir),
-            private_provider_localnet,
+            cfg!(feature = "typed-workflow") && crate::validation::service_call_required(ir),
+            private_service_localnet,
             native_payment_asset,
-            native_provider_funding,
+            native_service_funding,
         )
     } {
         return *error;
@@ -1458,21 +1458,21 @@ pub fn evaluate_with_trace(
     evaluate_with_trace_inner(policy, ctx, false, None)
 }
 
-/// Explicit developer-host capability for authenticated provider input on a
+/// Explicit developer-host capability for authenticated service input on a
 /// private Solana validator. The host must verify its real genesis, deployment,
 /// owner/source binding and loopback configuration before calling this method.
 /// This capability neither aliases a public network nor changes the default
 /// evaluator, wire protocol or Contract profile.
 #[cfg(all(feature = "compiler", feature = "typed-workflow", feature = "std"))]
-pub fn evaluate_with_trace_private_provider_localnet(
+pub fn evaluate_with_trace_private_service_localnet(
     policy: &CompiledPolicy,
     ctx: &Context,
 ) -> (Decision, Option<crate::WorkflowTrace>) {
-    if ctx.network != "solana:localnet" || !crate::validation::provider_call_required(&policy.ir) {
+    if ctx.network != "solana:localnet" || !crate::validation::service_call_required(&policy.ir) {
         return (
             Decision::fail(
                 "INVALID_NETWORK",
-                "This capability requires a private Solana provider operation.",
+                "This capability requires a private Solana service operation.",
             ),
             None,
         );
@@ -1484,8 +1484,8 @@ pub fn evaluate_with_trace_private_provider_localnet(
 fn evaluate_with_trace_inner(
     policy: &CompiledPolicy,
     ctx: &Context,
-    private_provider_localnet: bool,
-    native_payment_asset: Option<&crate::ProviderPaymentAsset>,
+    private_service_localnet: bool,
+    native_payment_asset: Option<&crate::ServicePaymentAsset>,
 ) -> (Decision, Option<crate::WorkflowTrace>) {
     let compiled = match validate_artifact(policy) {
         Ok(compiled) => compiled,
@@ -1497,7 +1497,7 @@ fn evaluate_with_trace_inner(
         Profile::Oracle,
         ctx,
         policy.source_hash.clone(),
-        private_provider_localnet,
+        private_service_localnet,
         native_payment_asset,
         false,
         Some(&mut trace),
@@ -1512,7 +1512,7 @@ fn validate_artifact(
 ) -> Result<CompiledPolicy, alloc::boxed::Box<Decision>> {
     if policy.language != crate::LANGUAGE
         || !crate::supported_registry_version(&policy.registry_version)
-        || (crate::validation::provider_call_required(&policy.ir)
+        || (crate::validation::service_call_required(&policy.ir)
             && matches!(
                 policy.registry_version.as_str(),
                 "1.0.0" | "1.1.0" | "1.2.0"
@@ -1535,7 +1535,7 @@ fn validate_artifact(
         || compiled.execution_requirements != policy.execution_requirements
         || compiled.typed_budget_requirements != policy.typed_budget_requirements
         || compiled.typed_workflow_requirements != policy.typed_workflow_requirements
-        || compiled.provider_call_requirements != policy.provider_call_requirements
+        || compiled.service_call_requirements != policy.service_call_requirements
     {
         return Err(failure(
             "INVALID_ARTIFACT",
@@ -1752,10 +1752,10 @@ fn typed_budget_plans(
 pub fn evaluate_with_trace_native_payment(
     policy: &CompiledPolicy,
     ctx: &Context,
-    asset: &crate::ProviderPaymentAsset,
+    asset: &crate::ServicePaymentAsset,
 ) -> (Decision, Option<crate::WorkflowTrace>) {
     if ctx.native_policy_storage.is_none()
-        || crate::validation::provider_call_required(&policy.ir)
+        || crate::validation::service_call_required(&policy.ir)
         || crate::typed_workflow::required(&policy.ir)
     {
         return (
@@ -1769,25 +1769,25 @@ pub fn evaluate_with_trace_native_payment(
     evaluate_with_trace_inner(policy, ctx, false, Some(asset))
 }
 
-/// Evaluate provider rules after the adapter verifies native funding and owner/source authority.
+/// Evaluate service rules after the adapter verifies native funding and owner/source authority.
 /// The native rail owns funding accounting (for example SOL allocation); scalar token
 /// allocation is intentionally unused here. The adapter MUST verify native funding,
 /// executor authority and, when enabled, the private validator genesis before calling.
 /// This admission is unavailable through JSON and never used by Contract evaluation.
 #[cfg(all(feature = "compiler", feature = "typed-workflow", feature = "std"))]
-pub fn evaluate_with_trace_native_provider_policy(
+pub fn evaluate_with_trace_native_service_policy(
     policy: &CompiledPolicy,
     ctx: &Context,
     private_localnet: bool,
 ) -> (Decision, Option<crate::WorkflowTrace>) {
-    if !crate::validation::provider_call_required(&policy.ir)
-        || ctx.provider_call_input.is_none()
+    if !crate::validation::service_call_required(&policy.ir)
+        || ctx.service_call_input.is_none()
         || (private_localnet && ctx.network != "solana:localnet")
     {
         return (
             Decision::fail(
                 "PROVIDER_INPUT_REQUIRED",
-                "Native provider policy evaluation requires authenticated provider input.",
+                "Native service policy evaluation requires authenticated service input.",
             ),
             None,
         );

@@ -116,7 +116,7 @@ fn scalar_build_rejects_host_workflow_ir_before_any_evaluation() {
         ..
     } = &mut forged_scalar_version.statements[0]
     {
-        *name = "paysh::call".into();
+        *name = "allowit::service_call".into();
     }
     assert!(validate_program(&forged_scalar_version).is_err());
 }

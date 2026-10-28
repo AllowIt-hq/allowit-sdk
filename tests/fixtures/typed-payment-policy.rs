@@ -4,7 +4,7 @@ fn new() -> PolicyParams { PolicyParams { native_asset: "native:solana:090909090
 async fn _execute(ctx: &Context, params:&PolicyParams) -> PolicyResult {
     if let Some(request) = &ctx.curl_request {
         if let Some(outcome) = &ctx.curl_outcome {
-            let proposed = paysh::payment_request_from_curl(outcome, request)?;
+            let proposed = allowit::payment_request_from_curl(outcome, request)?;
             if let Some(payment) = proposed {
                 allowit::payment_request_cap(&payment,"token-budget",params.token_asset,6,params.total_token_budget,1000,0)?;
                 allowit::payment_request_cap(&payment,"native-budget",params.native_asset,9,params.total_native_budget,0,10000)?;

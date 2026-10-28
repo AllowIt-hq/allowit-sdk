@@ -1,20 +1,20 @@
 use allowit_sdk::{
-    Context, ExecutionFeature, Profile, ProviderCallInput, ProviderPaymentAsset, compile, evaluate,
+    Context, ExecutionFeature, Profile, ServiceCallInput, ServicePaymentAsset, compile, evaluate,
     process_value,
 };
 use serde_json::json;
 
-const CALL: &str = "paysh::call(\"air-quality\", \"request\", 1000, 5000000, 100000)";
+const CALL: &str = "allowit::service_call(\"air-quality\", \"request\", 1000, 5000000, 100000)";
 
 #[test]
-fn private_provider_localnet_requires_an_explicit_host_capability() {
+fn private_service_localnet_requires_an_explicit_host_capability() {
     let policy = compile(&source(&format!(
         "if !{CALL} {{ return fail(\"Unavailable\"); }} Ok(())"
     )))
     .unwrap();
     let mut ctx = context();
     ctx.network = "solana:localnet".into();
-    ctx.provider_call_input
+    ctx.service_call_input
         .as_mut()
         .unwrap()
         .payment_asset
@@ -38,20 +38,20 @@ fn private_provider_localnet_requires_an_explicit_host_capability() {
 }
 
 #[test]
-fn private_provider_localnet_preserves_exact_input_domain_artifact_and_caps() {
+fn private_service_localnet_preserves_exact_input_domain_artifact_and_caps() {
     let policy = compile(&source(&format!(
         "if !{CALL} {{ return fail(\"Unavailable\"); }} Ok(())"
     )))
     .unwrap();
     let mut ctx = context();
     ctx.network = "solana:localnet".into();
-    ctx.provider_call_input
+    ctx.service_call_input
         .as_mut()
         .unwrap()
         .payment_asset
         .network = ctx.network.clone();
     let (decision, trace) =
-        allowit_sdk::evaluate_with_trace_private_provider_localnet(&policy, &ctx);
+        allowit_sdk::evaluate_with_trace_private_service_localnet(&policy, &ctx);
     assert_eq!(decision.outcome, "pass");
     assert!(trace.unwrap().complete);
     assert_eq!(decision.system_operations.len(), 1);
@@ -73,27 +73,27 @@ fn private_provider_localnet_preserves_exact_input_domain_artifact_and_caps() {
         match mismatch {
             "network" => bad.network = "solana:testnet".into(),
             "asset_domain" => {
-                bad.provider_call_input
+                bad.service_call_input
                     .as_mut()
                     .unwrap()
                     .payment_asset
                     .network = "solana:testnet".into()
             }
-            "missing" => bad.provider_call_input = None,
-            "service" => bad.provider_call_input.as_mut().unwrap().service_id = "other".into(),
-            "input" => bad.provider_call_input.as_mut().unwrap().input_key = "other".into(),
-            "digest" => bad.provider_call_input.as_mut().unwrap().request_digest = "invalid".into(),
+            "missing" => bad.service_call_input = None,
+            "service" => bad.service_call_input.as_mut().unwrap().service_id = "other".into(),
+            "input" => bad.service_call_input.as_mut().unwrap().input_key = "other".into(),
+            "digest" => bad.service_call_input.as_mut().unwrap().request_digest = "invalid".into(),
             _ => bad.spent_units = bad.allocation_units,
         }
         let (decision, _) =
-            allowit_sdk::evaluate_with_trace_private_provider_localnet(&policy, &bad);
+            allowit_sdk::evaluate_with_trace_private_service_localnet(&policy, &bad);
         assert_eq!(decision.outcome, "fail", "{mismatch}");
         assert!(decision.system_operations.is_empty(), "{mismatch}");
     }
     let mut forged = policy.clone();
     forged.source.push(' ');
     assert_eq!(
-        allowit_sdk::evaluate_with_trace_private_provider_localnet(&forged, &ctx)
+        allowit_sdk::evaluate_with_trace_private_service_localnet(&forged, &ctx)
             .0
             .code,
         "INVALID_ARTIFACT"
@@ -102,7 +102,7 @@ fn private_provider_localnet_preserves_exact_input_domain_artifact_and_caps() {
         compile(&source("Ok(())").replace("HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv", "USDC"))
             .unwrap();
     assert_eq!(
-        allowit_sdk::evaluate_with_trace_private_provider_localnet(&ordinary, &ctx)
+        allowit_sdk::evaluate_with_trace_private_service_localnet(&ordinary, &ctx)
             .0
             .code,
         "INVALID_NETWORK"
@@ -117,8 +117,8 @@ fn context() -> Context {
     let mut ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
     ctx.amount_units = 1000;
     ctx.token = "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv".into();
-    ctx.provider_call_input = Some(ProviderCallInput {
-        payment_asset: ProviderPaymentAsset {
+    ctx.service_call_input = Some(ServiceCallInput {
+        payment_asset: ServicePaymentAsset {
             network: ctx.network.clone(),
             asset: "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv".into(),
             decimals: 6,
@@ -135,9 +135,14 @@ fn qualified_operation_retains_typed_args_requirements_and_executed_effect() {
         "let admitted = {CALL}; if !admitted {{ return fail(\"Unavailable\"); }} Ok(())"
     )))
     .unwrap();
-    assert!(policy.calls.iter().any(|call| call.name == "paysh::call"));
+    assert!(
+        policy
+            .calls
+            .iter()
+            .any(|call| call.name == "allowit::service_call")
+    );
     for feature in [
-        ExecutionFeature::ProviderCall,
+        ExecutionFeature::ServiceCall,
         ExecutionFeature::PaidHttpCall,
         ExecutionFeature::NativeSettlement,
     ] {
@@ -146,13 +151,13 @@ fn qualified_operation_retains_typed_args_requirements_and_executed_effect() {
     let decision = evaluate(&policy, Profile::Oracle, &context());
     assert_eq!(decision.outcome, "pass");
     let effect = &decision.system_operations[0];
-    assert_eq!(effect.operation, "paysh::call");
+    assert_eq!(effect.operation, "allowit::service_call");
     assert_eq!(effect.request_digest, "a".repeat(64));
     assert_eq!(
         (
             effect.max_payment_units,
-            effect.max_swap_lamports,
-            effect.max_service_fee_lamports_per_execution
+            effect.max_rail_debit_units,
+            effect.max_service_fee_units
         ),
         (1000, 5000000, 100000)
     );
@@ -164,7 +169,7 @@ fn unregistered_aliases_wrong_types_and_multiple_calls_fail_compilation() {
         "allowit::call(\"air-quality\", \"request\", 1000, 5000000, 100000)",
         "paysh::pay(\"air-quality\", \"request\", 1000, 5000000, 100000)",
         "paysh::swap(\"air-quality\", \"request\", 1000, 5000000, 100000)",
-        "paysh::call(\"air-quality\", \"request\", \"1000\", 5000000, 100000)",
+        "allowit::service_call(\"air-quality\", \"request\", \"1000\", 5000000, 100000)",
     ] {
         assert!(
             compile(&source(&format!("{call}; Ok(())"))).is_err(),
@@ -184,10 +189,10 @@ fn missing_forged_or_mismatched_host_binding_never_exposes_effects() {
     for field in ["missing", "service", "input", "digest"] {
         let mut ctx = context();
         match field {
-            "missing" => ctx.provider_call_input = None,
-            "service" => ctx.provider_call_input.as_mut().unwrap().service_id = "other".into(),
-            "input" => ctx.provider_call_input.as_mut().unwrap().input_key = "other".into(),
-            _ => ctx.provider_call_input.as_mut().unwrap().request_digest = "invalid".into(),
+            "missing" => ctx.service_call_input = None,
+            "service" => ctx.service_call_input.as_mut().unwrap().service_id = "other".into(),
+            "input" => ctx.service_call_input.as_mut().unwrap().input_key = "other".into(),
+            _ => ctx.service_call_input.as_mut().unwrap().request_digest = "invalid".into(),
         }
         let result = evaluate(&policy, Profile::Oracle, &ctx);
         assert_eq!(result.outcome, "fail");
@@ -253,10 +258,10 @@ fn every_contract_profile_rejects_provider_effects_including_untaken_branches() 
 
 #[test]
 fn private_source_owner_continuation_and_trace_release_only_the_approved_effect() {
-    let policy = compile(include_str!("fixtures/provider-call-policy.rs")).unwrap();
+    let policy = compile(include_str!("fixtures/service-call-policy.rs")).unwrap();
     let mut ctx = context();
     ctx.amount_units = 1000;
-    ctx.provider_call_input.as_mut().unwrap().input_key = "canonical-service-input".into();
+    ctx.service_call_input.as_mut().unwrap().input_key = "canonical-service-input".into();
     let (paused, trace) = allowit_sdk::evaluate_with_trace(&policy, &ctx);
     assert_eq!(paused.outcome, "awaiting_input");
     assert!(paused.system_operations.is_empty());
@@ -281,13 +286,13 @@ fn private_source_owner_continuation_and_trace_release_only_the_approved_effect(
 
 mod source_facade {
     extern crate allowit_sdk as allowit;
-    include!("fixtures/provider-call-policy.rs");
+    include!("fixtures/service-call-policy.rs");
     #[test]
     fn provider_source_typechecks_and_direct_facade_cannot_admit_effects() {
         let ctx = Context::default();
         let params = new();
         let _future = _execute(&ctx, &params);
-        assert!(!paysh::call(
+        assert!(!allowit::service_call(
             "air-quality",
             "canonical-service-input",
             1000,
@@ -309,8 +314,8 @@ fn new_operations_cannot_claim_legacy_registry_metadata() {
 #[test]
 fn guarded_exact_payment_is_within_static_ceiling_and_metadata_cannot_be_forged() {
     let mut policy = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
-    assert_eq!(policy.provider_call_requirements.len(), 1);
-    assert_eq!(policy.provider_call_requirements[0].max_payment_units, 1000);
+    assert_eq!(policy.service_call_requirements.len(), 1);
+    assert_eq!(policy.service_call_requirements[0].max_payment_units, 1000);
     for amount in [1, 499, 1000] {
         let mut ctx = context();
         ctx.amount_units = amount;
@@ -326,7 +331,7 @@ fn guarded_exact_payment_is_within_static_ceiling_and_metadata_cannot_be_forged(
         assert_eq!(result.outcome, "fail");
         assert!(result.system_operations.is_empty());
     }
-    policy.provider_call_requirements[0].max_payment_units = 2000;
+    policy.service_call_requirements[0].max_payment_units = 2000;
     assert_eq!(
         evaluate(&policy, Profile::Oracle, &context()).code,
         "INVALID_ARTIFACT"
@@ -337,15 +342,15 @@ fn dynamic_source_caps_reject_and_constructor_constants_are_projected() {
     for value in ["ctx.amount_units", "context_u64(ctx, \"fee\")?"] {
         assert!(
             compile(&source(&format!(
-                "let admitted=paysh::call(\"air-quality\",\"request\",1000,5000000,{value}); Ok(())"
+                "let admitted=allowit::service_call(\"air-quality\",\"request\",1000,5000000,{value}); Ok(())"
             )))
             .is_err()
         );
     }
-    let src = "use allowit::v1::prelude::*; struct PolicyParams {max_units:u64} fn new()->PolicyParams{PolicyParams{max_units:1000}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { allowit::set_cap_per_day(ctx.daily_spent_units,ctx.spent_day,ctx.now,ctx.amount_units,&ctx.token,100000000,\"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\",6)?; if !paysh::call(\"air-quality\",\"request\",params.max_units,5000000,100000){return allowit::fail(\"Unavailable\");} Ok(()) }";
+    let src = "use allowit::v1::prelude::*; struct PolicyParams {max_units:u64} fn new()->PolicyParams{PolicyParams{max_units:1000}} async fn _execute(ctx:&Context,params:&PolicyParams)->PolicyResult { allowit::set_cap_per_day(ctx.daily_spent_units,ctx.spent_day,ctx.now,ctx.amount_units,&ctx.token,100000000,\"HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv\",6)?; if !allowit::service_call(\"air-quality\",\"request\",params.max_units,5000000,100000){return allowit::fail(\"Unavailable\");} Ok(()) }";
     let compiled = compile(src).unwrap();
     assert_eq!(
-        compiled.provider_call_requirements[0].max_payment_units,
+        compiled.service_call_requirements[0].max_payment_units,
         1000
     );
     assert_eq!(
@@ -357,9 +362,9 @@ fn dynamic_source_caps_reject_and_constructor_constants_are_projected() {
 fn deserializers_cannot_set_trusted_provider_binding() {
     let mut wire = serde_json::to_value(context()).unwrap();
     assert!(serde_json::from_value::<Context>(wire.clone()).is_err());
-    wire.as_object_mut().unwrap().remove("provider_call_input");
+    wire.as_object_mut().unwrap().remove("service_call_input");
     let decoded: Context = serde_json::from_value(wire).unwrap();
-    assert!(decoded.provider_call_input.is_none());
+    assert!(decoded.service_call_input.is_none());
     let policy = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
     assert_eq!(
         evaluate(&policy, Profile::Oracle, &decoded).code,
@@ -408,7 +413,7 @@ fn authenticated_testnet_asset_is_exact_and_legacy_usdc_semantics_are_unchanged(
     let mint = "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv";
     let policy = compile(&source(&format!("let admitted = {CALL}; Ok(())"))).unwrap();
     assert_eq!(policy.token, mint);
-    assert_eq!(policy.provider_call_requirements[0].payment_asset_id, mint);
+    assert_eq!(policy.service_call_requirements[0].payment_asset_id, mint);
     let passed = evaluate(&policy, Profile::Oracle, &context());
     assert_eq!(passed.outcome, "pass");
     assert_eq!(passed.system_operations[0].payment_asset.asset, mint);
@@ -419,21 +424,17 @@ fn authenticated_testnet_asset_is_exact_and_legacy_usdc_semantics_are_unchanged(
             "USDC" => ctx.token = "USDC".into(),
             "mint" => {
                 ctx.token = "wrong-mint".into();
-                ctx.provider_call_input
-                    .as_mut()
-                    .unwrap()
-                    .payment_asset
-                    .asset = "wrong-mint".into();
+                ctx.service_call_input.as_mut().unwrap().payment_asset.asset = "wrong-mint".into();
             }
             "decimals" => {
-                ctx.provider_call_input
+                ctx.service_call_input
                     .as_mut()
                     .unwrap()
                     .payment_asset
                     .decimals = 9
             }
             _ => {
-                ctx.provider_call_input
+                ctx.service_call_input
                     .as_mut()
                     .unwrap()
                     .payment_asset
@@ -461,7 +462,7 @@ fn authenticated_testnet_asset_is_exact_and_legacy_usdc_semantics_are_unchanged(
     assert_eq!(evaluate(&legacy, Profile::Oracle, &ctx).outcome, "pass");
     assert!(compile(&format!("use allowit::prelude::*; pub async fn execute(ctx:&Context)->PolicyResult {{ {CALL}; Ok(()) }}")).is_err());
     let mut forged = policy;
-    forged.provider_call_requirements[0].payment_asset_id = "USDC".into();
+    forged.service_call_requirements[0].payment_asset_id = "USDC".into();
     assert_eq!(
         evaluate(&forged, Profile::Oracle, &context()).code,
         "INVALID_ARTIFACT"
@@ -493,13 +494,13 @@ fn provider_symbol_assets_and_forged_decision_authority_are_rejected() {
 
 #[test]
 fn service_allowlist_branches_compile_but_only_one_exact_effect_can_execute() {
-    let body = "if ctx.merchant == \"air-quality\" { if !paysh::call(\"air-quality\",\"request\",1000,5000000,100000) { return fail(\"Unavailable\"); } } else if ctx.merchant == \"weather\" { if !paysh::call(\"weather\",\"weather\",1000,5000000,100000) { return fail(\"Unavailable\"); } } else { return fail(\"Service not allowed\"); } Ok(())";
+    let body = "if ctx.merchant == \"air-quality\" { if !allowit::service_call(\"air-quality\",\"request\",1000,5000000,100000) { return fail(\"Unavailable\"); } } else if ctx.merchant == \"weather\" { if !allowit::service_call(\"weather\",\"weather\",1000,5000000,100000) { return fail(\"Unavailable\"); } } else { return fail(\"Service not allowed\"); } Ok(())";
     let policy = compile(&source(body)).unwrap();
-    assert_eq!(policy.provider_call_requirements.len(), 2);
+    assert_eq!(policy.service_call_requirements.len(), 2);
     for (service, input) in [("air-quality", "request"), ("weather", "weather")] {
         let mut ctx = context();
         ctx.merchant = service.into();
-        let binding = ctx.provider_call_input.as_mut().unwrap();
+        let binding = ctx.service_call_input.as_mut().unwrap();
         binding.service_id = service.into();
         binding.input_key = input.into();
         let decision = evaluate(&policy, Profile::Oracle, &ctx);
@@ -510,14 +511,16 @@ fn service_allowlist_branches_compile_but_only_one_exact_effect_can_execute() {
     let mut ctx = context();
     ctx.merchant = "unknown".into();
     assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, "fail");
-    let two=compile(&source("let a=paysh::call(\"air-quality\",\"request\",1000,5000000,100000); let b=paysh::call(\"weather\",\"weather\",1000,5000000,100000); Ok(())")).unwrap();
+    let two=compile(&source("let a=allowit::service_call(\"air-quality\",\"request\",1000,5000000,100000); let b=allowit::service_call(\"weather\",\"weather\",1000,5000000,100000); Ok(())")).unwrap();
     assert_eq!(
         evaluate(&two, Profile::Oracle, &context()).code,
         "PROVIDER_CALL_LIMIT"
     );
     let nine = (0..9)
         .map(|i| {
-            format!("let a{i}=paysh::call(\"service-{i}\",\"input-{i}\",1000,5000000,100000);")
+            format!(
+                "let a{i}=allowit::service_call(\"service-{i}\",\"input-{i}\",1000,5000000,100000);"
+            )
         })
         .collect::<String>();
     assert!(compile(&source(&(nine + "Ok(())"))).is_err());
@@ -526,7 +529,7 @@ fn service_allowlist_branches_compile_but_only_one_exact_effect_can_execute() {
 #[cfg(all(feature = "compiler", feature = "std"))]
 mod native_payment {
     use allowit_sdk::{
-        Context, NativePolicyStorage, Profile, ProviderPaymentAsset, compile, evaluate,
+        Context, NativePolicyStorage, Profile, ServicePaymentAsset, compile, evaluate,
         evaluate_with_trace_native_payment,
     };
 
@@ -557,8 +560,8 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
         });
         ctx
     }
-    fn asset() -> ProviderPaymentAsset {
-        ProviderPaymentAsset {
+    fn asset() -> ServicePaymentAsset {
+        ServicePaymentAsset {
             network: "tempo:localnet".into(),
             asset: "pathUSD".into(),
             decimals: 6,
@@ -682,7 +685,7 @@ fn provider_asset_binding_does_not_require_a_daily_or_total_policy_cap() {
     let policy = compile(&src).unwrap();
     assert!(policy.limit.is_empty() && policy.daily_limit.is_empty());
     assert_eq!(
-        policy.provider_call_requirements[0].payment_asset_id,
+        policy.service_call_requirements[0].payment_asset_id,
         context().token
     );
     let mut ctx = context();
@@ -705,7 +708,7 @@ fn asset_only_primitive_rejects_substitutes_and_hoists_past_early_return() {
     assert!(compile(src).is_ok());
     assert!(compile(&src.replace("&ctx.token", "\"USDC\"")).is_err());
     let mut ctx = context();
-    ctx.provider_call_input = None;
+    ctx.service_call_input = None;
     ctx.token = "USDC".into();
     assert_eq!(
         evaluate(&compile(src).unwrap(), Profile::Oracle, &ctx).outcome,
@@ -725,28 +728,28 @@ fn native_provider_entry_preserves_rules_and_generic_token_funding_checks() {
         "INVALID_AMOUNT"
     );
     assert_eq!(
-        allowit_sdk::evaluate_with_trace_native_provider_policy(&policy, &ctx, false)
+        allowit_sdk::evaluate_with_trace_native_service_policy(&policy, &ctx, false)
             .0
             .outcome,
         "pass"
     );
     ctx.token = "wrong-asset".into();
     assert_eq!(
-        allowit_sdk::evaluate_with_trace_native_provider_policy(&policy, &ctx, false)
+        allowit_sdk::evaluate_with_trace_native_service_policy(&policy, &ctx, false)
             .0
             .code,
         "PROVIDER_ASSET_MISMATCH"
     );
-    ctx.provider_call_input = None;
+    ctx.service_call_input = None;
     assert_eq!(
-        allowit_sdk::evaluate_with_trace_native_provider_policy(&policy, &ctx, false)
+        allowit_sdk::evaluate_with_trace_native_service_policy(&policy, &ctx, false)
             .0
             .code,
         "PROVIDER_INPUT_REQUIRED"
     );
     let ordinary = compile("pub async fn execute(ctx:&Context)->PolicyResult{Ok(())}").unwrap();
     assert_eq!(
-        allowit_sdk::evaluate_with_trace_native_provider_policy(&ordinary, &context(), false)
+        allowit_sdk::evaluate_with_trace_native_service_policy(&ordinary, &context(), false)
             .0
             .code,
         "PROVIDER_INPUT_REQUIRED"
@@ -756,7 +759,7 @@ fn native_provider_entry_preserves_rules_and_generic_token_funding_checks() {
     capped_ctx.allocation_units = 0;
     capped_ctx.daily_spent_units = Some(100_000_000);
     assert_eq!(
-        allowit_sdk::evaluate_with_trace_native_provider_policy(&capped, &capped_ctx, false)
+        allowit_sdk::evaluate_with_trace_native_service_policy(&capped, &capped_ctx, false)
             .0
             .code,
         "DAILY_CAP_EXCEEDED"

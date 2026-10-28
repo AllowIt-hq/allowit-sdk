@@ -76,7 +76,7 @@ name = "private_execute"
 required-features = ["compiler"]
 
 [[test]]
-name = "provider_operations"
+name = "service_operations"
 required-features = ["compiler"]
 
 [[test]]

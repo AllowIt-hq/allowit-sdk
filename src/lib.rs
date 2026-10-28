@@ -16,28 +16,26 @@ mod editing;
 #[cfg(feature = "compiler")]
 pub mod lsp;
 pub mod prelude;
-/// Source type-checking facade. Authoritative provider admission uses evaluated IR.
-pub mod paysh {
-    /// Direct facade evaluation has no authenticated preflight host and fails closed.
-    pub fn payment_request_from_curl(
-        _outcome: &crate::typed_workflow::CurlOutcome,
-        _request: &crate::typed_workflow::CurlRequest,
-    ) -> Result<Option<crate::typed_workflow::PaymentRequest>, crate::prelude::PolicyError> {
-        Err(crate::prelude::PolicyError {
-            code: "WORKFLOW_INPUT_REQUIRED".into(),
-            reason: "Use the authenticated host evaluator.".into(),
-        })
-    }
-    /// Direct Rust execution has no authenticated host adapter and fails closed.
-    pub fn call(
-        _service_id: &str,
-        _input_key: &str,
-        _max_payment_units: u64,
-        _max_swap_lamports: u64,
-        _max_service_fee_lamports_per_execution: u64,
-    ) -> bool {
-        false
-    }
+/// Source type-checking facade. Authoritative service admission uses evaluated IR.
+/// Direct facade evaluation has no authenticated preflight host and fails closed.
+pub fn payment_request_from_curl(
+    _outcome: &crate::typed_workflow::CurlOutcome,
+    _request: &crate::typed_workflow::CurlRequest,
+) -> Result<Option<crate::typed_workflow::PaymentRequest>, crate::prelude::PolicyError> {
+    Err(crate::prelude::PolicyError {
+        code: "WORKFLOW_INPUT_REQUIRED".into(),
+        reason: "Use the authenticated host evaluator.".into(),
+    })
+}
+/// Direct Rust execution has no authenticated host adapter and fails closed.
+pub fn service_call(
+    _service_id: &str,
+    _input_key: &str,
+    _max_payment_units: u64,
+    _max_rail_debit_units: u64,
+    _max_service_fee_units: u64,
+) -> bool {
+    false
 }
 mod protocol;
 mod readability;
@@ -89,7 +87,7 @@ pub use runtime::evaluate_with_trace;
 pub use runtime::evaluate_with_trace_native_payment;
 #[cfg(all(feature = "compiler", feature = "typed-workflow", feature = "std"))]
 pub use runtime::{
-    evaluate_with_trace_native_provider_policy, evaluate_with_trace_private_provider_localnet,
+    evaluate_with_trace_native_service_policy, evaluate_with_trace_private_service_localnet,
 };
 pub use types::*;
 pub use validation::validate_program;

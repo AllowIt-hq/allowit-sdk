@@ -12,8 +12,8 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
     allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, 100_000_000, "USDC", 6)?;
     allowit::cap_per_transaction(ctx.amount_units, &ctx.token, 10_000_000, "USDC", 6)?;
     allowit::require_merchant(&ctx.merchant, "research.example")?;
-    jev::check_preference(
-        jev::preference_evidence(ctx, "Does this purchase support the requested research?"),
+    allowit::check_preference(
+        allowit::preference_evidence(ctx, "Does this purchase support the requested research?"),
         "Does this purchase support the requested research?",
         auto("deny"), auto("approve"),
     ).await?;
@@ -104,9 +104,9 @@ Compilation returns `policy`, hashes, workflow and IR. Evaluation accepts source
 
 Hosts authenticate edits. Stale IDs fail. Workflow spans use UTF-16 offsets. Diagnostic byte spans use UTF-8. Oracle `trace: true` records execution, not settlement. Bind traces to requests/revisions.
 
-Enable `typed-workflow` for host workflows/providers. Typed APIs install authenticated records. Contracts authenticate IR without recompiling source. Use compatible registry 1.3 readers.
+Enable `typed-workflow` for host workflows/services. Typed APIs install authenticated records. Contracts authenticate IR without recompiling source. Use registry 1.6 readers for current policy artifacts.
 
-Provider policies bind an exact asset with `require_asset` or a monetary cap. Each policy supports one `paysh::call`. Typed adapters bind canonical input, settle the exact admitted amount, enforce payment/swap/fee ceilings and native limits, and deduplicate execution. Execute effects only from successful in-process evaluation. Contracts reject provider calls. Native policy-only evaluation requires verified owner/source/executor authority and actual funding.
+Service policies bind an exact asset with `require_asset` or a monetary cap. Each policy supports one `allowit::service_call`. Typed adapters bind canonical input, settle the exact admitted amount, enforce payment/swap/fee ceilings and native limits, and deduplicate execution. Execute effects only from successful in-process evaluation. Contracts reject service calls. Native policy-only evaluation requires verified owner/source/executor authority and actual funding.
 
 ## WebAssembly
 
@@ -146,7 +146,7 @@ Use `set_cap_per_day` and `cap_per_transaction` for limits. Hosts authenticate c
 if !allowit::amount_at_most(ctx.amount_units, "25.50")? {
     allowit::require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
 }
-jev::check_preference(jev::preference_evidence(ctx, "Is there primary evidence supporting this purchase?"), "Is there primary evidence supporting this purchase?", 0.40, 0.85).await?;
+allowit::check_preference(allowit::preference_evidence(ctx, "Is there primary evidence supporting this purchase?"), "Is there primary evidence supporting this purchase?", 0.40, 0.85).await?;
 ```
 
 ### Preference thresholds
@@ -164,3 +164,5 @@ Hosts supply 40 authoritative ledger counters, including pending reservations, a
 ## License
 
 AllowIt-authored source is MIT licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms. Redistributed binaries require the root license and full [licenses/](licenses/) directory.
+
+Registry `1.6.0` uses AllowIt service and preference functions. Retired vendor namespaces are rejected for new compilation and execution. Owners must reauthor and approve affected policies. Unchanged non-vendor source retains its source and IR hashes when its lowering is unchanged. Read historical receipts with the original durable binding, without recompiling or rewriting them.

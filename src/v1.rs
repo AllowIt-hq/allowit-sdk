@@ -58,9 +58,4 @@ pub mod prelude {
         let (approve, above) = threshold(approve.into(), "approve")?;
         crate::prelude::check_preference(ctx, question, approve, &above, deny, &below).await
     }
-    /// Version 1 Jev checks with decimal preference thresholds.
-    pub mod jev {
-        pub use crate::prelude::semantic;
-        pub use crate::primitives::{check_preference, preference_evidence};
-    }
 }

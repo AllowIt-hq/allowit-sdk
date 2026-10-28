@@ -1,5 +1,5 @@
 use allowit_sdk::{
-    Context, NativePolicyStorage, Profile, ProviderPaymentAsset, compile, evaluate,
+    Context, NativePolicyStorage, Profile, ServicePaymentAsset, compile, evaluate,
     evaluate_with_trace_native_payment,
 };
 
@@ -35,7 +35,7 @@ fn tempo_context(recipient: &str) -> Context {
 }
 fn tempo_decision(literal: &str, recipient: &str) -> allowit_sdk::Decision {
     let policy = compile(&tempo_source(literal)).unwrap();
-    let asset = ProviderPaymentAsset {
+    let asset = ServicePaymentAsset {
         network: "tempo:testnet".into(),
         asset: "AlphaUSD".into(),
         decimals: 6,

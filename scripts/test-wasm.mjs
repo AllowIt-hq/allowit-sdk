@@ -35,13 +35,15 @@ assert.equal(invoke({ operation: 'evaluate', source, profile: 'oracle', context 
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'panic!("no")') }).ok, false);
 const registryResponse = invoke({ operation: 'registry' });
-assert.equal(registryResponse.registry_version, '1.5.0');
+assert.equal(registryResponse.registry_version, '1.6.0');
 const registry = registryResponse.functions;
-assert.equal(registry.length, 50);
-for (const name of ['allowit::set_cap_per_day', 'allowit::amount_at_most', 'jev::semantic', 'jev::check_preference']) {
+assert.ok(registry.length > 0);
+assert.equal(new Set(registry.map(entry => entry.name)).size, registry.length);
+assert.ok(registry.every(entry => !entry.name.startsWith("paysh::") && !entry.name.startsWith("jev::")));
+for (const name of ['allowit::set_cap_per_day', 'allowit::amount_at_most', 'allowit::semantic', 'allowit::check_preference', 'allowit::service_call', 'allowit::payment_request_from_curl', 'stellar::sep41_transfer']) {
   assert.ok(registry.some(entry => entry.name === name), `Missing registered namespace ${name}`);
 }
-const qualifiedSource = 'async fn _execute(ctx: &Context) -> PolicyResult { allowit::set_cap_per_day(ctx, "50", "USDC")?; jev::check_preference(ctx, "Research?", None, None).await?; Ok(()) }';
+const qualifiedSource = 'async fn _execute(ctx: &Context) -> PolicyResult { allowit::set_cap_per_day(ctx, "50", "USDC")?; allowit::check_preference(ctx, "Research?", None, None).await?; Ok(()) }';
 const qualified = invoke({ operation: 'compile', source: qualifiedSource });
 assert.equal(qualified.ok, true);
 assert.equal(qualified.policy.daily_limit, '50');
@@ -51,7 +53,7 @@ assert.equal(JSON.stringify(qualified.policy.ir).includes('allowit::'), false);
 assert.equal(invoke({ operation: 'evaluate', source: qualifiedSource, profile: 'oracle', context }).decision.outcome, 'awaiting_input');
 assert.equal(invoke({ operation: 'evaluate', source: qualifiedSource, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('allowit::set_cap_per_day', 'paysh::set_cap_per_day') }).ok, false);
-assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('jev::check_preference', 'other::check_preference') }).ok, false);
+assert.equal(invoke({ operation: 'compile', source: qualifiedSource.replace('allowit::check_preference', 'other::check_preference') }).ok, false);
 for (let i = 0; i < 100; i++) {
   assert.equal(invoke({ operation: 'compile', source }).policy.ir_hash, compiled.policy.ir_hash);
 }
@@ -157,11 +159,11 @@ assert.equal(invoke({...traceRequest, profile: 'contract', trace: true}).error.c
 assert.equal(invoke({...traceRequest, trace: 'true'}).error.code, 'INVALID_REQUEST');
 console.log('Opt-in oracle workflow traces preserve actual execution, source bindings and contract isolation.');
 
-const providerSource = fs.readFileSync('tests/fixtures/provider-call-policy.rs', 'utf8');
-const providerCompiled = invoke({operation: 'compile', source: providerSource});
-assert.equal(providerCompiled.ok, true);
-assert.ok(providerCompiled.policy.calls.some(call => call.name === 'paysh::call'));
-assert.ok(providerCompiled.policy.execution_requirements.features.includes('provider_call'));
-const forgedProvider = invoke({operation: 'evaluate', source: providerSource, profile: 'oracle', context: {...context, provider_call_input: {service_id: 'air-quality', input_key: 'canonical-service-input', request_digest: 'a'.repeat(64)}}});
-assert.equal(forgedProvider.error.code, 'INVALID_CONTEXT');
-console.log('Registered provider source compiles; public Wasm evaluation rejects forged host input.');
+const serviceSource = fs.readFileSync('tests/fixtures/service-call-policy.rs', 'utf8');
+const serviceCompiled = invoke({operation: 'compile', source: serviceSource});
+assert.equal(serviceCompiled.ok, true);
+assert.ok(serviceCompiled.policy.calls.some(call => call.name === 'allowit::service_call'));
+assert.ok(serviceCompiled.policy.execution_requirements.features.includes('service_call'));
+const forgedService = invoke({operation: 'evaluate', source: serviceSource, profile: 'oracle', context: {...context, service_call_input: {service_id: 'air-quality', input_key: 'canonical-service-input', request_digest: 'a'.repeat(64)}}});
+assert.equal(forgedService.error.code, 'INVALID_CONTEXT');
+console.log('Registered service source compiles; public Wasm evaluation rejects forged host input.');

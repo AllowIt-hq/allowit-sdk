@@ -6,8 +6,8 @@ fn new() -> PolicyParams { PolicyParams { daily_limit: 5_000_000 } }
 async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
     allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, params.daily_limit, "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv", 6)?;
     allowit::cap_per_transaction(ctx.amount_units, &ctx.token, 1000, "HNCXuc5dkQrUimi76UaezxrF3hfEhWDr9BXvWXGyi2qv", 6)?;
-    jev::check_preference(jev::preference_evidence(ctx, "Does this air-quality request fit the owner's intent?"), "Does this air-quality request fit the owner's intent?", None, None).await?;
-    if !paysh::call("air-quality", "canonical-service-input", 1000, 5000000, 100000) {
+    allowit::check_preference(allowit::preference_evidence(ctx, "Does this air-quality request fit the owner's intent?"), "Does this air-quality request fit the owner's intent?", None, None).await?;
+    if !allowit::service_call("air-quality", "canonical-service-input", 1000, 5000000, 100000) {
         return allowit::fail("Provider call is unavailable");
     }
     Ok(())

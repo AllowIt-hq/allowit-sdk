@@ -1,5 +1,5 @@
 {
-  "name": "@ackrate/allowit-native",
+  "name": "@allowit/native",
   "version": "0.1.0",
   "private": true,
   "type": "module",

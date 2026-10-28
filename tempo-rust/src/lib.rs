@@ -8,8 +8,8 @@ pub const PROFILE: &str = "tempo-native-v1";
 pub const TERMS: &str = "(bytes32,bytes32,uint256,uint256,uint256,uint64,address,bool)";
 pub const EXECUTION: &str = "(uint256,address,address,bytes32,bytes32,bytes32,uint64,uint64,address,uint256,uint64,bytes32,bytes32,bytes32)";
 pub const ZERO: &str = "0x0000000000000000000000000000000000000000";
-mod mpp;
-pub use mpp::{mpp_memo, mpp_url, validate_mpp_request, MppPaymentRequest, MppPurchase};
+mod service;
+pub use service::{validate_service_payment_request, ServicePaymentRequest};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -359,12 +359,10 @@ pub fn validate_execution_request(
     )
 }
 
-/// Verify an MPP purchase without weakening the legacy native payment verifier.
-/// The entire original challenge and HTTP request are part of the authority-signed identity.
-/// Use `now = 0` only to verify an already retained historical plan during recovery;
-/// a new authorization or signature must use current time and reject expired challenges.
+/// Verify adapter-normalized service payment terms and the exact signed payment.
+/// Use current time for new authorization. Vendor challenge decoding belongs to the adapter.
 #[allow(clippy::too_many_arguments)]
-pub fn validate_execution_request_mpp(
+pub fn validate_execution_request_service(
     c: &Config,
     p: &Policy,
     tx: &Transaction,
@@ -374,7 +372,7 @@ pub fn validate_execution_request_mpp(
     action: &str,
     merchant: &str,
     context: Option<&str>,
-    mpp: &MppPaymentRequest,
+    service: &ServicePaymentRequest,
     now: u64,
 ) -> Result<()> {
     validate_execution_request_inner(
@@ -387,12 +385,12 @@ pub fn validate_execution_request_mpp(
         action,
         merchant,
         context,
-        Some(mpp),
+        Some(service),
         now,
     )
 }
 
-/// Preserve the existing native identity byte-for-byte when no MPP request is supplied.
+/// Preserve the native identity byte-for-byte when no service request is supplied.
 #[allow(clippy::too_many_arguments)]
 pub fn execution_request_identity(
     policy_id: &str,
@@ -401,7 +399,7 @@ pub fn execution_request_identity(
     action: &str,
     merchant: &str,
     context: Option<&str>,
-    mpp: Option<&MppPaymentRequest>,
+    service: Option<&ServicePaymentRequest>,
 ) -> Result<serde_json::Value> {
     let raw = context.unwrap_or("null");
     let _: serde_json::Value = serde_json::from_str(raw).map_err(|_| "Invalid request context")?;
@@ -415,8 +413,8 @@ pub fn execution_request_identity(
         format!("{}.{fraction}", amount_units / 1_000_000)
     };
     let mut identity = serde_json::json!({"policyId":policy_id,"amount":normalized,"recipient":address(recipient)?,"action":action,"merchant":merchant,"context":raw});
-    if let Some(mpp) = mpp {
-        identity["mppRequest"] = serde_json::json!(mpp);
+    if let Some(service) = service {
+        identity["servicePaymentRequest"] = serde_json::json!(service);
     }
     identity.sort_all_objects();
     Ok(identity)
@@ -433,7 +431,7 @@ fn validate_execution_request_inner(
     action: &str,
     merchant: &str,
     context: Option<&str>,
-    mpp: Option<&MppPaymentRequest>,
+    service: Option<&ServicePaymentRequest>,
     now: u64,
 ) -> Result<()> {
     validate_prepared(c, p, tx)?;
@@ -443,26 +441,24 @@ fn validate_execution_request_inner(
     }
     let amount_units = units(amount)?;
     let identity =
-        execution_request_identity(&p.id, recipient, amount, action, merchant, context, mpp)?;
+        execution_request_identity(&p.id, recipient, amount, action, merchant, context, service)?;
     let intent = format!("{:x}", sha2::Sha256::digest(canonical_json(&identity)?));
     let request_hash: [u8; 32] =
         sha2::Sha256::digest(format!("{request_id}:{intent}").as_bytes()).into();
-    let memo: [u8; 32] = if let Some(mpp) = mpp {
-        let purchase = validate_mpp_request(mpp, p.chain_id, &p.token, recipient, amount, now)?;
-        if action != format!("GET {}", purchase.url) || merchant != purchase.origin {
-            return Err("MPP action must name the exact HTTP request and merchant origin".into());
+    let memo: [u8; 32] = if let Some(service) = service {
+        validate_service_payment_request(service, p.chain_id, &p.token, recipient, amount, now)?;
+        if action != format!("{} {}", service.method, service.url) || merchant != service.origin {
+            return Err(
+                "Service action must name the exact HTTP request and merchant origin".into(),
+            );
         }
         let expiry = number(&data[4 + 10 * 32..4 + 11 * 32])?;
-        if expiry <= now
-            || purchase
-                .challenge_expires_at
-                .is_some_and(|end| expiry > end)
-        {
-            return Err("MPP approval exceeds the original challenge expiry".into());
+        if expiry <= now || service.expires_at.is_some_and(|end| expiry > end) {
+            return Err("Service approval exceeds the original payment expiry".into());
         }
-        unhex(&purchase.memo)?
+        unhex(&service.memo)?
             .try_into()
-            .map_err(|_| "Invalid MPP memo")?
+            .map_err(|_| "Invalid service memo")?
     } else {
         sha2::Sha256::digest(request_id.as_bytes()).into()
     };
@@ -472,6 +468,36 @@ fn validate_execution_request_inner(
         || data[4 + 13 * 32..4 + 14 * 32] != memo
     {
         return Err("Executor plan changed the exact requested action".into());
+    }
+    Ok(())
+}
+
+/// Validate an original retained payment against its durable approved hash and memo.
+/// This is read-only proof validation, not fresh policy or service authorization.
+/// Callers must supply the original trusted binding, never unchecked fields from this packet.
+#[allow(clippy::too_many_arguments)]
+pub fn validate_retained_execution_plan(
+    c: &Config,
+    p: &Policy,
+    tx: &Transaction,
+    recipient: &str,
+    amount: &str,
+    request_hash: &str,
+    memo: &str,
+) -> Result<()> {
+    validate_prepared(c, p, tx)?;
+    let data = unhex(&tx.data)?;
+    let request_hash = unhex(request_hash)?;
+    let memo = unhex(memo)?;
+    if data[..4] != keccak(format!("execute({EXECUTION},bytes)"))[..4]
+        || request_hash.len() != 32
+        || memo.len() != 32
+        || data[4 + 8 * 32..4 + 9 * 32] != account(recipient)?
+        || data[4 + 9 * 32..4 + 10 * 32] != word(units(amount)?)
+        || data[4 + 11 * 32..4 + 12 * 32] != request_hash
+        || data[4 + 13 * 32..4 + 14 * 32] != memo
+    {
+        return Err("Retained plan differs from its original approved payment".into());
     }
     Ok(())
 }
@@ -653,26 +679,31 @@ mod tests {
             assert!(verify(id, &r, a, act, m, ctx).is_err());
         }
     }
-    fn mpp_fixture() -> (Config, Policy, Transaction, MppPaymentRequest) {
-        use base64::Engine;
+    fn service_fixture() -> (Config, Policy, Transaction, ServicePaymentRequest) {
         let (mut c, mut p, tx) = fixture();
         c.chain_id = 42431;
         c.network = "tempo:testnet".into();
         p.chain_id = c.chain_id;
         p.network = c.network.clone();
-        let charge = serde_json::json!({"amount":"250000","currency":p.token,"recipient":hex(&[19;20]),"methodDetails":{"chainId":42431,"feePayer":false,"supportedModes":["push"]}});
-        let mpp = MppPaymentRequest {
+        let service = ServicePaymentRequest {
             version: 1,
             method: "GET".into(),
             url: "https://merchant.example/paid".into(),
-            challenge: serde_json::json!({"id":"charge-1","realm":"merchant.example","method":"tempo","intent":"charge","request":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(canonical_json(&charge).unwrap()),"expires":"1970-01-01T00:04:10Z","opaque":"original"}),
+            origin: "https://merchant.example".into(),
+            request_digest: hex(&[25; 32]),
+            chain_id: p.chain_id,
+            asset: p.token.clone(),
+            recipient: hex(&[19; 20]),
+            amount_units: "250000".into(),
+            memo: hex(&[26; 32]),
+            expires_at: Some(250),
         };
-        (c, p, tx, mpp)
+        (c, p, tx, service)
     }
-    fn sign_mpp(
+    fn sign_service(
         p: &Policy,
         old: &Transaction,
-        mpp: &MppPaymentRequest,
+        service: &ServicePaymentRequest,
         expiry: u64,
     ) -> Transaction {
         let recipient = hex(&[19; 20]);
@@ -680,10 +711,10 @@ mod tests {
             &p.id,
             &recipient,
             "0.25",
-            &format!("GET {}", mpp.url),
+            &format!("GET {}", service.url),
             "https://merchant.example",
             Some(r#"{"purpose":"research"}"#),
-            Some(mpp),
+            Some(service),
         )
         .unwrap();
         let intent = format!(
@@ -695,10 +726,7 @@ mod tests {
         words[0] = word(p.chain_id);
         words[10] = word(expiry);
         words[11] = sha2::Sha256::digest(format!("request-1:{intent}")).into();
-        words[13] = unhex(&mpp_memo(&mpp.challenge).unwrap())
-            .unwrap()
-            .try_into()
-            .unwrap();
+        words[13] = unhex(&service.memo).unwrap().try_into().unwrap();
         let signer = SigningKey::from_bytes((&[7; 32]).into()).unwrap();
         let (sig, id) = signer
             .sign_prehash_recoverable(&execution_digest(p.chain_id, &p.vault, &words).unwrap())
@@ -716,33 +744,33 @@ mod tests {
         }
     }
     #[test]
-    fn mpp_signed_plan_binds_http_challenge_context_and_expiry_without_native_fallback() {
-        let (c, p, old, mpp) = mpp_fixture();
-        let tx = sign_mpp(&p, &old, &mpp, 250);
-        let check = |mpp: &MppPaymentRequest, now: u64, context: &str| {
-            validate_execution_request_mpp(
+    fn service_signed_plan_binds_normalized_terms_context_and_expiry_without_native_fallback() {
+        let (c, p, old, service) = service_fixture();
+        let tx = sign_service(&p, &old, &service, 250);
+        let check = |service: &ServicePaymentRequest, now: u64, context: &str| {
+            validate_execution_request_service(
                 &c,
                 &p,
                 &tx,
                 "request-1",
                 &hex(&[19; 20]),
                 "0.25",
-                &format!("GET {}", mpp.url),
+                &format!("GET {}", service.url),
                 "https://merchant.example",
                 Some(context),
-                mpp,
+                service,
                 now,
             )
         };
-        assert!(check(&mpp, 100, r#"{"purpose":"research"}"#).is_ok());
-        assert!(check(&mpp, 251, r#"{"purpose":"research"}"#).is_err());
-        assert!(check(&mpp, 0, r#"{"purpose":"research"}"#).is_ok());
-        assert!(check(&mpp, 100, r#"{ "purpose":"research" }"#).is_err());
-        let mut changed = mpp.clone();
+        assert!(check(&service, 100, r#"{"purpose":"research"}"#).is_ok());
+        assert!(check(&service, 251, r#"{"purpose":"research"}"#).is_err());
+        assert!(check(&service, 0, r#"{"purpose":"research"}"#).is_ok());
+        assert!(check(&service, 100, r#"{ "purpose":"research" }"#).is_err());
+        let mut changed = service.clone();
         changed.url = "https://merchant.example/other".into();
         assert!(check(&changed, 100, r#"{"purpose":"research"}"#).is_err());
-        changed = mpp.clone();
-        changed.challenge["opaque"] = serde_json::json!("changed");
+        changed = service.clone();
+        changed.request_digest = hex(&[88; 32]);
         assert!(check(&changed, 100, r#"{"purpose":"research"}"#).is_err());
         assert!(validate_execution_request(
             &c,
@@ -751,26 +779,75 @@ mod tests {
             "request-1",
             &hex(&[19; 20]),
             "0.25",
-            &format!("GET {}", mpp.url),
+            &format!("GET {}", service.url),
             "https://merchant.example",
             Some(r#"{"purpose":"research"}"#)
         )
         .is_err());
-        let too_late = sign_mpp(&p, &old, &mpp, 251);
-        assert!(validate_execution_request_mpp(
+        let too_late = sign_service(&p, &old, &service, 251);
+        assert!(validate_execution_request_service(
             &c,
             &p,
             &too_late,
             "request-1",
             &hex(&[19; 20]),
             "0.25",
-            &format!("GET {}", mpp.url),
+            &format!("GET {}", service.url),
             "https://merchant.example",
             Some(r#"{"purpose":"research"}"#),
-            &mpp,
+            &service,
             100
         )
         .is_err());
+    }
+    #[test]
+    fn retained_plan_checks_original_durable_effect_and_binding_without_new_identity() {
+        let (c, p, old, service) = service_fixture();
+        let tx = sign_service(&p, &old, &service, 250);
+        let data = unhex(&tx.data).unwrap();
+        // Model the values retained with the original owner-approved request.
+        let request_hash = hex(&data[4 + 11 * 32..4 + 12 * 32]);
+        let memo = hex(&data[4 + 13 * 32..4 + 14 * 32]);
+        let recipient = hex(&[19; 20]);
+        let check = |r: &str, a: &str, h: &str, m: &str| {
+            validate_retained_execution_plan(&c, &p, &tx, r, a, h, m)
+        };
+        assert!(check(&recipient, "0.25", &request_hash, &memo).is_ok());
+        assert!(check(&hex(&[88; 20]), "0.25", &request_hash, &memo).is_err());
+        assert!(check(&recipient, "0.250001", &request_hash, &memo).is_err());
+        assert!(check(&recipient, "0.25", &hex(&[88; 32]), &memo).is_err());
+        assert!(check(&recipient, "0.25", &request_hash, &hex(&[88; 32])).is_err());
+        assert!(validate_execution_request_service(
+            &c,
+            &p,
+            &tx,
+            "request-1",
+            &recipient,
+            "0.25",
+            &format!("GET {}", service.url),
+            &service.origin,
+            Some(r#"{"purpose":"research"}"#),
+            &service,
+            251
+        )
+        .is_err());
+    }
+    #[test]
+    fn ordinary_native_request_identity_is_unchanged() {
+        let (_, p, _) = fixture();
+        assert_eq!(
+            execution_request_identity(
+                &p.id,
+                &hex(&[19; 20]),
+                "0.250000",
+                "buy research",
+                "research",
+                Some(r#"{"purpose":"research"}"#),
+                None
+            )
+            .unwrap(),
+            serde_json::json!({"policyId":p.id,"amount":"0.25","recipient":hex(&[19;20]),"action":"buy research","merchant":"research","context":r#"{"purpose":"research"}"#})
+        );
     }
     #[test]
     fn changed_signatures_envelopes_padding_and_domain_are_rejected() {

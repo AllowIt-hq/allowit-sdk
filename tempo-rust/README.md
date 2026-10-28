@@ -1,33 +1,26 @@
 # Tempo request verification
 
 This crate verifies native vault plans offline. It does not hold keys, call RPC,
-broadcast transactions or prove delivery of an HTTP service.
+broadcast transactions or prove service delivery.
 
 `validate_execution_request` preserves the native payment protocol.
-`validate_execution_request_mpp` additionally binds a `MppPaymentRequest` to the
-same authority-signed execution tuple. Its version 1 envelope contains `method`,
-the exact `url`, and the complete original JSON `challenge`, retaining the
-encoded `request`, expiry and opaque extension strings.
+`validate_execution_request_service` binds a version 1 `ServicePaymentRequest`
+to the authority-signed execution tuple. The normalized terms include the exact
+HTTP method, URL and origin, original request digest, chain, asset, recipient,
+base-unit amount, memo and optional expiry. Vendor adapters decode and validate
+their original challenges before producing these terms.
 
-The initial MPP scope is a public, canonical HTTPS GET URL without a query,
-userinfo or fragment, Tempo testnet chain 42431, and a positive single-recipient
-charge in the configured six-decimal token, with an explicit challenge chain ID.
-Only push settlement with client-paid
-fees is supported. Splits, pull-only requests, session/proof intents and unknown
-charge fields are rejected. The action must be `GET <exact URL>` and the merchant
-must be that URL's origin.
-Credential headers are limited to `Authorization` or `Payment-Authorization`;
-unsupported header instructions fail before authority approval.
+The SDK checks exact payment terms and signatures. The action must name the
+exact method and URL. The merchant must match the URL origin. Payment identity
+includes the normalized terms and raw caller context. Without service terms,
+the native request identity remains unchanged. New service identity uses the
+`servicePaymentRequest` key and does not reinterpret older protocol identities.
 
-The memo follows mppx Attribution v1, with zero client attribution. An explicitly
-supplied memo must match the original realm and challenge ID. Payment identity
-includes the original challenge, HTTP request and raw caller context. Canonical
-identity serialization is independent of serde_json's `preserve_order` feature.
+Use current time before authorizing or signing. The signed approval cannot
+outlive the service terms. Keep delivery results separate from chain receipts.
 
-Pass current time before authorizing or signing. `now = 0` is reserved for
-verification of a saved historical plan during recovery; it does not authorize a
-new payment. The signed approval cannot outlive the original challenge.
-
-`MppPurchase` is a public payment summary, not evidence that a provider returned a
-response. HTTP results and executor reports must be tracked separately from the
-finalized native payment receipt.
+`validate_retained_execution_plan` verifies historical signed effects against
+the original request hash and memo from a durable approved record. It does not
+compute a new service identity or grant new authorization. Vendor adapters retain
+original protocol checks for historical recovery. Never re-sign an old plan under
+a new identity or derive its expected binding from unchecked packet fields.
