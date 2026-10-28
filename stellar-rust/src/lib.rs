@@ -741,6 +741,7 @@ pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
 }
 /// Verify retained transport and effect identity for read-only history or recovery.
 /// This does not compile source, grant authorization, or permit a broadcast.
+/// Native signatures do not prove source metadata. Bind it to the durable owner-approved record first.
 pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
     if p.version != 1 {
         return Err("Unsupported retained operation version".into());
