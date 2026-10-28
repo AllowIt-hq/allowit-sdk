@@ -193,15 +193,19 @@ fn native_classic_payment_has_real_two_party_signatures() {
     }
 }
 #[test]
-fn fourth_signer_and_wrong_thresholds_fail_closed() {
+fn live_signers_and_thresholds_replace_the_fixed_template() {
     let (c, r, mut s) = fixture(WalletRoute::Native, false);
     s.source.signers.push(AccountSigner {
         key: account_for_seed(&[12; 32]),
         weight: 1,
     });
+    assert!(prepare(&c, &r, &s, 86401, 86700).is_ok());
+    s.source.high_threshold = 1;
+    assert!(prepare(&c, &r, &s, 86401, 86700).is_ok());
+    s.source.medium_threshold = 3;
     assert!(prepare(&c, &r, &s, 86401, 86700).is_err());
-    s.source.signers.pop();
-    s.source.high_threshold = 2;
+    s.source.medium_threshold = 2;
+    s.source.low_threshold = 3;
     assert!(prepare(&c, &r, &s, 86401, 86700).is_err());
 }
 #[test]
@@ -510,9 +514,28 @@ impl rpc::Rpc for AccountRpc {
                         .iter()
                         .map(|s| {
                             Ok(stellar_xdr::Signer {
-                                key: stellar_xdr::SignerKey::Ed25519(stellar_xdr::Uint256(
-                                    account_key(&s.key)?,
-                                )),
+                                key: match stellar_strkey::Strkey::from_string(&s.key)
+                                    .map_err(|e| e.to_string())?
+                                {
+                                    stellar_strkey::Strkey::PublicKeyEd25519(k) => {
+                                        stellar_xdr::SignerKey::Ed25519(stellar_xdr::Uint256(k.0))
+                                    }
+                                    stellar_strkey::Strkey::PreAuthTx(k) => {
+                                        stellar_xdr::SignerKey::PreAuthTx(stellar_xdr::Uint256(k.0))
+                                    }
+                                    stellar_strkey::Strkey::HashX(k) => {
+                                        stellar_xdr::SignerKey::HashX(stellar_xdr::Uint256(k.0))
+                                    }
+                                    stellar_strkey::Strkey::SignedPayloadEd25519(k) => {
+                                        stellar_xdr::SignerKey::Ed25519SignedPayload(
+                                            stellar_xdr::SignerKeyEd25519SignedPayload {
+                                                ed25519: stellar_xdr::Uint256(k.ed25519),
+                                                payload: k.payload.try_into().unwrap(),
+                                            },
+                                        )
+                                    }
+                                    _ => return Err("not an account signer".into()),
+                                },
                                 weight: s.weight,
                             })
                         })
@@ -758,4 +781,363 @@ fn retained_native_status_preserves_signed_bytes_without_new_authorization() {
     rewritten.transaction_xdr = envelope_to_xdr(envelope);
     assert!(validate_signed(&rewritten, 86401).is_err());
     assert_eq!(*rpc.calls.lock().unwrap(), vec!["getTransaction"]);
+}
+
+#[test]
+fn changed_customer_signer_is_resolved_from_current_native_account() {
+    let (mut c, r, mut state) = fixture(WalletRoute::Native, false);
+    let old = c.clone();
+    c.agent = account_for_seed(&[4; 32]);
+    state.agent = c.agent.clone();
+    state.source.master_weight = 0;
+    state.source.signers[0] = AccountSigner {
+        key: c.agent.clone(),
+        weight: 3,
+    };
+    state.source.signers[1].weight = 2;
+    state.source.medium_threshold = 5;
+    state.source.low_threshold = 1;
+    state.source.high_threshold = 1;
+    let rpc = AccountRpc {
+        config: c.clone(),
+        account: state.source.clone(),
+        wrong_network: false,
+    };
+    let accounting = rpc::NativeAccounting {
+        nonce: state.nonce,
+        revision: state.revision,
+        spent_daily: state.spent_daily,
+        spent_total: state.spent_total,
+        spent_day: state.spent_day,
+        calls: state.calls,
+    };
+    assert!(rpc::trusted_state_for_discovery(&rpc, &old, Some(accounting.clone())).is_ok());
+    assert!(rpc::trusted_state(&rpc, &old, Some(accounting.clone())).is_err());
+    let live = rpc::trusted_state(&rpc, &c, Some(accounting)).unwrap();
+    let p = prepare(&c, &r, &live, 86401, 86700).unwrap();
+    assert!(sign(&p, &[2; 32], 86401).is_err());
+    let signed = authorize(
+        &p,
+        &[
+            sign(&p, &[4; 32], 86401).unwrap(),
+            sign(&p, &[3; 32], 86401).unwrap(),
+        ],
+        86401,
+    )
+    .unwrap();
+    validate_signed(&signed, 86401).unwrap();
+}
+#[test]
+fn exact_chain_quorum_omits_unused_role_signatures_but_verifies_both_proofs() {
+    for customer_weight in [1, 3] {
+        let (c, r, mut s) = fixture(WalletRoute::Native, false);
+        s.source.signers[0].weight = customer_weight;
+        s.source.signers[1].weight = 3;
+        s.source.medium_threshold = 2;
+        s.source.low_threshold = 1;
+        let p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+        let customer = sign(&p, &[2; 32], 86401).unwrap();
+        let engine = sign(&p, &[3; 32], 86401).unwrap();
+        let out = authorize(&p, &[customer.clone(), engine.clone()], 86401).unwrap();
+        let TransactionEnvelope::Tx(mut env) =
+            TransactionEnvelope::from_xdr_base64(&out.transaction_xdr, Limits::none()).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(env.signatures.len(), 1);
+        validate_signed(&out, 86401).unwrap();
+        let mut invalid = engine;
+        invalid.signature[0] ^= 1;
+        assert!(authorize(&p, &[customer, invalid], 86401).is_err());
+        let mut extra = env.signatures.to_vec();
+        extra.push(extra[0].clone());
+        env.signatures = extra.try_into().unwrap();
+        let mut changed = out;
+        changed.transaction_xdr = env.to_xdr_base64(Limits::none()).unwrap();
+        assert!(validate_signed(&changed, 86401).is_err());
+    }
+}
+#[test]
+fn additional_hash_preauthorized_and_payload_keys_do_not_lock_the_wallet() {
+    let (c, r, mut s) = fixture(WalletRoute::Native, false);
+    for key in [
+        stellar_strkey::HashX([21; 32]).to_string(),
+        stellar_strkey::PreAuthTx([22; 32]).to_string(),
+        stellar_strkey::ed25519::SignedPayload {
+            ed25519: [23; 32],
+            payload: vec![1, 2, 3],
+        }
+        .to_string(),
+    ] {
+        s.source.signers.push(AccountSigner { key, weight: 255 });
+    }
+    let p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let out = authorize(
+        &p,
+        &[
+            sign(&p, &[2; 32], 86401).unwrap(),
+            sign(&p, &[3; 32], 86401).unwrap(),
+        ],
+        86401,
+    )
+    .unwrap();
+    validate_signed(&out, 86401).unwrap();
+    s.source.signers.push(s.source.signers[0].clone());
+    assert!(prepare(&c, &r, &s, 86401, 86700).is_err());
+}
+#[test]
+fn current_exact_preauthorization_does_not_add_unused_ed25519_signatures() {
+    let (c, r, mut s) = fixture(WalletRoute::Native, false);
+    let original = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    s.source.signers.push(AccountSigner {
+        key: stellar_strkey::PreAuthTx(original.transaction_hash).to_string(),
+        weight: 2,
+    });
+    let p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    assert_eq!(p.transaction_hash, original.transaction_hash);
+    let out = authorize(
+        &p,
+        &[
+            sign(&p, &[2; 32], 86401).unwrap(),
+            sign(&p, &[3; 32], 86401).unwrap(),
+        ],
+        86401,
+    )
+    .unwrap();
+    let TransactionEnvelope::Tx(env) =
+        TransactionEnvelope::from_xdr_base64(&out.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    assert!(env.signatures.is_empty());
+    validate_signed(&out, 86401).unwrap();
+}
+#[test]
+fn odc_current_agent_account_may_have_a_different_customer_signer() {
+    let (mut c, r, mut s) = fixture(WalletRoute::Odc, false);
+    let actual_agent = s.agent.clone();
+    c.agent = account_for_seed(&[4; 32]);
+    s.source.master_weight = 0;
+    s.source.low_threshold = 2;
+    s.source.medium_threshold = 3;
+    s.source.high_threshold = 5;
+    s.source.signers = vec![
+        AccountSigner {
+            key: c.agent.clone(),
+            weight: 3,
+        },
+        AccountSigner {
+            key: stellar_strkey::HashX([22; 32]).to_string(),
+            weight: 1,
+        },
+    ];
+    assert_eq!(s.source.address, actual_agent);
+    let mut p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let resource = SorobanTransactionData {
+        ext: stellar_xdr::SorobanTransactionDataExt::V0,
+        resources: stellar_xdr::SorobanResources {
+            footprint: stellar_xdr::LedgerFootprint {
+                read_only: Default::default(),
+                read_write: Default::default(),
+            },
+            instructions: 1,
+            disk_read_bytes: 0,
+            write_bytes: 0,
+        },
+        resource_fee: 1000,
+    };
+    // The fixture's admitted fee bound is high enough for this explicit resource data.
+    p = attach_simulation(&p, &resource.to_xdr_base64(Limits::none()).unwrap()).unwrap();
+    let out = authorize(&p, &[sign(&p, &[4; 32], 86401).unwrap()], 86401).unwrap();
+    validate_signed(&out, 86401).unwrap();
+    let TransactionEnvelope::Tx(env) =
+        TransactionEnvelope::from_xdr_base64(&out.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        env.tx.source_account,
+        stellar_xdr::MuxedAccount::Ed25519(stellar_xdr::Uint256(
+            account_key(&actual_agent).unwrap()
+        ))
+    );
+    s.source.signers[0].weight = 2;
+    assert!(prepare(&c, &r, &s, 86401, 86700).is_err());
+}
+
+#[test]
+fn rpc_decodes_known_additional_signer_types_without_an_offline_allowlist() {
+    let (c, _, mut state) = fixture(WalletRoute::Native, false);
+    for key in [
+        stellar_strkey::HashX([21; 32]).to_string(),
+        stellar_strkey::PreAuthTx([22; 32]).to_string(),
+        stellar_strkey::ed25519::SignedPayload {
+            ed25519: [23; 32],
+            payload: vec![1, 2, 3],
+        }
+        .to_string(),
+    ] {
+        state.source.signers.push(AccountSigner { key, weight: 1 });
+    }
+    let rpc = AccountRpc {
+        config: c.clone(),
+        account: state.source.clone(),
+        wrong_network: false,
+    };
+    assert_eq!(rpc::get_account(&rpc, &c.wallet).unwrap(), state.source);
+    let usage = rpc::NativeAccounting {
+        nonce: 0,
+        revision: 0,
+        spent_daily: 0,
+        spent_total: 0,
+        spent_day: 1,
+        calls: 0,
+    };
+    assert!(rpc::trusted_state(&rpc, &c, Some(usage)).is_ok());
+}
+fn sc_map(fields: Vec<(&str, stellar_xdr::ScVal)>) -> stellar_xdr::ScVal {
+    let mut entries: Vec<_> = fields
+        .into_iter()
+        .map(|(name, val)| stellar_xdr::ScMapEntry {
+            key: stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+                name.as_bytes().to_vec().try_into().unwrap(),
+            )),
+            val,
+        })
+        .collect();
+    entries.sort_by(|a, b| a.key.cmp(&b.key));
+    stellar_xdr::ScVal::Map(Some(entries.try_into().unwrap()))
+}
+struct OdcAccountRpc {
+    config: WalletConfig,
+    source: AccountState,
+}
+impl rpc::Rpc for OdcAccountRpc {
+    fn call(&self, method: &str, params: Value) -> Result<Value> {
+        use stellar_xdr::*;
+        let c = &self.config;
+        match method {
+            "getNetwork" => Ok(json!({"passphrase":passphrase(&c.network)?})),
+            "getLatestLedger" => Ok(json!({"sequence":120})),
+            "getLedgerEntries" => {
+                let key =
+                    LedgerKey::from_xdr_base64(params["keys"][0].as_str().unwrap(), Limits::none())
+                        .unwrap();
+                if matches!(key, LedgerKey::Account(_)) {
+                    return rpc::Rpc::call(
+                        &AccountRpc {
+                            config: c.clone(),
+                            account: self.source.clone(),
+                            wrong_network: false,
+                        },
+                        method,
+                        params,
+                    );
+                }
+                let state = sc_map(vec![
+                    ("version", ScVal::U32(1)),
+                    ("paused", ScVal::Bool(false)),
+                    (
+                        "owner",
+                        ScVal::Address(address(&Contract([33; 32]).to_string())?),
+                    ),
+                    ("agent", ScVal::Address(address(&self.source.address)?)),
+                    (
+                        "engine",
+                        ScVal::Address(address(&Contract([34; 32]).to_string())?),
+                    ),
+                    (
+                        "grant",
+                        sc_map(vec![("asset", ScVal::Address(address(&c.asset)?))]),
+                    ),
+                    ("nonce", ScVal::U64(4)),
+                    ("revision", ScVal::U64(2)),
+                    ("spent_daily", ScVal::I128(Int128Parts { hi: 0, lo: 10 })),
+                    ("spent_total", ScVal::I128(Int128Parts { hi: 0, lo: 10 })),
+                    ("spent_day", ScVal::U64(1)),
+                    ("calls", ScVal::U64(1)),
+                ]);
+                let entry = LedgerEntryData::ContractData(ContractDataEntry {
+                    ext: ExtensionPoint::V0,
+                    contract: address(&c.wallet)?,
+                    key: ScVal::LedgerKeyContractInstance,
+                    durability: ContractDataDurability::Persistent,
+                    val: ScVal::ContractInstance(ScContractInstance {
+                        executable: ContractExecutable::Wasm(Hash(c.module_digest)),
+                        storage: Some(
+                            vec![ScMapEntry {
+                                key: ScVal::U32(0),
+                                val: state,
+                            }]
+                            .try_into()
+                            .unwrap(),
+                        ),
+                    }),
+                });
+                Ok(json!({"entries":[{"xdr":entry.to_xdr_base64(Limits::none()).unwrap()}]}))
+            }
+            "simulateTransaction" => {
+                let TransactionEnvelope::Tx(tx) = TransactionEnvelope::from_xdr_base64(
+                    params["transaction"].as_str().unwrap(),
+                    Limits::none(),
+                )
+                .unwrap() else {
+                    panic!()
+                };
+                assert_eq!(
+                    tx.tx.source_account,
+                    MuxedAccount::Ed25519(Uint256(account_key(&self.source.address)?))
+                );
+                let bytes = |b: [u8; 32]| ScVal::Bytes(ScBytes(b.to_vec().try_into().unwrap()));
+                let binding = sc_map(vec![
+                    ("policy_instance", bytes(c.policy_instance)),
+                    ("module_digest", bytes(c.module_digest)),
+                    ("source_digest", bytes(c.source_hash)),
+                    ("argument_schema_digest", bytes(hash(ARGUMENT_SCHEMA))),
+                    (
+                        "entrypoint",
+                        ScVal::Symbol(ScSymbol(b"_execute".to_vec().try_into().unwrap())),
+                    ),
+                ]);
+                Ok(json!({"results":[{"xdr":binding.to_xdr_base64(Limits::none()).unwrap()}]}))
+            }
+            _ => Err("unexpected RPC".into()),
+        }
+    }
+}
+#[test]
+fn odc_discovery_reads_current_grant_source_and_does_not_lock_to_old_roles() {
+    let (mut c, mut r, mut s) = fixture(WalletRoute::Odc, false);
+    let obsolete = c.clone();
+    c.agent = account_for_seed(&[4; 32]);
+    s.source.address = account_for_seed(&[9; 32]);
+    s.source.master_weight = 0;
+    s.source.low_threshold = 2;
+    s.source.medium_threshold = 3;
+    s.source.high_threshold = 5;
+    s.source.signers = vec![
+        AccountSigner {
+            key: c.agent.clone(),
+            weight: 3,
+        },
+        AccountSigner {
+            key: stellar_strkey::PreAuthTx([44; 32]).to_string(),
+            weight: 1,
+        },
+    ];
+    r.fee_bounds.as_mut().unwrap()[0].payer = wf(&s.source.address);
+    let rpc = OdcAccountRpc {
+        config: c.clone(),
+        source: s.source.clone(),
+    };
+    let discovery = rpc::trusted_state_for_discovery(&rpc, &obsolete, None).unwrap();
+    assert_eq!(discovery.agent, s.source.address);
+    assert_eq!(discovery.owner, Contract([33; 32]).to_string());
+    assert_eq!(discovery.engine, Contract([34; 32]).to_string());
+    assert!(rpc::trusted_state(&rpc, &obsolete, None).is_err());
+    let live = rpc::trusted_state(&rpc, &c, None).unwrap();
+    assert_eq!(live.source, s.source);
+    assert!(prepare(&c, &r, &live, 86401, 86700).is_ok());
+    r.fee_bounds.as_mut().unwrap()[0].payer = wf(&c.agent);
+    assert!(prepare(&c, &r, &live, 86401, 86700).is_err());
 }

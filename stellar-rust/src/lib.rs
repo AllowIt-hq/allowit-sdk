@@ -179,43 +179,79 @@ pub struct AccountState {
     pub signers: Vec<AccountSigner>,
 }
 impl AccountState {
-    pub fn validate_wallet(&self, c: &WalletConfig) -> Result<()> {
-        if self.address != c.wallet
-            || self.sequence < 0
-            || (
+    pub fn validate_structure(&self) -> Result<()> {
+        account_key(&self.address)?;
+        if self.sequence < 0
+            || self.master_weight > 255
+            || [
                 self.low_threshold,
                 self.medium_threshold,
                 self.high_threshold,
-            ) != (2, 2, 3)
+            ]
+            .iter()
+            .any(|v| *v > 255)
+            || self.signers.len() > 20
         {
-            return Err("Native wallet thresholds or identity differ".into());
+            return Err("Invalid live account structure".into());
         }
-        let mut expected = std::collections::BTreeMap::new();
-        expected.insert(c.agent.clone(), 1);
-        expected.insert(c.engine.clone(), 1);
-        let master = if c.owner == c.wallet {
-            3
-        } else {
-            expected.insert(c.owner.clone(), 3);
-            0
-        };
-        if self.master_weight != master {
-            return Err("Native wallet master weight differs".into());
-        }
-        let mut actual = std::collections::BTreeMap::new();
-        for s in &self.signers {
-            account_key(&s.key)?;
-            if s.key == self.address
-                || s.weight == 0
-                || actual.insert(s.key.clone(), s.weight).is_some()
+        let mut seen = std::collections::BTreeSet::new();
+        for signer in &self.signers {
+            let key = Strkey::from_string(&signer.key).map_err(err)?;
+            if !matches!(
+                key,
+                Strkey::PublicKeyEd25519(_)
+                    | Strkey::PreAuthTx(_)
+                    | Strkey::HashX(_)
+                    | Strkey::SignedPayloadEd25519(_)
+            ) || key.to_string() != signer.key
+                || signer.key == self.address
+                || !seen.insert(signer.key.clone())
             {
-                return Err("Duplicate or unexpected native signer".into());
+                return Err("Invalid or duplicate live account signer".into());
             }
         }
-        if actual != expected {
-            return Err("Native wallet must contain exactly owner, agent and engine".into());
+        Ok(())
+    }
+    pub fn signer_weight(&self, signer: &str) -> Result<u32> {
+        self.validate_structure()?;
+        account_key(signer)?;
+        Ok(if signer == self.address {
+            self.master_weight
+        } else {
+            self.signers
+                .iter()
+                .find(|s| s.key == signer)
+                .map_or(0, |s| s.weight.min(255))
+        })
+    }
+    pub fn validate_signer_quorum(&self, signers: &[&str], threshold: u32) -> Result<()> {
+        self.validate_structure()?;
+        if threshold > 255 {
+            return Err("Invalid account threshold".into());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut weight = 0u32;
+        for signer in signers {
+            if !seen.insert(*signer) {
+                return Err("Duplicate quorum signer".into());
+            }
+            weight = weight
+                .checked_add(self.signer_weight(signer)?)
+                .ok_or("Signer weight overflow")?;
+        }
+        if weight == 0 || weight < threshold {
+            return Err("Current account signer quorum is insufficient".into());
         }
         Ok(())
+    }
+    pub fn validate_wallet(&self, c: &WalletConfig) -> Result<()> {
+        if self.address != c.wallet {
+            return Err("Native wallet identity differs".into());
+        }
+        if self.signer_weight(&c.agent)? == 0 {
+            return Err("Customer is not a current account signer".into());
+        }
+        self.validate_signer_quorum(&[&c.agent, &c.engine], self.medium_threshold)
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -294,11 +330,10 @@ pub fn validate_config(c: &WalletConfig) -> Result<()> {
     {
         return Err("Invalid installed policy or fee binding".into());
     }
-    for actor in [&c.owner, &c.agent] {
-        account_key(actor)?;
-    }
-    if c.owner == c.agent || c.owner == c.engine || c.agent == c.engine {
-        return Err("Wallet roles must differ".into());
+    address(&c.owner)?;
+    account_key(&c.agent)?;
+    if c.agent == c.engine {
+        return Err("Customer and engine signing keys must differ".into());
     }
     match c.route {
         WalletRoute::Native => {
@@ -408,12 +443,9 @@ pub fn transfer_from_request(c: &WalletConfig, r: &ExecutionRequest) -> Result<T
         return Err("One native fee bound is required".into());
     }
     let fee = &fees[0];
-    let payer = if c.route == WalletRoute::Native {
-        &c.wallet
-    } else {
-        &c.agent
-    };
-    if workflow_address(&fee.payer)? != *payer
+    let payer = workflow_address(&fee.payer)?;
+    account_key(&payer)?;
+    if (c.route == WalletRoute::Native && payer != c.wallet)
         || !matches!(&fee.asset,WorkflowAsset::Native{chain:Chain::Stellar,network} if *network==network_id(&c.network)?)
         || amount(&fee.max_fee)? < i128::from(c.max_fee_stroops)
     {
@@ -556,15 +588,16 @@ fn build(
         return Err("Installed authored source identity differs".into());
     }
     if state.policy_instance != c.policy_instance
-        || state.owner != c.owner
-        || state.agent != c.agent
-        || state.engine != c.engine
+        || (c.route == WalletRoute::Native && (state.agent != c.agent || state.engine != c.engine))
     {
         return Err("Trusted wallet identity differs".into());
     }
     let body = match c.route {
         WalletRoute::Native => {
             state.source.validate_wallet(c)?;
+            state
+                .source
+                .validate_signer_quorum(&[&c.agent, &c.engine], state.source.low_threshold)?;
             OperationBody::Payment(PaymentOp {
                 destination: muxed(&t.recipient)?,
                 asset: asset_xdr(c)?,
@@ -572,17 +605,19 @@ fn build(
             })
         }
         WalletRoute::Odc => {
-            if state.source.master_weight != 1
-                || !state.source.signers.is_empty()
-                || state.source.sequence < 0
-                || state.source.low_threshold > 1
-                || state.source.medium_threshold > 1
-                || state.source.high_threshold > 1
-            {
-                return Err("ODC agent transaction account is not owner-only".into());
+            state.source.validate_structure()?;
+            state
+                .source
+                .validate_signer_quorum(&[&c.agent], state.source.low_threshold)?;
+            state
+                .source
+                .validate_signer_quorum(&[&c.agent], state.source.medium_threshold)?;
+            if state.module_digest != c.module_digest || state.source.address != state.agent {
+                return Err("ODC executable or current agent transaction source differs".into());
             }
-            if state.module_digest != c.module_digest || state.source.address != c.agent {
-                return Err("ODC executable or transaction source differs".into());
+            let fee = &r.fee_bounds.as_ref().ok_or("Native fee bound required")?[0];
+            if workflow_address(&fee.payer)? != state.source.address {
+                return Err("ODC fee payer differs from its current agent account".into());
             }
             OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: HostFunction::InvokeContract(InvokeContractArgs {
@@ -747,6 +782,51 @@ pub fn sign(p: &PreparedOperation, seed: &[u8; 32], now: u64) -> Result<Detached
             .to_vec(),
     })
 }
+fn transaction_signers(p: &PreparedOperation, candidates: &[&str]) -> Result<Vec<String>> {
+    let source = &p.state.source;
+    source.validate_structure()?;
+    let automatic: Vec<_> = source.signers.iter().filter(|s| matches!(Strkey::from_string(&s.key), Ok(Strkey::PreAuthTx(key)) if key.0 == p.transaction_hash)).collect();
+    let automatic_weight = automatic.iter().map(|s| s.weight.min(255)).sum::<u32>();
+    let mut masks: Vec<_> = (0usize..(1usize << candidates.len())).collect();
+    masks.sort_by_key(|mask| (mask.count_ones(), *mask));
+    for mask in masks {
+        let chosen: Vec<_> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(n, _)| mask & (1 << n) != 0)
+            .map(|(_, key)| *key)
+            .collect();
+        let mut used = std::collections::BTreeSet::new();
+        let mut satisfies = |threshold: u32| -> Result<bool> {
+            if !automatic.is_empty() && automatic_weight >= threshold {
+                return Ok(true);
+            }
+            let mut weight = automatic_weight;
+            for key in &chosen {
+                let current = source.signer_weight(key)?;
+                if current > 0 {
+                    weight = weight
+                        .checked_add(current)
+                        .ok_or("Signer weight overflow")?;
+                    used.insert(*key);
+                    if weight >= threshold {
+                        return Ok(true);
+                    }
+                }
+            }
+            Ok(false)
+        };
+        // The source authorizes the transaction at LOW; Payment and InvokeHostFunction
+        // then authorize this same account at MEDIUM. Neither check uses HIGH.
+        if satisfies(source.low_threshold)?
+            && satisfies(source.medium_threshold)?
+            && used.len() == chosen.len()
+        {
+            return Ok(chosen.into_iter().map(str::to_owned).collect());
+        }
+    }
+    Err("Current account cannot authorize this exact transaction with the supplied keys".into())
+}
 pub fn authorize(
     p: &PreparedOperation,
     signatures: &[DetachedSignature],
@@ -763,7 +843,7 @@ pub fn authorize(
         return Err("Exact automated signature quorum required".into());
     }
     let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
+    let mut verified = std::collections::BTreeMap::new();
     for s in signatures {
         if !required.contains(&&s.signer) || !seen.insert(s.signer.clone()) {
             return Err("Unexpected or duplicate signature".into());
@@ -778,11 +858,25 @@ pub fn authorize(
             .map_err(err)?
             .verify_strict(&p.transaction_hash, &EdSignature::from_bytes(&sig))
             .map_err(err)?;
-        out.push(DecoratedSignature {
-            hint: SignatureHint(key[28..].try_into().unwrap()),
-            signature: stellar_xdr::Signature(sig.to_vec().try_into().map_err(err)?),
-        });
+        verified.insert(
+            s.signer.clone(),
+            DecoratedSignature {
+                hint: SignatureHint(key[28..].try_into().unwrap()),
+                signature: stellar_xdr::Signature(sig.to_vec().try_into().map_err(err)?),
+            },
+        );
     }
+    let candidates: Vec<_> = required.iter().map(|key| key.as_str()).collect();
+    let selected = transaction_signers(p, &candidates)?;
+    let out: Vec<_> = selected
+        .iter()
+        .map(|key| {
+            verified
+                .get(key)
+                .cloned()
+                .ok_or("Missing selected role signature".to_string())
+        })
+        .collect::<Result<_>>()?;
     let TransactionEnvelope::Tx(mut env) = read(&p.transaction_xdr)? else {
         return Err("Unsupported transaction envelope".into());
     };
@@ -807,11 +901,15 @@ pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
     if env.tx != unsigned.tx {
         return Err("Signed transaction bytes differ".into());
     }
-    let expected = if s.prepared.config.route == WalletRoute::Native {
-        vec![&s.prepared.config.agent, &s.prepared.config.engine]
+    let candidates = if s.prepared.config.route == WalletRoute::Native {
+        vec![
+            s.prepared.config.agent.as_str(),
+            s.prepared.config.engine.as_str(),
+        ]
     } else {
-        vec![&s.prepared.config.agent]
+        vec![s.prepared.config.agent.as_str()]
     };
+    let expected = transaction_signers(&s.prepared, &candidates)?;
     if env.signatures.len() != expected.len() {
         return Err("Signed transaction quorum differs".into());
     }

@@ -95,11 +95,18 @@ pub fn get_account(rpc: &dyn Rpc, address: &str) -> Result<AccountState> {
     }
     let mut signers = Vec::new();
     for s in account.signers.iter() {
-        let SignerKey::Ed25519(key) = &s.key else {
-            return Err("Hash, preauthorized and signed-payload signers are not admitted".into());
+        let key = match &s.key {
+            SignerKey::Ed25519(key) => ed25519::PublicKey(key.0).to_string(),
+            SignerKey::PreAuthTx(key) => stellar_strkey::PreAuthTx(key.0).to_string(),
+            SignerKey::HashX(key) => stellar_strkey::HashX(key.0).to_string(),
+            SignerKey::Ed25519SignedPayload(key) => ed25519::SignedPayload {
+                ed25519: key.ed25519.0,
+                payload: key.payload.to_vec(),
+            }
+            .to_string(),
         };
         signers.push(AccountSigner {
-            key: ed25519::PublicKey(key.0).to_string(),
+            key,
             weight: s.weight,
         });
     }
@@ -412,6 +419,23 @@ pub fn trusted_state(
     c: &WalletConfig,
     accounting: Option<NativeAccounting>,
 ) -> Result<TrustedState> {
+    trusted_state_inner(rpc, c, accounting, true)
+}
+/// Read public live authority without requiring a previously configured customer key.
+/// Discovery reports authority; it does not authorize an execution.
+pub fn trusted_state_for_discovery(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    accounting: Option<NativeAccounting>,
+) -> Result<TrustedState> {
+    trusted_state_inner(rpc, c, accounting, false)
+}
+fn trusted_state_inner(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    accounting: Option<NativeAccounting>,
+    require_customer_quorum: bool,
+) -> Result<TrustedState> {
     validate_config(c)?;
     let network = rpc.call("getNetwork", json!({}))?;
     if network["passphrase"].as_str() != Some(passphrase(&c.network)?) {
@@ -424,16 +448,13 @@ pub fn trusted_state(
             .ok_or("Missing ledger sequence")?,
     )
     .map_err(err)?;
-    let source = get_account(
-        rpc,
-        if c.route == WalletRoute::Native {
-            &c.wallet
-        } else {
-            &c.agent
-        },
-    )?;
     if c.route == WalletRoute::Native {
-        source.validate_wallet(c)?;
+        let source = get_account(rpc, &c.wallet)?;
+        source.validate_structure()?;
+        if require_customer_quorum {
+            source.validate_wallet(c)?;
+            source.validate_signer_quorum(&[&c.agent, &c.engine], source.low_threshold)?;
+        }
         let a = accounting.ok_or("Native wallet requires authoritative policy accounting")?;
         return Ok(TrustedState {
             source,
@@ -451,15 +472,6 @@ pub fn trusted_state(
             engine: c.engine.clone(),
             policy_instance: c.policy_instance,
         });
-    }
-    let owner = get_account(rpc, &c.owner)?;
-    if owner.master_weight == 0
-        || !owner.signers.is_empty()
-        || owner.low_threshold > owner.master_weight
-        || owner.medium_threshold > owner.master_weight
-        || owner.high_threshold > owner.master_weight
-    {
-        return Err("ODC owner account is not owner-only".into());
     }
     let key = LedgerKey::ContractData(LedgerKeyContractData {
         contract: address(&c.wallet)?,
@@ -504,6 +516,13 @@ pub fn trusted_state(
     if map_field(state, "paused")? != &ScVal::Bool(false) {
         return Err("ODC automation is paused".into());
     }
+    let current_agent = addr(map_field(state, "agent")?)?;
+    let source = get_account(rpc, &current_agent)?;
+    source.validate_structure()?;
+    if require_customer_quorum {
+        source.validate_signer_quorum(&[&c.agent], source.low_threshold)?;
+        source.validate_signer_quorum(&[&c.agent], source.medium_threshold)?;
+    }
     let binding = readonly_call(rpc, c, &source, "policy_binding")?;
     if digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
         || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
@@ -533,8 +552,5 @@ pub fn trusted_state(
         engine: addr(map_field(state, "engine")?)?,
         policy_instance: c.policy_instance,
     };
-    if out.owner != c.owner || out.agent != c.agent || out.engine != c.engine {
-        return Err("ODC roles differ from installation".into());
-    }
     Ok(out)
 }
