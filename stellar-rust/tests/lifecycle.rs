@@ -962,7 +962,14 @@ fn odc_current_agent_account_may_have_a_different_customer_signer() {
         ))
     );
     s.source.signers[0].weight = 2;
-    assert!(prepare(&c, &r, &s, 86401, 86700).is_err());
+    let underweight = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    assert!(
+        attach_simulation(
+            &underweight,
+            &resource.to_xdr_base64(Limits::none()).unwrap()
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -1011,6 +1018,7 @@ fn sc_map(fields: Vec<(&str, stellar_xdr::ScVal)>) -> stellar_xdr::ScVal {
 struct OdcAccountRpc {
     config: WalletConfig,
     source: AccountState,
+    paused: bool,
 }
 impl rpc::Rpc for OdcAccountRpc {
     fn call(&self, method: &str, params: Value) -> Result<Value> {
@@ -1036,7 +1044,7 @@ impl rpc::Rpc for OdcAccountRpc {
                 }
                 let state = sc_map(vec![
                     ("version", ScVal::U32(1)),
-                    ("paused", ScVal::Bool(false)),
+                    ("paused", ScVal::Bool(self.paused)),
                     (
                         "owner",
                         ScVal::Address(address(&Contract([33; 32]).to_string())?),
@@ -1129,15 +1137,114 @@ fn odc_discovery_reads_current_grant_source_and_does_not_lock_to_old_roles() {
     let rpc = OdcAccountRpc {
         config: c.clone(),
         source: s.source.clone(),
+        paused: false,
     };
     let discovery = rpc::trusted_state_for_discovery(&rpc, &obsolete, None).unwrap();
-    assert_eq!(discovery.agent, s.source.address);
-    assert_eq!(discovery.owner, Contract([33; 32]).to_string());
-    assert_eq!(discovery.engine, Contract([34; 32]).to_string());
+    assert_eq!(discovery.state.agent, s.source.address);
+    assert_eq!(discovery.state.owner, Contract([33; 32]).to_string());
+    assert_eq!(discovery.state.engine, Contract([34; 32]).to_string());
     assert!(rpc::trusted_state(&rpc, &obsolete, None).is_err());
     let live = rpc::trusted_state(&rpc, &c, None).unwrap();
     assert_eq!(live.source, s.source);
     assert!(prepare(&c, &r, &live, 86401, 86700).is_ok());
     r.fee_bounds.as_mut().unwrap()[0].payer = wf(&c.agent);
     assert!(prepare(&c, &r, &live, 86401, 86700).is_err());
+}
+
+#[test]
+fn obsolete_engine_role_alias_is_not_an_offline_customer_key_lock() {
+    let (mut c, r, mut s) = fixture(WalletRoute::Native, false);
+    c.engine = c.agent.clone();
+    s.engine = c.engine.clone();
+    validate_config(&c).unwrap();
+    assert!(prepare(&c, &r, &s, 86401, 86700).is_err()); // One key still weighs only one, not two.
+    s.source.signers[0].weight = 2;
+    let p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let proof = sign(&p, &[2; 32], 86401).unwrap();
+    let out = authorize(&p, &[proof.clone(), proof], 86401).unwrap();
+    validate_signed(&out, 86401).unwrap();
+    let TransactionEnvelope::Tx(env) =
+        TransactionEnvelope::from_xdr_base64(&out.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(env.signatures.len(), 1);
+}
+
+#[test]
+fn exact_preauthorization_can_complete_an_otherwise_insufficient_native_quorum() {
+    let (c, r, mut s) = fixture(WalletRoute::Native, false);
+    let initial = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    s.source.medium_threshold = 3;
+    s.source.low_threshold = 3;
+    assert!(prepare(&c, &r, &s, 86401, 86700).is_err());
+    s.source.signers.push(AccountSigner {
+        key: stellar_strkey::PreAuthTx(initial.transaction_hash).to_string(),
+        weight: 1,
+    });
+    let p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let out = authorize(
+        &p,
+        &[
+            sign(&p, &[2; 32], 86401).unwrap(),
+            sign(&p, &[3; 32], 86401).unwrap(),
+        ],
+        86401,
+    )
+    .unwrap();
+    validate_signed(&out, 86401).unwrap();
+    let mut wrong = r;
+    wrong.operation.nonce = [31; 32];
+    assert!(prepare(&c, &wrong, &s, 86401, 86700).is_err());
+}
+#[test]
+fn paused_odc_remains_discoverable_but_cannot_authorize_execution() {
+    let (c, _, s) = fixture(WalletRoute::Odc, false);
+    let rpc = OdcAccountRpc {
+        config: c.clone(),
+        source: s.source,
+        paused: true,
+    };
+    let discovered = rpc::trusted_state_for_discovery(&rpc, &c, None).unwrap();
+    assert!(discovered.paused);
+    assert_eq!(discovered.state.policy_instance, c.policy_instance);
+    assert!(rpc::trusted_state(&rpc, &c, None).is_err());
+}
+
+#[test]
+fn odc_exact_resource_bound_preauthorization_completes_current_customer_quorum() {
+    let (c, r, mut state) = fixture(WalletRoute::Odc, false);
+    let resource = SorobanTransactionData {
+        resource_fee: 1000,
+        ..Default::default()
+    };
+    let data = resource.to_xdr_base64(Limits::none()).unwrap();
+    let base = prepare(&c, &r, &state, 86401, 86700).unwrap();
+    let final_hash = attach_simulation(&base, &data).unwrap().transaction_hash;
+    state.source.low_threshold = 2;
+    state.source.medium_threshold = 2;
+    let insufficient = prepare(&c, &r, &state, 86401, 86700).unwrap();
+    assert!(attach_simulation(&insufficient, &data).is_err());
+    state.source.signers.push(AccountSigner {
+        key: stellar_strkey::PreAuthTx(final_hash).to_string(),
+        weight: 1,
+    });
+    let before_simulation = prepare(&c, &r, &state, 86401, 86700).unwrap();
+    assert!(sign(&before_simulation, &[2; 32], 86401).is_err());
+    let prepared = attach_simulation(&before_simulation, &data).unwrap();
+    assert_eq!(prepared.transaction_hash, final_hash);
+    let signed = authorize(
+        &prepared,
+        &[sign(&prepared, &[2; 32], 86401).unwrap()],
+        86401,
+    )
+    .unwrap();
+    validate_signed(&signed, 86401).unwrap();
+    let altered = SorobanTransactionData {
+        resource_fee: 1001,
+        ..Default::default()
+    }
+    .to_xdr_base64(Limits::none())
+    .unwrap();
+    assert!(attach_simulation(&before_simulation, &altered).is_err());
 }

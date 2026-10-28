@@ -178,6 +178,13 @@ pub struct AccountState {
     pub high_threshold: u32,
     pub signers: Vec<AccountSigner>,
 }
+fn automated_roles(c: &WalletConfig) -> Vec<&str> {
+    let mut roles = vec![c.agent.as_str()];
+    if c.route == WalletRoute::Native && c.engine != c.agent {
+        roles.push(c.engine.as_str());
+    }
+    roles
+}
 impl AccountState {
     pub fn validate_structure(&self) -> Result<()> {
         account_key(&self.address)?;
@@ -251,7 +258,7 @@ impl AccountState {
         if self.signer_weight(&c.agent)? == 0 {
             return Err("Customer is not a current account signer".into());
         }
-        self.validate_signer_quorum(&[&c.agent, &c.engine], self.medium_threshold)
+        Ok(())
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -332,9 +339,6 @@ pub fn validate_config(c: &WalletConfig) -> Result<()> {
     }
     address(&c.owner)?;
     account_key(&c.agent)?;
-    if c.agent == c.engine {
-        return Err("Customer and engine signing keys must differ".into());
-    }
     match c.route {
         WalletRoute::Native => {
             account_key(&c.wallet)?;
@@ -595,9 +599,6 @@ fn build(
     let body = match c.route {
         WalletRoute::Native => {
             state.source.validate_wallet(c)?;
-            state
-                .source
-                .validate_signer_quorum(&[&c.agent, &c.engine], state.source.low_threshold)?;
             OperationBody::Payment(PaymentOp {
                 destination: muxed(&t.recipient)?,
                 asset: asset_xdr(c)?,
@@ -606,12 +607,9 @@ fn build(
         }
         WalletRoute::Odc => {
             state.source.validate_structure()?;
-            state
-                .source
-                .validate_signer_quorum(&[&c.agent], state.source.low_threshold)?;
-            state
-                .source
-                .validate_signer_quorum(&[&c.agent], state.source.medium_threshold)?;
+            if state.source.signer_weight(&c.agent)? == 0 {
+                return Err("Customer is not a current ODC agent account signer".into());
+            }
             if state.module_digest != c.module_digest || state.source.address != state.agent {
                 return Err("ODC executable or current agent transaction source differs".into());
             }
@@ -645,7 +643,7 @@ fn build(
             })
         }
     };
-    Ok(Transaction {
+    let tx = Transaction {
         source_account: muxed(&state.source.address)?,
         fee: c.max_fee_stroops,
         seq_num: SequenceNumber(
@@ -677,7 +675,15 @@ fn build(
         .try_into()
         .map_err(err)?,
         ext: TransactionExt::V0,
-    })
+    };
+    if c.route == WalletRoute::Native {
+        account_transaction_signers(
+            &state.source,
+            &transaction_hash(&c.network, &tx)?,
+            &automated_roles(c),
+        )?;
+    }
+    Ok(tx)
 }
 pub fn prepare(
     c: &WalletConfig,
@@ -783,9 +789,15 @@ pub fn sign(p: &PreparedOperation, seed: &[u8; 32], now: u64) -> Result<Detached
     })
 }
 fn transaction_signers(p: &PreparedOperation, candidates: &[&str]) -> Result<Vec<String>> {
-    let source = &p.state.source;
+    account_transaction_signers(&p.state.source, &p.transaction_hash, candidates)
+}
+fn account_transaction_signers(
+    source: &AccountState,
+    transaction_hash: &[u8; 32],
+    candidates: &[&str],
+) -> Result<Vec<String>> {
     source.validate_structure()?;
-    let automatic: Vec<_> = source.signers.iter().filter(|s| matches!(Strkey::from_string(&s.key), Ok(Strkey::PreAuthTx(key)) if key.0 == p.transaction_hash)).collect();
+    let automatic: Vec<_> = source.signers.iter().filter(|s| matches!(Strkey::from_string(&s.key), Ok(Strkey::PreAuthTx(key)) if key.0 == *transaction_hash)).collect();
     let automatic_weight = automatic.iter().map(|s| s.weight.min(255)).sum::<u32>();
     let mut masks: Vec<_> = (0usize..(1usize << candidates.len())).collect();
     masks.sort_by_key(|mask| (mask.count_ones(), *mask));
@@ -834,18 +846,17 @@ pub fn authorize(
 ) -> Result<SignedOperation> {
     validate_prepared(p, now)?;
     current_authorization_bounds(p)?;
-    let required = if p.config.route == WalletRoute::Native {
-        vec![&p.config.agent, &p.config.engine]
-    } else {
-        vec![&p.config.agent]
-    };
-    if signatures.len() != required.len() {
+    let required = automated_roles(&p.config);
+    let aliased_roles = p.config.route == WalletRoute::Native && p.config.agent == p.config.engine;
+    if signatures.len() != required.len() && !(aliased_roles && signatures.len() == 2) {
         return Err("Exact automated signature quorum required".into());
     }
     let mut seen = std::collections::BTreeSet::new();
     let mut verified = std::collections::BTreeMap::new();
     for s in signatures {
-        if !required.contains(&&s.signer) || !seen.insert(s.signer.clone()) {
+        if !required.contains(&s.signer.as_str())
+            || (!seen.insert(s.signer.clone()) && !aliased_roles)
+        {
             return Err("Unexpected or duplicate signature".into());
         }
         let key = account_key(&s.signer)?;
@@ -866,7 +877,7 @@ pub fn authorize(
             },
         );
     }
-    let candidates: Vec<_> = required.iter().map(|key| key.as_str()).collect();
+    let candidates = required;
     let selected = transaction_signers(p, &candidates)?;
     let out: Vec<_> = selected
         .iter()
@@ -901,14 +912,7 @@ pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
     if env.tx != unsigned.tx {
         return Err("Signed transaction bytes differ".into());
     }
-    let candidates = if s.prepared.config.route == WalletRoute::Native {
-        vec![
-            s.prepared.config.agent.as_str(),
-            s.prepared.config.engine.as_str(),
-        ]
-    } else {
-        vec![s.prepared.config.agent.as_str()]
-    };
+    let candidates = automated_roles(&s.prepared.config);
     let expected = transaction_signers(&s.prepared, &candidates)?;
     if env.signatures.len() != expected.len() {
         return Err("Signed transaction quorum differs".into());
@@ -961,5 +965,6 @@ pub fn attach_simulation(p: &PreparedOperation, data: &str) -> Result<PreparedOp
     out.transaction_hash = transaction_hash(&p.config.network, &env.tx)?;
     out.transaction_xdr = xdr(&TransactionEnvelope::Tx(env))?;
     out.simulation_data = Some(data.into());
+    transaction_signers(&out, &automated_roles(&out.config))?;
     Ok(out)
 }

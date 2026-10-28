@@ -419,7 +419,13 @@ pub fn trusted_state(
     c: &WalletConfig,
     accounting: Option<NativeAccounting>,
 ) -> Result<TrustedState> {
-    trusted_state_inner(rpc, c, accounting, true)
+    Ok(trusted_state_inner(rpc, c, accounting, true)?.state)
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiscoveredState {
+    pub state: TrustedState,
+    pub paused: bool,
 }
 /// Read public live authority without requiring a previously configured customer key.
 /// Discovery reports authority; it does not authorize an execution.
@@ -427,7 +433,7 @@ pub fn trusted_state_for_discovery(
     rpc: &dyn Rpc,
     c: &WalletConfig,
     accounting: Option<NativeAccounting>,
-) -> Result<TrustedState> {
+) -> Result<DiscoveredState> {
     trusted_state_inner(rpc, c, accounting, false)
 }
 fn trusted_state_inner(
@@ -435,7 +441,7 @@ fn trusted_state_inner(
     c: &WalletConfig,
     accounting: Option<NativeAccounting>,
     require_customer_quorum: bool,
-) -> Result<TrustedState> {
+) -> Result<DiscoveredState> {
     validate_config(c)?;
     let network = rpc.call("getNetwork", json!({}))?;
     if network["passphrase"].as_str() != Some(passphrase(&c.network)?) {
@@ -453,24 +459,26 @@ fn trusted_state_inner(
         source.validate_structure()?;
         if require_customer_quorum {
             source.validate_wallet(c)?;
-            source.validate_signer_quorum(&[&c.agent, &c.engine], source.low_threshold)?;
         }
         let a = accounting.ok_or("Native wallet requires authoritative policy accounting")?;
-        return Ok(TrustedState {
-            source,
-            nonce: a.nonce,
-            revision: a.revision,
-            spent_daily: a.spent_daily,
-            spent_total: a.spent_total,
-            spent_day: a.spent_day,
-            calls: a.calls,
-            ledger,
-            module_digest: c.module_digest,
-            source_hash: c.source_hash,
-            owner: c.owner.clone(),
-            agent: c.agent.clone(),
-            engine: c.engine.clone(),
-            policy_instance: c.policy_instance,
+        return Ok(DiscoveredState {
+            state: TrustedState {
+                source,
+                nonce: a.nonce,
+                revision: a.revision,
+                spent_daily: a.spent_daily,
+                spent_total: a.spent_total,
+                spent_day: a.spent_day,
+                calls: a.calls,
+                ledger,
+                module_digest: c.module_digest,
+                source_hash: c.source_hash,
+                owner: c.owner.clone(),
+                agent: c.agent.clone(),
+                engine: c.engine.clone(),
+                policy_instance: c.policy_instance,
+            },
+            paused: false,
         });
     }
     let key = LedgerKey::ContractData(LedgerKeyContractData {
@@ -513,15 +521,18 @@ fn trusted_state_inner(
     if number(map_field(state, "version")?)? != 1 {
         return Err("Unsupported ODC custody state version".into());
     }
-    if map_field(state, "paused")? != &ScVal::Bool(false) {
+    let paused = match map_field(state, "paused")? {
+        ScVal::Bool(value) => *value,
+        _ => return Err("Invalid ODC pause state".into()),
+    };
+    if require_customer_quorum && paused {
         return Err("ODC automation is paused".into());
     }
     let current_agent = addr(map_field(state, "agent")?)?;
     let source = get_account(rpc, &current_agent)?;
     source.validate_structure()?;
-    if require_customer_quorum {
-        source.validate_signer_quorum(&[&c.agent], source.low_threshold)?;
-        source.validate_signer_quorum(&[&c.agent], source.medium_threshold)?;
+    if require_customer_quorum && source.signer_weight(&c.agent)? == 0 {
+        return Err("Customer is not a current ODC agent account signer".into());
     }
     let binding = readonly_call(rpc, c, &source, "policy_binding")?;
     if digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
@@ -552,5 +563,5 @@ fn trusted_state_inner(
         engine: addr(map_field(state, "engine")?)?,
         policy_instance: c.policy_instance,
     };
-    Ok(out)
+    Ok(DiscoveredState { state: out, paused })
 }
