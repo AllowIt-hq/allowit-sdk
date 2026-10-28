@@ -286,7 +286,11 @@ pub fn validate_config(c: &WalletConfig) -> Result<()> {
     if c.policy_instance == [0; 32]
         || c.source_hash != hash(c.policy_source.as_bytes())
         || c.max_fee_stroops < 100
-        || c.max_fee_stroops > 1_000_000
+        || c.max_fee_stroops
+            > match c.route {
+                WalletRoute::Native => 1_000_000,
+                WalletRoute::Odc => 2_000_000,
+            }
     {
         return Err("Invalid installed policy or fee binding".into());
     }
@@ -619,7 +623,11 @@ fn build(
             min_time: TimePoint(now),
             max_time: TimePoint(expires),
         }),
-        memo: Memo::Hash(Hash(r.operation.nonce)),
+        memo: if c.route == WalletRoute::Native {
+            Memo::Hash(Hash(r.operation.nonce))
+        } else {
+            Memo::None
+        },
         operations: vec![Operation {
             source_account: None,
             body,

@@ -179,6 +179,10 @@ fn native_classic_payment_has_real_two_party_signatures() {
         else {
             panic!()
         };
+        assert_eq!(
+            tx.tx.memo,
+            stellar_xdr::Memo::Hash(stellar_xdr::Hash(r.operation.nonce))
+        );
         assert_eq!(tx.signatures.len(), 2);
         assert_eq!(tx.tx.seq_num.0, 41);
         let OperationBody::Payment(op) = &tx.tx.operations[0].body else {
@@ -270,7 +274,16 @@ fn odc_uses_execute_and_exact_module_schema_payload() {
     let stellar_xdr::HostFunction::InvokeContract(call) = &op.host_function else {
         panic!()
     };
+    assert_eq!(tx.tx.memo, stellar_xdr::Memo::None);
     assert_eq!(call.function_name.0.as_slice(), b"execute");
+    let stellar_xdr::ScVal::Map(Some(fields)) = &call.args[0] else {
+        panic!()
+    };
+    let operation = fields.iter().find(|field| matches!(&field.key, stellar_xdr::ScVal::Symbol(key) if key.0.as_slice() == b"operation_id")).unwrap();
+    let stellar_xdr::ScVal::Bytes(value) = &operation.val else {
+        panic!()
+    };
+    assert_eq!(value.0.as_slice(), &r.operation.nonce);
     assert_eq!(call.args.len(), 1);
     assert_eq!(op.auth.len(), 1);
     let mut changed = s.clone();
@@ -568,4 +581,43 @@ fn verified_receipt_retains_exact_network_transaction_and_ledger() {
     assert!(rpc::validate_receipt(&changed, &c.network, &signed.transaction_hash).is_err());
     assert!(rpc::receipt_by_hash(&rpc, "stellar:mainnet", &signed.transaction_hash).is_err());
     assert!(rpc::receipt_by_hash(&rpc, &c.network, &[0; 32]).is_err());
+}
+
+#[test]
+fn odc_resource_fees_require_explicit_config_and_request_budget() {
+    let (mut config, mut request, state) = fixture(WalletRoute::Odc, false);
+    config.max_fee_stroops = 1_000_000;
+    request.fee_bounds.as_mut().unwrap()[0].max_fee = 1_000_000u64.into();
+    let original = prepare(&config, &request, &state, 86401, 86700).unwrap();
+    let mut resource = SorobanTransactionData {
+        resource_fee: 1_331_294,
+        ..Default::default()
+    };
+    let encode = |data: &SorobanTransactionData| data.to_xdr_base64(Limits::none()).unwrap();
+    assert!(attach_simulation(&original, &encode(&resource)).is_err());
+    config.max_fee_stroops = 2_000_000;
+    assert!(prepare(&config, &request, &state, 86401, 86700).is_err());
+    request.fee_bounds.as_mut().unwrap()[0].max_fee = 2_000_000u64.into();
+    let approved = prepare(&config, &request, &state, 86401, 86700).unwrap();
+    let prepared = attach_simulation(&approved, &encode(&resource)).unwrap();
+    let TransactionEnvelope::Tx(envelope) =
+        TransactionEnvelope::from_xdr_base64(&prepared.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(envelope.tx.fee, 1_331_394);
+    assert_eq!(envelope.tx.memo, stellar_xdr::Memo::None);
+    for fee in [-1, i64::MAX, i64::from(u32::MAX), 1_999_901] {
+        resource.resource_fee = fee;
+        assert!(attach_simulation(&approved, &encode(&resource)).is_err());
+    }
+    resource.resource_fee = 1_999_900;
+    assert!(attach_simulation(&approved, &encode(&resource)).is_ok());
+    config.max_fee_stroops = 2_000_001;
+    assert!(validate_config(&config).is_err());
+    let (mut native, _, _) = fixture(WalletRoute::Native, false);
+    native.max_fee_stroops = 1_000_000;
+    validate_config(&native).unwrap();
+    native.max_fee_stroops = 1_000_001;
+    assert!(validate_config(&native).is_err());
 }
