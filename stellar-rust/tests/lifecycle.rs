@@ -621,3 +621,141 @@ fn odc_resource_fees_require_explicit_config_and_request_budget() {
     native.max_fee_stroops = 1_000_001;
     assert!(validate_config(&native).is_err());
 }
+
+fn native_packet_bounds(mut prepared: PreparedOperation, min: u64, max: u64) -> PreparedOperation {
+    let TransactionEnvelope::Tx(mut envelope) =
+        TransactionEnvelope::from_xdr_base64(&prepared.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    envelope.tx.cond = stellar_xdr::Preconditions::Time(stellar_xdr::TimeBounds {
+        min_time: stellar_xdr::TimePoint(min),
+        max_time: stellar_xdr::TimePoint(max),
+    });
+    prepared.transaction_hash = hash(
+        stellar_xdr::TransactionSignaturePayload {
+            network_id: stellar_xdr::Hash(network_id(&prepared.config.network).unwrap()),
+            tagged_transaction: stellar_xdr::TransactionSignaturePayloadTaggedTransaction::Tx(
+                envelope.tx.clone(),
+            ),
+        }
+        .to_xdr(Limits::none())
+        .unwrap(),
+    );
+    prepared.transaction_xdr = envelope_to_xdr(envelope);
+    prepared
+}
+fn envelope_to_xdr(envelope: stellar_xdr::TransactionV1Envelope) -> String {
+    TransactionEnvelope::Tx(envelope)
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+}
+fn retained_native_signed(prepared: PreparedOperation) -> SignedOperation {
+    use ed25519_dalek::{Signer, SigningKey};
+    let TransactionEnvelope::Tx(mut envelope) =
+        TransactionEnvelope::from_xdr_base64(&prepared.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    envelope.signatures = [2u8, 3]
+        .into_iter()
+        .map(|value| {
+            let key = SigningKey::from_bytes(&[value; 32]);
+            stellar_xdr::DecoratedSignature {
+                hint: stellar_xdr::SignatureHint(
+                    key.verifying_key().to_bytes()[28..].try_into().unwrap(),
+                ),
+                signature: stellar_xdr::Signature(
+                    key.sign(&prepared.transaction_hash)
+                        .to_bytes()
+                        .to_vec()
+                        .try_into()
+                        .unwrap(),
+                ),
+            }
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+    SignedOperation {
+        transaction_xdr: envelope_to_xdr(envelope),
+        transaction_hash: prepared.transaction_hash,
+        prepared,
+    }
+}
+#[test]
+fn native_immediate_bounds_keep_exact_expiry_and_reject_other_lower_bounds() {
+    let (c, r, s) = fixture(WalletRoute::Native, false);
+    let p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let TransactionEnvelope::Tx(envelope) =
+        TransactionEnvelope::from_xdr_base64(&p.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        envelope.tx.cond,
+        stellar_xdr::Preconditions::Time(stellar_xdr::TimeBounds {
+            min_time: stellar_xdr::TimePoint(0),
+            max_time: stellar_xdr::TimePoint(86700)
+        })
+    );
+    validate_signed(&sign_native(&p), 86401).unwrap();
+    assert!(sign(&p, &[2; 32], 86700).is_err());
+    assert!(sign(&p, &[2; 32], 86400).is_err());
+    assert!(prepare(&c, &r, &s, 86401, 86702).is_err());
+    for lower in [1, 86400, 86402, u64::MAX] {
+        assert!(validate_prepared(&native_packet_bounds(p.clone(), lower, 86700), 86401).is_err());
+    }
+    for upper in [86699, 86701] {
+        assert!(validate_prepared(&native_packet_bounds(p.clone(), 0, upper), 86401).is_err());
+    }
+}
+#[test]
+fn retained_native_status_preserves_signed_bytes_without_new_authorization() {
+    let (c, r, s) = fixture(WalletRoute::Native, false);
+    let current = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let retained = native_packet_bounds(current.clone(), 86401, 86700);
+    validate_prepared(&retained, 86401).unwrap();
+    assert!(
+        sign(&retained, &[2; 32], 86401)
+            .unwrap_err()
+            .contains("read-only")
+    );
+    assert!(
+        authorize(&retained, &[], 86401)
+            .unwrap_err()
+            .contains("read-only")
+    );
+    let signed = retained_native_signed(retained);
+    validate_signed(&signed, 86401).unwrap();
+    let rpc = FakeRpc {
+        calls: Mutex::new(vec![]),
+        signed: signed.clone(),
+        fail_send: false,
+    };
+    let mut store = Store {
+        value: Some((signed.clone(), OperationStatus::SubmissionUnknown)),
+    };
+    assert_eq!(
+        rpc::recover(&rpc, &mut store, r.operation.nonce).unwrap(),
+        OperationStatus::Confirmed
+    );
+    assert_eq!(store.value.as_ref().unwrap().0, signed);
+    let mut rewritten = signed.clone();
+    let TransactionEnvelope::Tx(mut envelope) =
+        TransactionEnvelope::from_xdr_base64(&signed.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    let TransactionEnvelope::Tx(new) =
+        TransactionEnvelope::from_xdr_base64(&current.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    envelope.tx = new.tx;
+    rewritten.prepared = current.clone();
+    rewritten.transaction_hash = current.transaction_hash;
+    rewritten.transaction_xdr = envelope_to_xdr(envelope);
+    assert!(validate_signed(&rewritten, 86401).is_err());
+    assert_eq!(*rpc.calls.lock().unwrap(), vec!["getTransaction"]);
+}

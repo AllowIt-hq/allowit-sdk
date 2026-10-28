@@ -8,6 +8,8 @@ Use `rpc::trusted_state` to read network, accounts and ODC bindings. Native acco
 
 `prepare`, `sign` and `authorize` bind the exact request and signatures. Native transactions bind their operation ID in the hash memo. Soroban transactions use no memo and bind the same identity inside the signed `execute` arguments.
 
+New native bounds start at zero and end at the exact approved expiry. Retained native bounds may start at their original creation time. Validation preserves those signed bytes for status and refuses new authorization.
+
 ODC preparation needs resource simulation before signing. Native configuration permits at most 1,000,000 stroops (0.1 XLM) in fees. The ODC ceiling is 2,000,000 stroops (0.2 XLM). The exact request must cover the installed fee bound. Simulated resource fees plus inclusion fee must fit that bound. Preparation never increases it.
 
 `rpc::submit` retains signed bytes before broadcast. `recover` queries the original transaction hash. An uncertain broadcast never authorizes a replacement payment or releases its reservation. Terminal settlement remains distinct from external delivery.

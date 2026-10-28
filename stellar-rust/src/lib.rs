@@ -536,6 +536,7 @@ fn build(
     state: &TrustedState,
     now: u64,
     expires: u64,
+    retained_native_lower_bound: bool,
 ) -> Result<Transaction> {
     let t = transfer_from_request(c, r)?;
     verify_policy(c, r, state, now)?;
@@ -620,7 +621,13 @@ fn build(
                 .ok_or("Sequence overflow")?,
         ),
         cond: Preconditions::Time(TimeBounds {
-            min_time: TimePoint(now),
+            min_time: TimePoint(
+                if c.route == WalletRoute::Native && !retained_native_lower_bound {
+                    0
+                } else {
+                    now
+                },
+            ),
             max_time: TimePoint(expires),
         }),
         memo: if c.route == WalletRoute::Native {
@@ -644,7 +651,17 @@ pub fn prepare(
     now: u64,
     expires_at: u64,
 ) -> Result<PreparedOperation> {
-    let tx = build(c, r, state, now, expires_at)?;
+    prepare_with_bounds(c, r, state, now, expires_at, false)
+}
+fn prepare_with_bounds(
+    c: &WalletConfig,
+    r: &ExecutionRequest,
+    state: &TrustedState,
+    now: u64,
+    expires_at: u64,
+    retained_native_lower_bound: bool,
+) -> Result<PreparedOperation> {
+    let tx = build(c, r, state, now, expires_at, retained_native_lower_bound)?;
     Ok(PreparedOperation {
         version: 1,
         config: c.clone(),
@@ -666,7 +683,23 @@ pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
     if p.version != 1 || p.created_at > now || now >= p.expires_at {
         return Err("Prepared operation is stale".into());
     }
-    let mut expected = prepare(&p.config, &p.request, &p.state, p.created_at, p.expires_at)?;
+    let retained_native_lower_bound = if p.config.route == WalletRoute::Native {
+        match native_lower_bound(p)? {
+            0 => false,
+            value if value == p.created_at => true,
+            _ => return Err("Native lower time bound changed".into()),
+        }
+    } else {
+        false
+    };
+    let mut expected = prepare_with_bounds(
+        &p.config,
+        &p.request,
+        &p.state,
+        p.created_at,
+        p.expires_at,
+        retained_native_lower_bound,
+    )?;
     if let Some(data) = &p.simulation_data {
         expected = attach_simulation(&expected, data)?;
     }
@@ -675,8 +708,24 @@ pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
     }
     Ok(())
 }
+fn native_lower_bound(p: &PreparedOperation) -> Result<u64> {
+    let TransactionEnvelope::Tx(envelope) = read(&p.transaction_xdr)? else {
+        return Err("Unsupported transaction envelope".into());
+    };
+    let Preconditions::Time(bounds) = envelope.tx.cond else {
+        return Err("Native time bounds are required".into());
+    };
+    Ok(bounds.min_time.0)
+}
+fn current_authorization_bounds(p: &PreparedOperation) -> Result<()> {
+    if p.config.route == WalletRoute::Native && native_lower_bound(p)? != 0 {
+        return Err("Retained native time bounds are read-only".into());
+    }
+    Ok(())
+}
 pub fn sign(p: &PreparedOperation, seed: &[u8; 32], now: u64) -> Result<DetachedSignature> {
     validate_prepared(p, now)?;
+    current_authorization_bounds(p)?;
     verify_policy(&p.config, &p.request, &p.state, now)?;
     if p.config.route == WalletRoute::Odc && p.simulation_data.is_none() {
         return Err("ODC resource simulation is required before signing".into());
@@ -704,6 +753,7 @@ pub fn authorize(
     now: u64,
 ) -> Result<SignedOperation> {
     validate_prepared(p, now)?;
+    current_authorization_bounds(p)?;
     let required = if p.config.route == WalletRoute::Native {
         vec![&p.config.agent, &p.config.engine]
     } else {
