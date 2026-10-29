@@ -385,17 +385,8 @@ fn explicit_engine_calls_require_native_authority_but_classic_guards_remain_loca
         "expiry",
         "token",
     ] {
-        let p =
-            compile_stellar_policy(&functional(&format!("engine::{name}(request,state)"))).unwrap();
-        assert_eq!(p.explicit_engine_checks, vec![name]);
-        assert!(!p.evaluate_classic(&context()));
-        assert_eq!(
-            p.evaluation_with_state(&context(), &mut BTreeMap::new(), &BTreeMap::new()),
-            StellarEvaluation::RequiresNativeEngine
-        );
         assert!(
-            p.rust_source
-                .contains(&format!("host.engine_check({name:?},&current.spent"))
+            compile_stellar_policy(&functional(&format!("engine::{name}(request,state)"))).is_err()
         );
     }
     let p = compile_stellar_policy(&source(
@@ -417,24 +408,16 @@ fn explicit_engine_calls_require_native_authority_but_classic_guards_remain_loca
 }
 #[test]
 fn actual_mixed_and_local_authored_inputs_compile_without_reconstruction() {
-    let mixed = compile_stellar_policy(include_str!("fixtures/stellar-state-policy.rs")).unwrap();
+    assert!(compile_stellar_policy(include_str!("fixtures/stellar-state-policy.rs")).is_err());
     let local =
         compile_stellar_policy(include_str!("fixtures/stellar-local-state-policy.rs")).unwrap();
-    assert_eq!(mixed.engine_checks, vec!["total_cap"]);
     assert!(local.engine_checks.is_empty());
-    assert!(mixed.placement_manifest.possible_shared_spent_writer);
     assert!(!local.placement_manifest.possible_shared_spent_writer);
-    assert!(mixed.requires_native_preflight() && local.requires_native_preflight());
+    assert!(local.requires_native_preflight());
     assert!(
-        mixed
+        local
             .rust_source
             .contains("allowit_policy_rules::daily_cap")
-    );
-    assert!(
-        mixed
-            .source_profile
-            .permitted_effects
-            .contains(&"policy_spent_output".into())
     );
 }
 #[test]
@@ -486,68 +469,32 @@ mod functional_rust_facade {
 }
 
 #[test]
-fn placement_options_change_only_eligible_generic_rules_and_publish_reasons() {
-    use allowit_sdk::{
-        CostContext, RuleCostEstimate, RulePlacement, StellarCompileOptions,
-        compile_stellar_policy_with_options,
-    };
+fn placement_rejects_hybrid_and_cost_selection_without_a_fallback() {
+    use allowit_sdk::{RulePlacement, StellarCompileOptions, compile_stellar_policy_with_options};
     let authored = functional("allowit::daily_cap(request,state)");
-    let context = CostContext {
-        network: "stellar:testnet".into(),
-        cost_unit: "synthetic_comparable_units".into(),
-        rules_digest: [5; 32],
-        source_profile: allowit_sdk::STELLAR_SOURCE_PROFILE.into(),
-        registry_version: allowit_sdk::REGISTRY_VERSION.into(),
-    };
-    let mut options = StellarCompileOptions {
-        default_placement: RulePlacement::Auto,
-        expected_transactions: Some(1),
-        cost_context: Some(context.clone()),
-        cost_estimates: vec![RuleCostEstimate {
-            rule_id: "daily_cap".into(),
-            context,
-            local_deployment_cost: 100,
-            shared_deployment_cost: 0,
-            local_per_call_cost: 1,
-            shared_per_call_cost: 10,
-        }],
-    };
-    let low = compile_stellar_policy_with_options(&authored, &options).unwrap();
-    assert_eq!(
-        low.placement_manifest.checks[0].selected,
-        RulePlacement::Shared
-    );
-    assert!(low.rust_source.contains("host.engine_check"));
-    assert!(!low.rust_source.contains("allowit_policy_rules::daily_cap"));
-    options.expected_transactions = Some(100);
-    let high = compile_stellar_policy_with_options(&authored, &options).unwrap();
-    assert_eq!(
-        high.placement_manifest.checks[0].selected,
-        RulePlacement::Local
-    );
-    assert!(high.rust_source.contains("allowit_policy_rules::daily_cap"));
-    assert!(!high.rust_source.contains("host.engine_check"));
-    assert_eq!(low.source_hash, high.source_hash);
-    assert_ne!(low.rust_source, high.rust_source);
-    let forced = compile_stellar_policy_with_options(
-        &functional("engine::daily_cap(request,state)"),
-        &options,
-    )
-    .unwrap();
-    assert_eq!(
-        forced.placement_manifest.checks[0].selected,
-        RulePlacement::Shared
-    );
-    options.default_placement = RulePlacement::Shared;
-    let local = compile_stellar_policy_with_options(
-        &functional("self::daily_cap(request,state)"),
-        &options,
-    )
-    .unwrap();
+    let local = compile_stellar_policy(&authored).unwrap();
     assert_eq!(
         local.placement_manifest.checks[0].selected,
         RulePlacement::Local
     );
+    assert!(
+        local
+            .rust_source
+            .contains("allowit_policy_rules::daily_cap")
+    );
+    for options in [
+        StellarCompileOptions {
+            default_placement: RulePlacement::Shared,
+            ..Default::default()
+        },
+        StellarCompileOptions {
+            expected_transactions: Some(100),
+            ..Default::default()
+        },
+    ] {
+        assert!(compile_stellar_policy_with_options(&authored, &options).is_err());
+    }
+    assert!(compile_stellar_policy(&functional("engine::daily_cap(request,state)")).is_err());
     assert!(compile_stellar_policy(&functional("self::confidence(request,state)")).is_err());
 }
 
@@ -568,4 +515,129 @@ fn native_return_ir_is_internal_and_never_leaks_into_source_registry_calls() {
         );
         assert!(compile_stellar_policy(&source).is_ok());
     }
+}
+
+#[test]
+fn engine_selection_preserves_complete_control_flow_and_rail_boundaries() {
+    use allowit_sdk::{
+        PolicyEngine as E, StellarRail as R, compile_stellar_wallet, recommend_stellar_engines,
+    };
+    let pass = source("Ok(())");
+    let common = functional(
+        "let daily=allowit::daily_cap(request,state)?;let next=allowit::with_spent(state,daily)?;allowit::total_cap(request,&next)",
+    );
+    let custom = include_str!("fixtures/stellar-local-state-policy.rs");
+    for (source, engine, rules) in [
+        (&pass[..], E::SimplePolicyEngine, vec![]),
+        (
+            &common[..],
+            E::CommonPolicyEngine,
+            vec!["daily_cap", "total_cap"],
+        ),
+        (custom, E::CustomPolicy, vec![]),
+    ] {
+        let compiled =
+            compile_stellar_wallet(source, "stellar:testnet", R::PolicyWallet, engine, true)
+                .unwrap();
+        assert_eq!(compiled.selection.rules, rules);
+        assert_eq!(
+            compiled.generated_source.is_some(),
+            engine == E::CustomPolicy
+        );
+        assert!(compiled.selection.onchain_policy);
+        assert_eq!(recommend_stellar_engines(source).unwrap()[0].engine, engine);
+        assert!(
+            compile_stellar_wallet(source, "solana:devnet", R::PolicyWallet, engine, true).is_err()
+        );
+        assert!(
+            compile_stellar_wallet(source, "eip155:42431", R::PolicyWallet, engine, true).is_err()
+        );
+    }
+    for body in [
+        "let ignored=allowit::daily_cap(request,state)?;allowit::spent(state)",
+        "if false{return allowit::daily_cap(request,state);}allowit::spent(state)",
+        "let a=allowit::daily_cap(request,state)?;let b=allowit::total_cap(request,state)?;Ok(b)",
+        "let a=allowit::daily_cap(request,state)?;let next=allowit::with_spent(state,a)?;allowit::daily_cap(request,&next)",
+    ] {
+        let source = functional(body);
+        assert!(
+            compile_stellar_wallet(
+                &source,
+                "stellar:testnet",
+                R::PolicyWallet,
+                E::CommonPolicyEngine,
+                true
+            )
+            .is_err(),
+            "{body}"
+        );
+        assert!(
+            compile_stellar_wallet(
+                &source,
+                "stellar:testnet",
+                R::PolicyWallet,
+                E::SimplePolicyEngine,
+                false
+            )
+            .is_err(),
+            "{body}"
+        );
+        assert!(
+            compile_stellar_wallet(
+                &source,
+                "stellar:testnet",
+                R::PolicyWallet,
+                E::CustomPolicy,
+                true
+            )
+            .is_ok(),
+            "{body}"
+        );
+    }
+    let capped = source("allowit::cap_per_transaction(ctx,\"2\",\"USDC\")?;Ok(())");
+    assert!(
+        compile_stellar_wallet(
+            &capped,
+            "stellar:testnet",
+            R::Classic,
+            E::SimplePolicyEngine,
+            false
+        )
+        .is_ok()
+    );
+    assert!(
+        compile_stellar_wallet(
+            &capped,
+            "stellar:testnet",
+            R::Classic,
+            E::SimplePolicyEngine,
+            true
+        )
+        .is_err()
+    );
+    for engine in [E::CommonPolicyEngine, E::CustomPolicy] {
+        assert!(
+            compile_stellar_wallet(&common, "stellar:testnet", R::Classic, engine, false).is_err()
+        );
+    }
+    let compile =
+        allowit_sdk::process_value(serde_json::json!({"operation":"compile","source":common}));
+    assert_eq!(
+        compile["stellar_engines"][0]["engine"],
+        "common_policy_engine"
+    );
+    let selected = allowit_sdk::process_value(
+        serde_json::json!({"operation":"compile_stellar_wallet","source":common,"network":"stellar:testnet","rail":"policy_wallet","engine":"common_policy_engine","require_onchain":true}),
+    );
+    assert_eq!(selected["ok"], true);
+    assert_eq!(
+        selected["compilation"]["selection"]["rules"],
+        serde_json::json!(["daily_cap", "total_cap"])
+    );
+    let unsupported = source("allowit::require_user_input(ctx,\"approval\").await?;Ok(())");
+    assert!(recommend_stellar_engines(&unsupported).is_err());
+    let result =
+        allowit_sdk::process_value(serde_json::json!({"operation":"compile","source":unsupported}));
+    assert_eq!(result["stellar_engines"], serde_json::json!([]));
+    assert!(result["stellar_engine_error"].is_object());
 }

@@ -728,6 +728,12 @@ pub fn compile_stellar_policy_with_options(
     })
 }
 impl StellarPolicy {
+    pub(crate) fn common_rules(&self) -> Option<Vec<String>> {
+        if let Some(policy) = &self.functional {
+            return policy.common_rules();
+        }
+        matches!(self.steps.as_slice(), [Step::Return(Guard::Pass)]).then(Vec::new)
+    }
     pub fn evaluate_classic(&self, c: &StellarPolicyContext) -> bool {
         if self.functional.is_some() {
             return false;

@@ -53,8 +53,8 @@ pub fn read_spent(
     source: &AccountState,
 ) -> Result<NativeValues> {
     validate_config(config)?;
-    if config.route != WalletRoute::Odc {
-        return Err("Native spent maps require ODC custody".into());
+    if config.route != WalletRoute::PolicyWallet {
+        return Err("Native spent maps require policy wallet custody".into());
     }
     if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&config.network)? {
         return Err("Spent RPC network differs from installation".into());
@@ -170,8 +170,9 @@ mod tests {
             wallet: Contract([4; 32]).to_string(),
             owner: account_for_seed(&[1; 32]),
             agent: source.address.clone(),
-            engine: Contract([3; 32]).to_string(),
-            route: WalletRoute::Odc,
+            server: account_for_seed(&[3; 32]),
+            route: WalletRoute::PolicyWallet,
+            policy_engine: Some(PolicyEngine::SimplePolicyEngine),
             asset: String::new(),
             asset_symbol: "XLM".into(),
             asset_issuer: None,

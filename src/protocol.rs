@@ -25,6 +25,14 @@ pub fn process_value(request: Value) -> Value {
     };
     let allowed: &[&str] = match operation {
         "registry" => &["operation"],
+        "compile_stellar_wallet" => &[
+            "operation",
+            "source",
+            "network",
+            "rail",
+            "engine",
+            "require_onchain",
+        ],
         "evaluate" => &["operation", "source", "profile", "context", "trace"],
         "edit_preference" => &["operation", "source", "settings"],
         "edit_score_thresholds" => &["operation", "source", "step_id", "values"],
@@ -44,6 +52,31 @@ pub fn process_value(request: Value) -> Value {
     }
     #[cfg(feature = "compiler")]
     {
+        if operation == "compile_stellar_wallet" {
+            let source = request.get("source").and_then(Value::as_str);
+            let network = request.get("network").and_then(Value::as_str);
+            let rail = request
+                .get("rail")
+                .cloned()
+                .and_then(|v| serde_json::from_value::<crate::StellarRail>(v).ok());
+            let engine = request
+                .get("engine")
+                .cloned()
+                .and_then(|v| serde_json::from_value::<crate::PolicyEngine>(v).ok());
+            let onchain = request.get("require_onchain").and_then(Value::as_bool);
+            let (Some(source), Some(network), Some(rail), Some(engine), Some(onchain)) =
+                (source, network, rail, engine, onchain)
+            else {
+                return failure(
+                    "INVALID_REQUEST",
+                    "Supply source, network, rail, engine and require_onchain.",
+                );
+            };
+            return match crate::compile_stellar_wallet(source, network, rail, engine, onchain) {
+                Ok(compilation) => json!({"ok":true,"compilation":compilation}),
+                Err(error) => json!({"ok":false,"error":error}),
+            };
+        }
         if ![
             "compile",
             "check",
@@ -98,7 +131,13 @@ pub fn process_value(request: Value) -> Value {
             };
         }
         if operation != "evaluate" {
-            return json!({"ok":true,"policy":policy});
+            let engines = crate::recommend_stellar_engines(source);
+            return match engines {
+                Ok(engines) => json!({"ok":true,"policy":policy,"stellar_engines":engines}),
+                Err(error) => {
+                    json!({"ok":true,"policy":policy,"stellar_engines":[],"stellar_engine_error":error})
+                }
+            };
         }
         let profile: Profile = match request.get("profile").cloned() {
             Some(v) => match serde_json::from_value(v) {

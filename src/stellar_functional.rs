@@ -581,6 +581,66 @@ fn run(
     Ok(None)
 }
 impl FunctionalPolicy {
+    /// Recognize the complete fixed-engine program, including state flow and rule order.
+    pub(crate) fn common_rules(&self) -> Option<Vec<String>> {
+        #[derive(Clone)]
+        enum View {
+            State(Vec<String>),
+            Spent(Vec<String>),
+        }
+        fn value(
+            v: &Value,
+            vars: &BTreeMap<String, View>,
+            executed: &mut Vec<String>,
+        ) -> Option<View> {
+            match v {
+                Value::InitialState => Some(View::State(Vec::new())),
+                Value::Var(name, _) => vars.get(name).cloned(),
+                Value::Spent(v) => match value(v, vars, executed)? {
+                    View::State(rules) => Some(View::Spent(rules)),
+                    _ => None,
+                },
+                Value::WithSpent(old, next) => {
+                    let View::State(_) = value(old, vars, executed)? else {
+                        return None;
+                    };
+                    let View::Spent(rules) = value(next, vars, executed)? else {
+                        return None;
+                    };
+                    Some(View::State(rules))
+                }
+                Value::Rule(name, RulePlacement::Local, state) => {
+                    let View::State(mut rules) = value(state, vars, executed)? else {
+                        return None;
+                    };
+                    if rules != *executed || executed.contains(name) {
+                        return None;
+                    }
+                    rules.push(name.clone());
+                    executed.push(name.clone());
+                    Some(View::Spent(rules))
+                }
+                _ => None,
+            }
+        }
+        let mut vars = BTreeMap::new();
+        let mut executed = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            match step {
+                Step::Let(name, v) => {
+                    vars.insert(name.clone(), value(v, &vars, &mut executed)?);
+                }
+                Step::Return(v) if index + 1 == self.steps.len() => {
+                    let View::Spent(rules) = value(v, &vars, &mut executed)? else {
+                        return None;
+                    };
+                    return (rules == executed).then_some(rules);
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
     pub fn compile(
         statements: &[Statement],
         options: &StellarCompileOptions,

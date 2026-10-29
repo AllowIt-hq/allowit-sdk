@@ -1,5 +1,5 @@
 //! Stellar adapters for the existing typed execution request and operation lifecycle.
-//! Native and ODC custody use the same authored policy and exact operation identity.
+//! Native and policy wallet custody use the same authored policy and exact operation identity.
 use allowit_policy_sdk::typed_workflow::{
     AbiValue, AccountId as WorkflowAccount, AccountKind, Amount256, Chain, ExecutionInput,
     ExecutionRequest, NativeInstruction, WorkflowAsset,
@@ -10,8 +10,11 @@ use sha2::{Digest, Sha256};
 use stellar_strkey::{Contract, Strkey, ed25519};
 use stellar_xdr::*;
 
+pub use allowit_policy_sdk::PolicyEngine;
 pub mod admin;
+mod authorization;
 pub mod owner;
+pub use authorization::authorize_server;
 pub mod properties;
 mod values;
 pub use values::NativeValues;
@@ -146,6 +149,9 @@ fn amount(v: &Amount256) -> Result<i128> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub enum WalletRoute {
     Native,
+    PolicyWallet,
+    /// Historical signed packets only. New preparation rejects this route.
+    #[doc(hidden)]
     Odc,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -156,8 +162,11 @@ pub struct WalletConfig {
     pub wallet: String,
     pub owner: String,
     pub agent: String,
-    pub engine: String,
+    #[serde(alias = "engine")]
+    pub server: String,
     pub route: WalletRoute,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_engine: Option<PolicyEngine>,
     pub asset: String,
     pub asset_symbol: String,
     #[serde(default)]
@@ -186,8 +195,8 @@ pub struct AccountState {
 }
 fn automated_roles(c: &WalletConfig) -> Vec<&str> {
     let mut roles = vec![c.agent.as_str()];
-    if c.route == WalletRoute::Native && c.engine != c.agent {
-        roles.push(c.engine.as_str());
+    if c.route == WalletRoute::Native && c.server != c.agent {
+        roles.push(c.server.as_str());
     }
     roles
 }
@@ -280,7 +289,7 @@ pub struct TrustedState {
     /// Executable release metadata. Legacy code has no advertised release version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_version: Option<u32>,
-    /// Full chain-observed ODC maps; classic usage fields below are not ODC accounting.
+    /// Full chain-observed policy wallet maps; classic usage fields below are not policy wallet accounting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_state: Option<PolicyStateSnapshot>,
     pub source: AccountState,
@@ -297,7 +306,8 @@ pub struct TrustedState {
     pub source_hash: [u8; 32],
     pub owner: String,
     pub agent: String,
-    pub engine: String,
+    #[serde(alias = "engine")]
+    pub server: String,
     pub policy_instance: [u8; 32],
 }
 /// Ephemeral proof that the exact native operation passed trusted RPC preflight.
@@ -377,7 +387,7 @@ pub fn validate_config(c: &WalletConfig) -> Result<()> {
         || c.max_fee_stroops
             > match c.route {
                 WalletRoute::Native => 1_000_000,
-                WalletRoute::Odc => 2_000_000,
+                WalletRoute::PolicyWallet | WalletRoute::Odc => 2_000_000,
             }
     {
         return Err("Invalid installed policy or fee binding".into());
@@ -387,13 +397,23 @@ pub fn validate_config(c: &WalletConfig) -> Result<()> {
     match c.route {
         WalletRoute::Native => {
             account_key(&c.wallet)?;
-            account_key(&c.engine)?;
+            account_key(&c.server)?;
         }
-        WalletRoute::Odc => {
-            Contract::from_string(&c.engine).map_err(err)?;
+        WalletRoute::PolicyWallet | WalletRoute::Odc => {
+            if c.route == WalletRoute::PolicyWallet {
+                account_key(&c.server)?;
+                if c.server == c.agent || c.policy_engine.is_none() {
+                    return Err(
+                        "Distinct agent and service signer and selected policy engine are required"
+                            .into(),
+                    );
+                }
+            } else {
+                Contract::from_string(&c.server).map_err(err)?;
+            }
             Contract::from_string(&c.wallet).map_err(err)?;
             if c.module_digest == [0; 32] {
-                return Err("Missing installed ODC code identity".into());
+                return Err("Missing installed policy wallet code identity".into());
             }
         }
     }
@@ -556,7 +576,7 @@ pub fn verify_policy(
                 .into(),
         );
     }
-    if c.route == WalletRoute::Odc && policy.requires_native_preflight() {
+    if c.route == WalletRoute::PolicyWallet && policy.requires_native_preflight() {
         return Err("Native policy requires authoritative execution preflight".into());
     }
     if policy.source_hash != c.source_hash
@@ -650,10 +670,15 @@ fn build(
 ) -> Result<Transaction> {
     let admit_policy = matches!(packet, PacketUse::Current);
     let legacy_revision = matches!(packet, PacketUse::RetainedRevision);
-    if c.route == WalletRoute::Odc {
+    if c.route == WalletRoute::Odc
+        && matches!(packet, PacketUse::Current | PacketUse::NativePreflight)
+    {
+        return Err("Historical wallet packets are read-only".into());
+    }
+    if matches!(c.route, WalletRoute::PolicyWallet | WalletRoute::Odc) {
         if legacy_revision {
             if admit_policy || state.contract_version.is_some() {
-                return Err("Legacy ODC packets are read-only".into());
+                return Err("Legacy policy wallet packets are read-only".into());
             }
         } else if state.contract_version != Some(1) {
             return Err("Unsupported policy contract version".into());
@@ -679,11 +704,12 @@ fn build(
         return Err("Installed authored source identity differs".into());
     }
     if state.policy_instance != c.policy_instance
-        || (c.route == WalletRoute::Native && (state.agent != c.agent || state.engine != c.engine))
+        || (c.route == WalletRoute::Native && state.agent != c.agent)
+        || (c.route != WalletRoute::Odc && state.server != c.server)
     {
         return Err("Trusted wallet identity differs".into());
     }
-    let body = match c.route {
+    let mut body = match c.route {
         WalletRoute::Native => {
             state.source.validate_wallet(c)?;
             OperationBody::Payment(PaymentOp {
@@ -692,17 +718,21 @@ fn build(
                 amount: i64::try_from(t.amount).map_err(|_| "Classic payment exceeds i64")?,
             })
         }
-        WalletRoute::Odc => {
+        WalletRoute::PolicyWallet | WalletRoute::Odc => {
             state.source.validate_structure()?;
             if state.source.signer_weight(&c.agent)? == 0 {
-                return Err("Customer is not a current ODC agent account signer".into());
+                return Err("Customer is not a current policy wallet agent account signer".into());
             }
             if state.module_digest != c.module_digest || state.source.address != state.agent {
-                return Err("ODC executable or current agent transaction source differs".into());
+                return Err(
+                    "policy wallet executable or current agent transaction source differs".into(),
+                );
             }
             let fee = &r.fee_bounds.as_ref().ok_or("Native fee bound required")?[0];
             if workflow_address(&fee.payer)? != state.source.address {
-                return Err("ODC fee payer differs from its current agent account".into());
+                return Err(
+                    "policy wallet fee payer differs from its current agent account".into(),
+                );
             }
             OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
                 host_function: HostFunction::InvokeContract(InvokeContractArgs {
@@ -730,6 +760,19 @@ fn build(
             })
         }
     };
+    if c.route == WalletRoute::PolicyWallet {
+        let OperationBody::InvokeHostFunction(op) = &mut body else {
+            unreachable!()
+        };
+        let mut auth = op.auth.to_vec();
+        auth.push(authorization::server_entry(
+            c,
+            r,
+            state,
+            auth[0].root_invocation.clone(),
+        )?);
+        op.auth = auth.try_into().map_err(err)?;
+    }
     let tx = Transaction {
         source_account: muxed(&state.source.address)?,
         fee: c.max_fee_stroops,
@@ -817,10 +860,7 @@ fn prepare_with_bounds(
     })
 }
 fn needs_native_preflight(c: &WalletConfig) -> Result<bool> {
-    Ok(c.route == WalletRoute::Odc
-        && allowit_policy_sdk::compile_stellar_policy(&c.policy_source)
-            .map_err(err)?
-            .requires_native_preflight())
+    Ok(c.route == WalletRoute::PolicyWallet)
 }
 fn preflight_binding(p: &PreparedOperation) -> Result<[u8; 32]> {
     Ok(hash(serde_json::to_vec(p).map_err(err)?))
@@ -842,7 +882,7 @@ pub(crate) fn prepare_for_native_preflight(
     if c.source_hash != compiled.source_hash {
         return Err("Compiled policy source identity differs".into());
     }
-    if c.route != WalletRoute::Odc {
+    if c.route != WalletRoute::PolicyWallet {
         return prepare(c, r, state, now, expires_at);
     }
     if state.policy_state.is_none() {
@@ -874,8 +914,12 @@ fn validate_signing_policy(p: &PreparedOperation, now: u64) -> Result<()> {
 }
 /// Rebuild every authorization field before signing. Caller-supplied prepared metadata is not trusted.
 pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
-    if p.config.route == WalletRoute::Odc && p.state.contract_version != Some(1) {
-        return Err("Legacy or unsupported ODC packets cannot authorize execution".into());
+    if p.config.route == WalletRoute::Odc
+        || (p.config.route == WalletRoute::PolicyWallet && p.state.contract_version != Some(1))
+    {
+        return Err(
+            "Legacy or unsupported policy wallet packets cannot authorize execution".into(),
+        );
     }
     if p.version != 1 || p.created_at > now || now >= p.expires_at {
         return Err("Prepared operation is stale".into());
@@ -912,6 +956,9 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
             PacketUse::Retained
         },
     )?;
+    if p.config.route == WalletRoute::PolicyWallet {
+        expected = authorization::attach(&expected, authorization::server_signature(p, false)?)?;
+    }
     if let Some(data) = &p.simulation_data {
         expected = attach_simulation(&expected, data)?;
     }
@@ -934,13 +981,13 @@ fn retained_revision_packet(p: &PreparedOperation) -> Result<bool> {
         ..
     }) = env.tx.operations.first()
     else {
-        return Err("Invalid retained ODC operation".into());
+        return Err("Invalid retained policy wallet operation".into());
     };
     let HostFunction::InvokeContract(call) = &op.host_function else {
-        return Err("Invalid retained ODC call".into());
+        return Err("Invalid retained policy wallet call".into());
     };
     let Some(ScVal::Map(Some(fields))) = call.args.first() else {
-        return Err("Invalid retained ODC request".into());
+        return Err("Invalid retained policy wallet request".into());
     };
     let keys: Vec<_> = fields
         .iter()
@@ -956,7 +1003,7 @@ fn retained_revision_packet(p: &PreparedOperation) -> Result<bool> {
     ) {
         (None, true, false) => Ok(true),
         (Some(1), false, true) => Ok(false),
-        _ => Err("Unsupported retained ODC contract format".into()),
+        _ => Err("Unsupported retained policy wallet contract format".into()),
     }
 }
 fn native_lower_bound(p: &PreparedOperation) -> Result<u64> {
@@ -978,12 +1025,15 @@ pub fn sign(p: &PreparedOperation, seed: &[u8; 32], now: u64) -> Result<Detached
     validate_prepared(p, now)?;
     current_authorization_bounds(p)?;
     validate_signing_policy(p, now)?;
-    if p.config.route == WalletRoute::Odc && p.simulation_data.is_none() {
-        return Err("ODC resource simulation is required before signing".into());
+    if p.config.route == WalletRoute::PolicyWallet && p.simulation_data.is_none() {
+        return Err("policy wallet resource simulation is required before signing".into());
+    }
+    if p.config.route == WalletRoute::PolicyWallet {
+        authorization::server_signature(p, true)?;
     }
     let signer = account_for_seed(seed);
     let allowed = if p.config.route == WalletRoute::Native {
-        signer == p.config.agent || signer == p.config.engine
+        signer == p.config.agent || signer == p.config.server
     } else {
         signer == p.config.agent
     };
@@ -1056,8 +1106,11 @@ pub fn authorize(
 ) -> Result<SignedOperation> {
     validate_prepared(p, now)?;
     current_authorization_bounds(p)?;
+    if p.config.route == WalletRoute::PolicyWallet {
+        authorization::server_signature(p, true)?;
+    }
     let required = automated_roles(&p.config);
-    let aliased_roles = p.config.route == WalletRoute::Native && p.config.agent == p.config.engine;
+    let aliased_roles = p.config.route == WalletRoute::Native && p.config.agent == p.config.server;
     if signatures.len() != required.len() && !(aliased_roles && signatures.len() == 2) {
         return Err("Exact automated signature quorum required".into());
     }
@@ -1123,6 +1176,9 @@ pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
 /// Callers must compare their durable original identity and use it only for status/recovery.
 pub fn validate_retained_signed(s: &SignedOperation) -> Result<()> {
     validate_retained_prepared(&s.prepared)?;
+    if s.prepared.config.route == WalletRoute::PolicyWallet {
+        authorization::server_signature(&s.prepared, true)?;
+    }
     if s.transaction_hash != s.prepared.transaction_hash {
         return Err("Signed transaction identity differs".into());
     }
@@ -1168,8 +1224,8 @@ pub fn validate_retained_signed(s: &SignedOperation) -> Result<()> {
 
 /// Attach only RPC resource data. The exact invocation and authorization remain unchanged.
 pub fn attach_simulation(p: &PreparedOperation, data: &str) -> Result<PreparedOperation> {
-    if p.config.route != WalletRoute::Odc {
-        return Err("Resource data is only valid for ODC execution".into());
+    if !matches!(p.config.route, WalletRoute::PolicyWallet | WalletRoute::Odc) {
+        return Err("Resource data is only valid for policy wallet execution".into());
     }
     let resource: SorobanTransactionData = read(data)?;
     let required = u32::try_from(resource.resource_fee)
@@ -1188,6 +1244,12 @@ pub fn attach_simulation(p: &PreparedOperation, data: &str) -> Result<PreparedOp
     out.transaction_hash = transaction_hash(&p.config.network, &env.tx)?;
     out.transaction_xdr = xdr(&TransactionEnvelope::Tx(env))?;
     out.simulation_data = Some(data.into());
-    transaction_signers(&out, &automated_roles(&out.config))?;
+    // An unsigned service entry has not established the final transaction hash.
+    // Exact source-account quorum is checked after that entry is signed.
+    if out.config.route != WalletRoute::PolicyWallet
+        || authorization::server_signature(&out, false)? != ScVal::Void
+    {
+        transaction_signers(&out, &automated_roles(&out.config))?;
+    }
     Ok(out)
 }
