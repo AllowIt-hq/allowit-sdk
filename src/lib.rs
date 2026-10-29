@@ -2,6 +2,8 @@
 
 extern crate alloc;
 
+pub mod admin;
+
 #[cfg(feature = "compiler")]
 mod compiler;
 #[cfg(feature = "compiler")]

@@ -339,7 +339,7 @@ pub struct NativeAccounting {
     pub spent_day: u64,
     pub calls: u64,
 }
-fn map_field<'a>(value: &'a ScVal, name: &str) -> Result<&'a ScVal> {
+pub(crate) fn map_field<'a>(value: &'a ScVal, name: &str) -> Result<&'a ScVal> {
     let ScVal::Map(Some(map)) = value else {
         return Err("Expected contract record".into());
     };
@@ -348,20 +348,31 @@ fn map_field<'a>(value: &'a ScVal, name: &str) -> Result<&'a ScVal> {
         .map(|e| &e.val)
         .ok_or_else(|| format!("Missing contract field {name}"))
 }
-fn number(value: &ScVal) -> Result<u64> {
+pub(crate) fn policy_version_field(state: &ScVal, schema: u64) -> Result<u64> {
+    let (field, other) = match schema {
+        1 => ("revision", "policy_version"),
+        2 => ("policy_version", "revision"),
+        _ => return Err("Unsupported ODC state version".into()),
+    };
+    if map_field(state, other).is_ok() {
+        return Err("ODC state contains conflicting version fields".into());
+    }
+    number(map_field(state, field)?)
+}
+pub(crate) fn number(value: &ScVal) -> Result<u64> {
     match value {
         ScVal::U32(v) => Ok((*v).into()),
         ScVal::U64(v) => Ok(*v),
         _ => Err("Expected contract unsigned integer".into()),
     }
 }
-fn wide(value: &ScVal) -> Result<i128> {
+pub(crate) fn wide(value: &ScVal) -> Result<i128> {
     match value {
         ScVal::I128(v) => Ok((i128::from(v.hi) << 64) | i128::from(v.lo)),
         _ => Err("Expected native i128 amount".into()),
     }
 }
-fn digest_field(value: &ScVal) -> Result<[u8; 32]> {
+pub(crate) fn digest_field(value: &ScVal) -> Result<[u8; 32]> {
     match value {
         ScVal::Bytes(v) => {
             v.0.as_slice()
@@ -371,13 +382,13 @@ fn digest_field(value: &ScVal) -> Result<[u8; 32]> {
         _ => Err("Expected bytes32".into()),
     }
 }
-fn addr(value: &ScVal) -> Result<String> {
+pub(crate) fn addr(value: &ScVal) -> Result<String> {
     match value {
         ScVal::Address(a) => address_text(a),
         _ => Err("Expected native contract address".into()),
     }
 }
-fn readonly_call(
+pub(crate) fn readonly_call(
     rpc: &dyn Rpc,
     c: &WalletConfig,
     source: &AccountState,
@@ -468,9 +479,10 @@ fn trusted_state_inner(
         let a = accounting.ok_or("Native wallet requires authoritative policy accounting")?;
         return Ok(DiscoveredState {
             state: TrustedState {
+                contract_interface_version: 1,
                 source,
                 nonce: a.nonce,
-                revision: a.revision,
+                policy_version: a.revision,
                 spent_daily: a.spent_daily,
                 spent_total: a.spent_total,
                 spent_day: a.spent_day,
@@ -523,7 +535,8 @@ fn trusted_state_inner(
         .find(|e| e.key == ScVal::U32(0))
         .map(|e| &e.val)
         .ok_or("Missing ODC custody state")?;
-    if number(map_field(state, "version")?)? != 1 {
+    let state_version = number(map_field(state, "version")?)?;
+    if !matches!(state_version, 1 | 2) {
         return Err("Unsupported ODC custody state version".into());
     }
     let paused = match map_field(state, "paused")? {
@@ -548,14 +561,22 @@ fn trusted_state_inner(
     {
         return Err("Compiled policy binding differs from installation".into());
     }
+    let interface_version = match map_field(&binding, "interface_version") {
+        Ok(value) => number(value)?,
+        Err(_) => 1,
+    };
+    if !matches!(interface_version, 1 | 2) || state_version > interface_version {
+        return Err("ODC interface and state version differ".into());
+    }
     let grant = map_field(state, "grant")?;
     if addr(map_field(grant, "asset")?)? != c.asset {
         return Err("ODC asset differs from installation".into());
     }
     let out = TrustedState {
+        contract_interface_version: interface_version as u32,
         source,
         nonce: number(map_field(state, "nonce")?)?,
-        revision: number(map_field(state, "revision")?)?,
+        policy_version: policy_version_field(state, state_version)?,
         spent_daily: wide(map_field(state, "spent_daily")?)?,
         spent_total: wide(map_field(state, "spent_total")?)?,
         spent_day: number(map_field(state, "spent_day")?)?,
@@ -569,4 +590,19 @@ fn trusted_state_inner(
         policy_instance: c.policy_instance,
     };
     Ok(DiscoveredState { state: out, paused })
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn mixed_legacy_and_current_version_fields_are_rejected() {
+        let mixed = value_map(vec![
+            ("revision", ScVal::U64(3)),
+            ("policy_version", ScVal::U64(3)),
+        ])
+        .unwrap();
+        assert!(policy_version_field(&mixed, 1).is_err());
+        assert!(policy_version_field(&mixed, 2).is_err());
+    }
 }

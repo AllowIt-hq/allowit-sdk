@@ -10,8 +10,13 @@ use sha2::{Digest, Sha256};
 use stellar_strkey::{Contract, Strkey, ed25519};
 use stellar_xdr::*;
 
+pub mod admin;
 pub mod rpc;
 pub type Result<T> = std::result::Result<T, String>;
+fn legacy_interface() -> u32 {
+    1
+}
+
 pub const PROFILE: &str = "allowit-stellar-wallet-v1";
 pub const ARGUMENT_SCHEMA: &[u8] = b"allowit.stellar.sep41_transfer.v1:ScValMap(amount:i128,from:Address,to:Address,token:Address)";
 const MAX_BYTES: usize = 1_048_576;
@@ -264,9 +269,12 @@ impl AccountState {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrustedState {
+    #[serde(default = "legacy_interface")]
+    pub contract_interface_version: u32,
     pub source: AccountState,
     pub nonce: u64,
-    pub revision: u64,
+    #[serde(alias = "revision")]
+    pub policy_version: u64,
     pub spent_daily: i128,
     pub spent_total: i128,
     pub spent_day: u64,
@@ -561,7 +569,14 @@ fn odc_request(
         ("policy_instance", value_bytes(&c.policy_instance)?),
         ("operation_id", value_bytes(&r.operation.nonce)?),
         ("nonce", ScVal::U64(state.nonce)),
-        ("revision", ScVal::U64(state.revision)),
+        (
+            match state.contract_interface_version {
+                1 => "revision",
+                2 => "policy_version",
+                _ => return Err("Unsupported ODC interface version".into()),
+            },
+            ScVal::U64(state.policy_version),
+        ),
         ("expires_at", ScVal::U64(expires)),
         ("invocation", invocation),
     ])

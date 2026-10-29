@@ -1,0 +1,432 @@
+//! Owner preparation for the versioned ODC interface. No keys or submissions.
+use crate::*;
+use allowit_policy_sdk::admin::{DeployPolicy, PolicyVersion, RecoverFunds, SetPause};
+use serde_json::json;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Grant {
+    pub asset: String,
+    pub recipients: Vec<String>,
+    pub per_transfer: i128,
+    pub daily_limit: i128,
+    pub total_limit: i128,
+    pub max_calls: u64,
+    pub expires_at: u64,
+}
+impl Grant {
+    fn value(&self) -> Result<ScVal> {
+        value_map(vec![
+            ("asset", ScVal::Address(address(&self.asset)?)),
+            (
+                "recipients",
+                ScVal::Vec(Some(
+                    self.recipients
+                        .iter()
+                        .map(|a| address(a).map(ScVal::Address))
+                        .collect::<Result<Vec<_>>>()?
+                        .try_into()
+                        .map_err(err)?,
+                )),
+            ),
+            ("per_transfer", i128_value(self.per_transfer)),
+            ("daily_limit", i128_value(self.daily_limit)),
+            ("total_limit", i128_value(self.total_limit)),
+            ("max_calls", ScVal::U64(self.max_calls)),
+            ("expires_at", ScVal::U64(self.expires_at)),
+        ])
+    }
+}
+
+/// Complete owner-approved configuration. The version is supplied to deploy_policy.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyDeployment {
+    pub owner: String,
+    pub agent: String,
+    pub engine: String,
+    pub grant: Grant,
+    pub paused: bool,
+    pub x402_signer: Option<[u8; 32]>,
+    pub wasm_hash: Option<[u8; 32]>,
+}
+impl PolicyDeployment {
+    fn value(&self, version: PolicyVersion) -> Result<ScVal> {
+        value_map(vec![
+            ("policy_version", ScVal::U64(version.0)),
+            ("owner", ScVal::Address(address(&self.owner)?)),
+            ("agent", ScVal::Address(address(&self.agent)?)),
+            ("engine", ScVal::Address(address(&self.engine)?)),
+            ("grant", self.grant.value()?),
+            ("paused", ScVal::Bool(self.paused)),
+            (
+                "x402_signer",
+                self.x402_signer
+                    .as_ref()
+                    .map(|k| value_bytes(k))
+                    .transpose()?
+                    .unwrap_or(ScVal::Void),
+            ),
+            (
+                "wasm_hash",
+                self.wasm_hash
+                    .as_ref()
+                    .map(|k| value_bytes(k))
+                    .transpose()?
+                    .unwrap_or(ScVal::Void),
+            ),
+        ])
+    }
+}
+
+/// Unsigned native transaction for owner review and native-wallet authorization.
+/// It is not a deployment receipt, a signing URL or permission to broadcast.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreparedOwnerOperation {
+    pub network: String,
+    pub wallet: String,
+    pub owner: String,
+    pub function: String,
+    pub policy_version: u64,
+    pub transaction_xdr: String,
+    pub transaction_hash: [u8; 32],
+    pub expires_at: u64,
+    pub required_authorizers: Vec<String>,
+}
+
+/// Bound vendor implementation. Native account ownership is required for this
+/// preparation route. Contract-owner authorization needs its own native adapter.
+pub struct OwnerAdmin<'a> {
+    pub rpc: &'a dyn rpc::Rpc,
+    pub config: &'a WalletConfig,
+    pub now: u64,
+}
+struct Snapshot {
+    owner: AccountState,
+    policy_version: PolicyVersion,
+}
+impl OwnerAdmin<'_> {
+    fn snapshot(&self) -> Result<Snapshot> {
+        use rpc::{addr, digest_field, map_field, number};
+        let c = self.config;
+        validate_config(c)?;
+        if c.route != WalletRoute::Odc {
+            return Err("Owner administration requires ODC custody".into());
+        }
+        if self.rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&c.network)? {
+            return Err("Stellar RPC network differs from installation".into());
+        }
+        let key = LedgerKey::ContractData(LedgerKeyContractData {
+            contract: address(&c.wallet)?,
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+        });
+        let entries = self
+            .rpc
+            .call("getLedgerEntries", json!({"keys":[xdr(&key)?]}))?;
+        let list = entries["entries"]
+            .as_array()
+            .ok_or("Missing ODC instance")?;
+        if list.len() != 1 {
+            return Err("ODC instance not found".into());
+        }
+        let LedgerEntryData::ContractData(data) =
+            read(list[0]["xdr"].as_str().ok_or("Missing instance XDR")?)?
+        else {
+            return Err("Unexpected ODC ledger entry".into());
+        };
+        if data.contract != address(&c.wallet)?
+            || data.key != ScVal::LedgerKeyContractInstance
+            || data.durability != ContractDataDurability::Persistent
+        {
+            return Err("ODC instance key differs".into());
+        }
+        let ScVal::ContractInstance(instance) = data.val else {
+            return Err("Missing ODC instance".into());
+        };
+        if instance.executable != ContractExecutable::Wasm(Hash(c.module_digest)) {
+            return Err("ODC executable differs from owner-approved code".into());
+        }
+        let storage = instance.storage.ok_or("Missing ODC storage")?;
+        let state = storage
+            .iter()
+            .find(|e| e.key == ScVal::U32(0))
+            .map(|e| &e.val)
+            .ok_or("Missing ODC custody state")?;
+        let state_version = number(map_field(state, "version")?)?;
+        if !matches!(state_version, 1 | 2) {
+            return Err("Unsupported ODC state version".into());
+        }
+        let current_owner = addr(map_field(state, "owner")?)?;
+        if current_owner != c.owner {
+            return Err("Current owner differs from the bound owner".into());
+        }
+        account_key(&current_owner)
+            .map_err(|_| "Contract owners require a separate native authorization adapter")?;
+        let owner = rpc::get_account(self.rpc, &current_owner)?;
+        owner.validate_structure()?;
+        let binding = rpc::readonly_call(self.rpc, c, &owner, "policy_binding")?;
+        if number(map_field(&binding, "interface_version")?)? != 2
+            || digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
+            || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
+            || digest_field(map_field(&binding, "source_digest")?)? != c.source_hash
+            || digest_field(map_field(&binding, "argument_schema_digest")?)?
+                != hash(ARGUMENT_SCHEMA)
+            || map_field(&binding, "entrypoint")? != &value_symbol("_execute")?
+        {
+            return Err("Owner ODC interface or policy binding differs".into());
+        }
+        let grant = map_field(state, "grant")?.clone();
+        if addr(map_field(&grant, "asset")?)? != c.asset {
+            return Err("ODC asset differs from installation".into());
+        }
+        Ok(Snapshot {
+            owner,
+            policy_version: PolicyVersion(rpc::policy_version_field(state, state_version)?),
+        })
+    }
+    fn transaction(
+        &self,
+        source: &AccountState,
+        contract: &str,
+        function: &str,
+        args: Vec<ScVal>,
+        expiry: u64,
+        auth: bool,
+    ) -> Result<Transaction> {
+        let call = InvokeContractArgs {
+            contract_address: address(contract)?,
+            function_name: ScSymbol(function.as_bytes().to_vec().try_into().map_err(err)?),
+            args: args.try_into().map_err(err)?,
+        };
+        let entries = if auth {
+            vec![SorobanAuthorizationEntry {
+                credentials: SorobanCredentials::SourceAccount,
+                root_invocation: SorobanAuthorizedInvocation {
+                    function: SorobanAuthorizedFunction::ContractFn(call.clone()),
+                    sub_invocations: VecM::default(),
+                },
+            }]
+        } else {
+            vec![]
+        };
+        Ok(Transaction {
+            source_account: muxed(&source.address)?,
+            fee: 100,
+            seq_num: SequenceNumber(source.sequence.checked_add(1).ok_or("Sequence overflow")?),
+            cond: Preconditions::Time(TimeBounds {
+                min_time: TimePoint(0),
+                max_time: TimePoint(expiry),
+            }),
+            memo: Memo::None,
+            operations: vec![Operation {
+                source_account: None,
+                body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                    host_function: HostFunction::InvokeContract(call),
+                    auth: entries.try_into().map_err(err)?,
+                }),
+            }]
+            .try_into()
+            .map_err(err)?,
+            ext: TransactionExt::V0,
+        })
+    }
+    fn prepare(
+        &self,
+        snapshot: Snapshot,
+        function: &str,
+        args: Vec<ScVal>,
+        version: PolicyVersion,
+        authorizers: Vec<String>,
+    ) -> Result<PreparedOwnerOperation> {
+        let expires = self.now.checked_add(300).ok_or("Expiry overflow")?;
+        let mut tx = self.transaction(
+            &snapshot.owner,
+            &self.config.wallet,
+            function,
+            args,
+            expires,
+            true,
+        )?;
+        let response=self.rpc.call("simulateTransaction",json!({"transaction":xdr(&TransactionEnvelope::Tx(TransactionV1Envelope{tx:tx.clone(),signatures:VecM::default()}))?}))?;
+        if response.get("error").is_some() {
+            return Err("Owner operation simulation rejected".into());
+        }
+        let fee = response["minResourceFee"]
+            .as_str()
+            .ok_or("Missing resource fee")?
+            .parse::<u32>()
+            .map_err(err)?
+            .checked_add(100)
+            .ok_or("Fee overflow")?;
+        if fee > self.config.max_fee_stroops {
+            return Err("Owner operation exceeds configured fee ceiling".into());
+        }
+        let results = response["results"]
+            .as_array()
+            .ok_or("Missing simulation result")?;
+        if results.len() != 1 {
+            return Err("Unexpected owner simulation result count".into());
+        }
+        let auth = results[0]["auth"]
+            .as_array()
+            .ok_or("Missing owner authorization entries")?;
+        let parsed = auth
+            .iter()
+            .map(|v| {
+                read::<SorobanAuthorizationEntry>(v.as_str().ok_or("Invalid authorization XDR")?)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut operations = tx.operations.to_vec();
+        let OperationBody::InvokeHostFunction(ref mut op) = operations[0].body else {
+            unreachable!()
+        };
+        let HostFunction::InvokeContract(call) = &op.host_function else {
+            unreachable!()
+        };
+        let mut seen = Vec::new();
+        for entry in &parsed {
+            if entry.root_invocation.function != SorobanAuthorizedFunction::ContractFn(call.clone())
+                || !entry.root_invocation.sub_invocations.is_empty()
+            {
+                return Err("Owner authorization scope differs".into());
+            }
+            let who = match &entry.credentials {
+                SorobanCredentials::SourceAccount => snapshot.owner.address.clone(),
+                SorobanCredentials::Address(c) | SorobanCredentials::AddressV2(c) => {
+                    address_text(&c.address)?
+                }
+                _ => return Err("Unsupported owner credentials".into()),
+            };
+            if !authorizers.contains(&who) || seen.contains(&who) {
+                return Err("Unexpected owner authorizer".into());
+            }
+            seen.push(who);
+        }
+        if authorizers.iter().any(|who| !seen.contains(who)) {
+            return Err("Missing required owner authorizer".into());
+        }
+        op.auth = parsed.try_into().map_err(err)?;
+        tx.operations = operations.try_into().map_err(err)?;
+        tx.fee = fee;
+        tx.ext = TransactionExt::V1(read(
+            response["transactionData"]
+                .as_str()
+                .ok_or("Missing owner resource data")?,
+        )?);
+        if let TransactionExt::V1(ref data) = tx.ext
+            && (data.resource_fee < 0
+                || u64::try_from(data.resource_fee).map_err(err)? + 100 != u64::from(fee))
+        {
+            return Err("Owner resource fee differs from simulation".into());
+        }
+        Ok(PreparedOwnerOperation {
+            network: self.config.network.clone(),
+            wallet: self.config.wallet.clone(),
+            owner: snapshot.owner.address,
+            function: function.into(),
+            policy_version: version.0,
+            transaction_hash: transaction_hash(&self.config.network, &tx)?,
+            transaction_xdr: xdr(&TransactionEnvelope::Tx(TransactionV1Envelope {
+                tx,
+                signatures: VecM::default(),
+            }))?,
+            expires_at: expires,
+            required_authorizers: authorizers,
+        })
+    }
+}
+impl DeployPolicy for OwnerAdmin<'_> {
+    type Artifact = PolicyDeployment;
+    type Output = PreparedOwnerOperation;
+    type Error = String;
+    fn deploy_policy(
+        &mut self,
+        version: PolicyVersion,
+        artifact: PolicyDeployment,
+    ) -> Result<PreparedOwnerOperation> {
+        let s = self.snapshot()?;
+        if !version.follows(s.policy_version) {
+            return Err("Policy deployment must target the next version".into());
+        }
+        let mut authorizers = vec![s.owner.address.clone()];
+        if artifact.owner != s.owner.address {
+            authorizers.push(artifact.owner.clone());
+        }
+        self.prepare(
+            s,
+            "deploy_policy",
+            vec![artifact.value(version)?],
+            version,
+            authorizers,
+        )
+    }
+}
+impl SetPause for OwnerAdmin<'_> {
+    type Output = PreparedOwnerOperation;
+    type Error = String;
+    fn set_pause(
+        &mut self,
+        paused: bool,
+        version: PolicyVersion,
+    ) -> Result<PreparedOwnerOperation> {
+        let s = self.snapshot()?;
+        if !version.follows(s.policy_version) {
+            return Err("Pause must target the next policy version".into());
+        }
+        let authorizers = vec![s.owner.address.clone()];
+        self.prepare(
+            s,
+            "set_pause",
+            vec![ScVal::Bool(paused), ScVal::U64(version.0)],
+            version,
+            authorizers,
+        )
+    }
+}
+impl RecoverFunds for OwnerAdmin<'_> {
+    type Output = PreparedOwnerOperation;
+    type Error = String;
+    fn recover_funds(&mut self, token: &str) -> Result<PreparedOwnerOperation> {
+        let s = self.snapshot()?;
+        if token != self.config.asset {
+            return Err("This ODC profile can recover only its installed asset".into());
+        }
+        let tx = self.transaction(
+            &s.owner,
+            token,
+            "balance",
+            vec![ScVal::Address(address(&self.config.wallet)?)],
+            self.now.checked_add(300).ok_or("Expiry overflow")?,
+            false,
+        )?;
+        let response=self.rpc.call("simulateTransaction",json!({"transaction":xdr(&TransactionEnvelope::Tx(TransactionV1Envelope{tx,signatures:VecM::default()}))?}))?;
+        if response.get("error").is_some() {
+            return Err("Owner balance observation failed".into());
+        }
+        let values = response["results"]
+            .as_array()
+            .ok_or("Missing token balance result")?;
+        if values.len() != 1 {
+            return Err("Unexpected token balance result count".into());
+        }
+        let amount = rpc::wide(&read(
+            values[0]["xdr"]
+                .as_str()
+                .ok_or("Missing token balance XDR")?,
+        )?)?;
+        if amount <= 0 {
+            return Err("Selected token has no recoverable balance".into());
+        }
+        let owner = s.owner.address.clone();
+        let version = s.policy_version;
+        self.prepare(
+            s,
+            "recover",
+            vec![ScVal::Address(address(&owner)?), i128_value(amount)],
+            version,
+            vec![owner],
+        )
+    }
+}

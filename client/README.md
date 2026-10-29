@@ -34,3 +34,27 @@ Tests check secret exclusion from network registration values and local custody.
 An expired unsigned browser setup needs a new `ALLOWIT_REQUEST_ID` and explicit
 `ALLOWIT_RETRY_PREPARATION_OF` naming the original preparation. The browser checks authoritative expiry
 and replacement permission. A signed uncertain transaction is never replaced through this option.
+
+## Owner operations
+
+`allowit_client::admin::Admin<V>` delegates each operation to its bound vendor:
+`deploy_policy(policy_version, artifact)`, `set_pause(paused, policy_version)` and
+`recover_funds(token)`. The shared SDK defines separate capability traits without fallback implementations.
+Vendor packages own native arguments, trusted state reads, authorization and transaction preparation.
+Other configuration edits belong to the complete policy artifact and the same deployment flow.
+
+The Stellar `stellar::admin::OwnerAdmin` prepares unsigned owner-review transactions for the versioned
+ODC interface. Deployment and pause target exactly the active policy version plus one. Recovery reads
+the full selected token balance and current owner. It has no caller-supplied recipient, amount or nonce.
+This profile recovers only the installed asset through the existing owner recovery entrypoint.
+It does not implement arbitrary-token recovery or direct owner token authorization.
+
+Preparation checks the network, pinned executable, current owner, policy binding, native authorization
+scope and fee ceiling. It returns transaction XDR and required authorizers for native-wallet review and
+signing. It does not submit transactions or produce a browser signing URL. This adapter requires a native
+account as the current owner. Contract owners require a matching native authorization adapter.
+
+The vendor reads interface version 2 from `policy_binding()`, including after an upgrade with unmigrated
+V1 storage. Existing delegated execution and retained receipts accept V1 `revision` packets and V2
+`policy_version` packets. Historical serialized `TrustedState.revision` loads as `policyVersion` with
+interface 1 by default. Unknown profiles, conflicting fields and changed packet bindings reject.
