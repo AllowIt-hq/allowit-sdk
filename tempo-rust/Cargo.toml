@@ -7,6 +7,6 @@ license = "MIT"
 publish = false
 
 [dependencies]
-allowit-tempo-vendor = { package = "allowit-tempo", git = "https://github.com/AllowIt-hq/allowit-contracts-tempo.git", rev = "8e44469a4431fbe94afd8dd2049f2f062663d39c" }
+allowit-tempo-vendor = { package = "allowit-tempo", git = "https://github.com/AllowIt-hq/allowit-contracts-tempo.git", rev = "41df6374f016421af68a6a64d6cca251a469edb8" }
 
 [workspace]
