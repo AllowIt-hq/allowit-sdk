@@ -76,6 +76,25 @@ struct Client {
     bundle: Bundle,
     seed: Zeroizing<[u8; 32]>,
 }
+fn revalidate_for_signing(p: &PreparedOperation, now: u64) -> Result<PreparedOperation> {
+    revalidate_with_rpc_url(p, now, &env_value("ALLOWIT_STELLAR_RPC_URL"))
+}
+fn revalidate_with_rpc_url(
+    p: &PreparedOperation,
+    now: u64,
+    value: &str,
+) -> Result<PreparedOperation> {
+    if p.config.route == WalletRoute::Native {
+        return Ok(p.clone());
+    }
+    if value.is_empty() {
+        return Err(Error::config(
+            "Set local ALLOWIT_STELLAR_RPC_URL before new ODC signing",
+        ));
+    }
+    let rpc = checked(sdk::rpc::HttpRpc::new(value))?;
+    checked(sdk::rpc::revalidate_prepared(&rpc, p, now))
+}
 fn clock() -> Result<u64> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -405,7 +424,7 @@ fn run_locked(
     journal.save(&name, &record).map_err(journal_error)?;
     *stderr += &format!("requestId={id}\n");
     crate::flush_stderr(stderr);
-    let prepared = if let Some(response) = resumed {
+    let mut prepared = if let Some(response) = resumed {
         response
     } else {
         c.post(
@@ -424,6 +443,7 @@ fn run_locked(
     record.prepared = Some(prepared.prepared.clone());
     record.status = Some(OperationStatus::Prepared);
     journal.save(&name, &record).map_err(journal_error)?;
+    prepared.prepared = revalidate_for_signing(&prepared.prepared, clock()?)?;
     checked(sdk::validate_prepared(&prepared.prepared, clock()?))?;
     let signature = checked(sdk::sign(&prepared.prepared, &c.seed, clock()?))?;
     record.prepared = Some(prepared.prepared);
@@ -489,4 +509,134 @@ fn render(r: &Response, stdout: &mut String) -> Result<i32> {
         OperationStatus::SubmissionUnknown => 5,
         OperationStatus::Prepared | OperationStatus::Submitted => 12,
     })
+}
+
+#[cfg(test)]
+mod native_revalidation_tests {
+    use super::*;
+    use std::{io::Write, net::TcpListener};
+    fn fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/stellar-native-revalidation-rpc.json"
+        ))
+        .unwrap()
+    }
+    #[test]
+    fn local_rpc_revalidates_exact_gateway_bytes_before_signing_without_credentials() {
+        let data = fixture();
+        let p: PreparedOperation = serde_json::from_value(data["prepared"].clone()).unwrap();
+        let calls = data["calls"].as_array().unwrap().clone();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for expected in calls {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let end = loop {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    bytes.push(byte[0]);
+                    if bytes.ends_with(b"\r\n\r\n") {
+                        break bytes.len();
+                    }
+                };
+                let headers = std::str::from_utf8(&bytes).unwrap().to_ascii_lowercase();
+                assert!(!headers.contains("authorization:"));
+                assert!(!headers.contains("cookie:"));
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .unwrap();
+                bytes.resize(end + length, 0);
+                stream.read_exact(&mut bytes[end..]).unwrap();
+                let body = std::str::from_utf8(&bytes[end..]).unwrap();
+                assert!(!body.contains("Bearer"));
+                assert!(!body.contains("signing_seed"));
+                assert!(!body.contains("ALLOWIT_TOKEN"));
+                let request: serde_json::Value = serde_json::from_str(body).unwrap();
+                assert_eq!(request["method"], expected["method"]);
+                assert_eq!(request["params"], expected["params"]);
+                assert_eq!(request["jsonrpc"], "2.0");
+                let response = serde_json::to_vec(
+                    &json!({"jsonrpc":"2.0","id":request["id"],"result":expected["result"]}),
+                )
+                .unwrap();
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",response.len()).unwrap();
+                stream.write_all(&response).unwrap();
+            }
+        });
+        let checked = revalidate_with_rpc_url(&p, 86402, &url).unwrap();
+        server.join().unwrap();
+        assert_eq!(checked, p);
+        assert_eq!(checked.transaction_xdr, p.transaction_xdr);
+        assert_eq!(checked.transaction_hash, p.transaction_hash);
+        assert!(checked.native_preflight.is_some());
+        sdk::sign(&checked, &[2; 32], 86402).unwrap();
+    }
+    #[test]
+    fn missing_rpc_stale_and_tampered_intents_fail_before_signing_but_classic_bypasses() {
+        let data = fixture();
+        let p: PreparedOperation = serde_json::from_value(data["prepared"].clone()).unwrap();
+        assert!(revalidate_with_rpc_url(&p, 86402, "").is_err());
+        assert!(revalidate_with_rpc_url(&p, 86700, "http://127.0.0.1:1").is_err());
+        let mut changed = p.clone();
+        changed.request.operation.nonce[0] ^= 1;
+        assert!(revalidate_with_rpc_url(&changed, 86402, "http://127.0.0.1:1").is_err());
+        let old: SignedOperation = serde_json::from_str(include_str!(
+            "../../stellar-rust/tests/fixtures/canonical-main-9682-native-signed.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            revalidate_with_rpc_url(&old.prepared, 86402, "").unwrap(),
+            old.prepared
+        );
+    }
+    #[test]
+    fn retained_signed_status_validation_does_not_need_local_rpc_or_new_approval() {
+        let data = fixture();
+        let signed: SignedOperation = serde_json::from_value(data["signed"].clone()).unwrap();
+        assert!(signed.prepared.native_preflight.is_none());
+        let config = signed.prepared.config.clone();
+        let client = Client {
+            http: reqwest::blocking::Client::new(),
+            origin: "http://127.0.0.1:1".into(),
+            bundle: Bundle {
+                version: 1,
+                profile: sdk::PROFILE.into(),
+                network: config.network.clone(),
+                policy_id: "policy-current".into(),
+                source_hash: sdk::hex(&config.source_hash),
+                ir_hash: String::new(),
+                module_digest: sdk::hex(&config.module_digest),
+                wallet: config.wallet.clone(),
+                route: config.route.clone(),
+                config,
+                endpoints: Endpoints {
+                    execute: "/api/native/execute".into(),
+                    status: "/api/native/execute/status".into(),
+                },
+                signing_seed: String::new(),
+            },
+            seed: Zeroizing::new([2; 32]),
+        };
+        let response = Response {
+            prepared: signed.prepared.clone(),
+            operation: Operation {
+                id: "request-current".into(),
+                status: OperationStatus::Submitted,
+                transaction_hash: sdk::hex(&signed.transaction_hash),
+            },
+            signed_operation: Some(signed),
+            receipt: None,
+        };
+        client
+            .validate(&response, "request-current", None, true)
+            .unwrap();
+    }
 }

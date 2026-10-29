@@ -127,3 +127,13 @@ Successful ODC preflight creates an opaque in-memory binding to the exact prepar
 same logical operation ID. Existing signed bytes retain verification, status lookup and retry without
 new signing approval. Preflight is an observation; execution applies the current native policy and
 engine behavior. The SDK never treats classic-route usage fields as ODC accounting.
+
+For new ODC signing, the command-line client reads the local `ALLOWIT_STELLAR_RPC_URL` setting.
+It uses the Stellar vendor's `rpc::revalidate_prepared` against that RPC before signing the existing
+gateway intent. The URL comes from local configuration, not the gateway bundle. The RPC receives
+only public native observations and unsigned simulation bytes; it receives no token, seed or gateway
+authorization header. HTTPS is required except for loopback HTTP. Missing configuration, stale state
+or insufficient existing resources stops signing. Revalidation preserves the exact unsigned
+transaction, hash and logical request ID. Classic execution and signed status/recovery do not require
+this setting. If resource bounds cannot cover the current simulation, the client retains the original
+intent and reports the failure; it does not replace the transaction or logical request ID.

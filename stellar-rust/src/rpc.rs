@@ -225,6 +225,76 @@ pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperatio
     record_native_preflight(&mut prepared)?;
     Ok(prepared)
 }
+/// Revalidate an existing unsigned gateway intent through a locally trusted native RPC.
+/// The original transaction, hash and operation identity remain unchanged. Current authority,
+/// policy configuration and nonce must match the intent; its existing resources must cover
+/// fresh simulation. Only the private in-memory signing marker is added. Nothing is submitted.
+pub fn revalidate_prepared(
+    rpc: &dyn Rpc,
+    p: &PreparedOperation,
+    now: u64,
+) -> Result<PreparedOperation> {
+    validate_retained_prepared(p)?;
+    if p.config.route != WalletRoute::Odc
+        || p.state.contract_version != Some(1)
+        || p.created_at > now
+        || now >= p.expires_at
+    {
+        return Err("Current unexpired ODC intent is required for native revalidation".into());
+    }
+    let mut current = trusted_state(rpc, &p.config, None)?;
+    // Observation ledgers can advance without changing the transaction's authority or state.
+    current.ledger = p.state.ledger;
+    if current != p.state {
+        return Err("Current native state differs from the existing prepared intent".into());
+    }
+    let original: SorobanTransactionData = read(
+        p.simulation_data
+            .as_deref()
+            .ok_or("Existing intent has no bounded Soroban resources")?,
+    )?;
+    reject_restoration(&json!({"transactionData":xdr(&original)?}))?;
+    let mut keys = std::collections::BTreeSet::new();
+    if !original
+        .resources
+        .footprint
+        .read_only
+        .iter()
+        .chain(original.resources.footprint.read_write.iter())
+        .all(|key| keys.insert(key))
+    {
+        return Err("Existing resource footprint has duplicate or overlapping keys".into());
+    }
+    let simulated = simulate(rpc, p)?;
+    let required: SorobanTransactionData = read(
+        simulated
+            .simulation_data
+            .as_deref()
+            .ok_or("Native simulation omitted resource requirements")?,
+    )?;
+    let have = &original.resources;
+    let need = &required.resources;
+    let footprint_covers =
+        need.footprint
+            .read_write
+            .iter()
+            .all(|k| have.footprint.read_write.contains(k))
+            && need.footprint.read_only.iter().all(|k| {
+                have.footprint.read_only.contains(k) || have.footprint.read_write.contains(k)
+            });
+    if !footprint_covers
+        || have.instructions < need.instructions
+        || have.disk_read_bytes < need.disk_read_bytes
+        || have.write_bytes < need.write_bytes
+        || original.resource_fee < required.resource_fee
+    {
+        return Err("Existing transaction resources do not cover native revalidation".into());
+    }
+    let mut validated = p.clone();
+    record_native_preflight(&mut validated)?;
+    validate_prepared(&validated, now)?;
+    Ok(validated)
+}
 pub trait OperationStore {
     fn record(
         &mut self,

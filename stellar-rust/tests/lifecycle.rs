@@ -2025,6 +2025,20 @@ impl rpc::Rpc for PreflightRpc {
         if self.failure == "fee" {
             value["minResourceFee"] = json!("1001");
         }
+        if self.failure == "instructions" {
+            value["transactionData"] = json!(
+                SorobanTransactionData {
+                    resource_fee: 1000,
+                    resources: SorobanResources {
+                        instructions: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+                .to_xdr_base64(Limits::none())
+                .unwrap()
+            );
+        }
         Ok(value)
     }
 }
@@ -2080,6 +2094,52 @@ fn native_preflight_binds_new_signing_and_json_cannot_restore_it() {
             _ => unreachable!(),
         };
         assert!(sign(&changed, &[2; 32], 86401).is_err(), "{change}");
+    }
+}
+#[test]
+fn local_revalidation_preserves_existing_unsigned_identity_and_checks_current_authority() {
+    let rpc = preflight_fixture();
+    let prepared = rpc::prepare(&rpc, &rpc.base.config, &rpc.request, None, 86401, 86700).unwrap();
+    let original: PreparedOperation =
+        serde_json::from_str(&serde_json::to_string(&prepared).unwrap()).unwrap();
+    assert!(original.native_preflight.is_none());
+    let validated = rpc::revalidate_prepared(&rpc, &original, 86402).unwrap();
+    assert_eq!(validated, original);
+    assert_eq!(validated.transaction_xdr, original.transaction_xdr);
+    assert_eq!(validated.transaction_hash, original.transaction_hash);
+    assert!(validated.native_preflight.is_some());
+    sign(&validated, &[2; 32], 86402).unwrap();
+    let repeated = stellar_xdr::LedgerKey::Account(stellar_xdr::LedgerKeyAccount {
+        account_id: stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+            stellar_xdr::Uint256([2; 32]),
+        )),
+    });
+    let mut resources = SorobanTransactionData {
+        resource_fee: 1000,
+        ..Default::default()
+    };
+    resources.resources.footprint.read_only = vec![repeated.clone()].try_into().unwrap();
+    resources.resources.footprint.read_write = vec![repeated].try_into().unwrap();
+    let overlap =
+        attach_simulation(&original, &resources.to_xdr_base64(Limits::none()).unwrap()).unwrap();
+    assert!(rpc::revalidate_prepared(&rpc, &overlap, 86402).is_err());
+    assert!(rpc::revalidate_prepared(&rpc, &original, 86700).is_err());
+    let mut changed = original.clone();
+    changed.expires_at -= 1;
+    assert!(rpc::revalidate_prepared(&rpc, &changed, 86402).is_err());
+    let mut changed = original.clone();
+    changed.request.operation.nonce[0] ^= 1;
+    assert!(rpc::revalidate_prepared(&rpc, &changed, 86402).is_err());
+    let mut changed_rpc = preflight_fixture();
+    changed_rpc.base.source.sequence += 1;
+    assert!(rpc::revalidate_prepared(&changed_rpc, &original, 86402).is_err());
+    for failure in ["deny", "auth", "receipt", "fee", "restore", "instructions"] {
+        let mut changed_rpc = preflight_fixture();
+        changed_rpc.failure = failure;
+        assert!(
+            rpc::revalidate_prepared(&changed_rpc, &original, 86402).is_err(),
+            "{failure}"
+        );
     }
 }
 #[test]
