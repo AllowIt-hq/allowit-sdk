@@ -73,3 +73,57 @@ The owner disables x402 to revoke this delegated route.
 `stellar::rpc::engine_version` is a separate read-only metadata query. It returns `None` only when host
 diagnostics identify the missing getter on the selected engine. Network errors, malformed metadata
 and other contract failures reject. Owner operations do not query the engine.
+
+## Policy configuration and spent values
+
+`stellar::admin::Grant` is a named map of native `ScVal` values. `NativeValues` preserves arbitrary
+supported native values, including keys that no selected check reads. Its JSON form stores each value
+as canonical base64 XDR. An installed asset is a separate immutable custody binding. Grant keys do
+not activate checks automatically. `PolicyDeployment` has no pause field; deployment preserves the
+current pause state, and `set_pause` changes it.
+
+A native policy receives read-only Grant configuration and a working State containing Grant and spent.
+It returns the exact final spent map to commit:
+
+```rust
+use allowit::v1::prelude::*;
+async fn _execute(request: &Context, grant: &Grant, state: &State) -> Result<Spent, PolicyError> {
+    let daily = allowit::daily_cap(request, state)?;
+    let after_daily = allowit::with_spent(state, daily)?;
+    let total = engine::total_cap(request, &after_daily)?;
+    let n = allowit::state_get(&total, "custom_count", 0u64)?;
+    let final_spent = allowit::state_set(total, "custom_count", n + 1)?;
+    Ok(final_spent)
+}
+```
+
+`with_spent` replaces only spent and preserves Grant. `state_get` reads an expected scalar type;
+`state_set` and `state_remove` return a new spent map. A property-only policy starts with
+`allowit::spent(state)`. Custody commits only the map returned by the policy after successful effects;
+returning an earlier map selects that earlier value. Denial, errors and failed token effects roll back
+all changes. Policy maps cannot overwrite owner, asset, deployment version, execution nonce or replay
+records. Rule accounting keys remain policy data, so owner code can intentionally change them.
+
+The compiler chooses placement at authoring time. Generic `allowit::` checks use the selected strategy;
+`engine::` requests the shared contract, and `self::` requests an eligible bundled rule. Both use the
+same canonical implementation and updated-spent result. System authority cannot be moved local by a
+cheaper estimate. The placement manifest records the request, authority, decision and reason for each
+check. Auto compares compatible, owner-supplied deployment and expected execution costs in one
+normalized unit. Without compatible estimates or expected volume, it uses the stated responsibility
+default. There is no runtime fallback. The owner reviews the manifest with the exact module hash.
+A shared result that the policy adopts can replace the full spent map, including counters read by
+bundled checks. Local describes implementation placement; it does not isolate accounting from
+shared state writers. The manifest records this policy-wide trust boundary.
+
+`stellar::rpc::prepare` reads the current native Grant and full spent map, then simulates the exact
+installed policy before new signing. It rejects archived, malformed and restoration-required
+observations. A missing spent entry needs a native getter's successful None proof. Arbitrary request
+JSON supplies neither these observations nor engine decisions. Classic/native wallets retain their
+existing trusted accounting and local guard evaluation; a selected shared-engine call cannot run on
+that route.
+
+Successful ODC preflight creates an opaque in-memory binding to the exact prepared operation.
+`sign` rechecks that binding. Loading an unsigned intent from JSON requires fresh preflight under the
+same logical operation ID. Existing signed bytes retain verification, status lookup and retry without
+new signing approval. Preflight is an observation; execution applies the current native policy and
+engine behavior. The SDK never treats classic-route usage fields as ODC accounting.

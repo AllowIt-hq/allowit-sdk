@@ -237,13 +237,18 @@ fn runtime_artifacts_require_canonical_operation_names() {
 }
 
 #[test]
-fn service_registry_rejects_older_artifacts() {
+fn registry_preserves_original_1_6_programs_and_rejects_unknown_versions() {
     let source = source("set_cap_per_day(ctx, \"100\", \"USDC\")?; Ok(())");
     let mut policy = compile(&source).unwrap();
-    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.6.0");
-    assert_eq!(policy.registry_version, "1.6.0");
+    assert_eq!(allowit_sdk::REGISTRY_VERSION, "1.7.0");
+    assert_eq!(policy.registry_version, "1.7.0");
     assert_eq!(policy.ir.version, "1.0.0");
     let hash = policy.ir_hash.clone();
+    policy.registry_version = "1.6.0".into();
+    assert_ne!(
+        evaluate(&policy, Profile::Oracle, &context()).code,
+        "INVALID_ARTIFACT"
+    );
     policy.registry_version = "1.5.0".into();
     assert_eq!(
         evaluate(&policy, Profile::Oracle, &context()).code,
@@ -301,7 +306,7 @@ fn retired_vendor_namespaces_have_no_new_execution_aliases() {
 #[test]
 fn nonvendor_source_and_ir_identity_remain_stable_across_registry_update() {
     let policy = compile(include_str!("fixtures/registry-stable-policy.rs")).unwrap();
-    assert_eq!(policy.registry_version, "1.6.0");
+    assert_eq!(policy.registry_version, "1.7.0");
     // Original registry 1.5 compiler output for these exact authored source bytes.
     assert_eq!(
         policy.source_hash,

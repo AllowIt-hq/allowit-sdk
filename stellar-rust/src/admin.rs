@@ -3,40 +3,7 @@ use crate::*;
 use allowit_policy_sdk::admin::{DeployPolicy, DeploymentVersion, RecoverFunds, SetPause};
 use serde_json::json;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Grant {
-    pub asset: String,
-    pub recipients: Vec<String>,
-    pub per_transfer: i128,
-    pub daily_limit: i128,
-    pub total_limit: i128,
-    pub max_calls: u64,
-    pub expires_at: u64,
-}
-impl Grant {
-    fn value(&self) -> Result<ScVal> {
-        value_map(vec![
-            ("asset", ScVal::Address(address(&self.asset)?)),
-            (
-                "recipients",
-                ScVal::Vec(Some(
-                    self.recipients
-                        .iter()
-                        .map(|a| address(a).map(ScVal::Address))
-                        .collect::<Result<Vec<_>>>()?
-                        .try_into()
-                        .map_err(err)?,
-                )),
-            ),
-            ("per_transfer", i128_value(self.per_transfer)),
-            ("daily_limit", i128_value(self.daily_limit)),
-            ("total_limit", i128_value(self.total_limit)),
-            ("max_calls", ScVal::U64(self.max_calls)),
-            ("expires_at", ScVal::U64(self.expires_at)),
-        ])
-    }
-}
+pub use crate::NativeValues as Grant;
 
 /// Complete owner-approved configuration. The version is supplied to deploy_policy.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,8 +17,6 @@ pub struct PolicyDeployment {
     pub engine: String,
     /// Complete native spending permissions for this deployment.
     pub grant: Grant,
-    /// Desired agent pause state after deployment.
-    pub paused: bool,
     /// Owner opt-in to x402 using the configured native G-agent Ed25519 key.
     pub x402_enabled: bool,
     /// Optional uploaded policy executable hash to install atomically.
@@ -65,7 +30,6 @@ impl PolicyDeployment {
             ("agent", ScVal::Address(address(&self.agent)?)),
             ("engine", ScVal::Address(address(&self.engine)?)),
             ("grant", self.grant.value()?),
-            ("paused", ScVal::Bool(self.paused)),
             {
                 if self.x402_enabled {
                     account_key(&self.agent)?;
@@ -180,8 +144,7 @@ impl OwnerAdmin<'_> {
         {
             return Err("Owner contract release or policy binding differs".into());
         }
-        let grant = map_field(state, "grant")?.clone();
-        if addr(map_field(&grant, "asset")?)? != c.asset {
+        if addr(map_field(state, "asset")?)? != c.asset {
             return Err("ODC asset differs from installation".into());
         }
         Ok(Snapshot {

@@ -35,7 +35,7 @@ assert.equal(invoke({ operation: 'evaluate', source, profile: 'oracle', context 
 assert.equal(invoke({ operation: 'evaluate', source, profile: 'contract', context }).decision.code, 'USER_INPUT_REQUIRED');
 assert.equal(invoke({ operation: 'compile', source: source.replace('Ok(())', 'panic!("no")') }).ok, false);
 const registryResponse = invoke({ operation: 'registry' });
-assert.equal(registryResponse.registry_version, '1.6.0');
+assert.equal(registryResponse.registry_version, '1.7.0');
 const registry = registryResponse.functions;
 assert.ok(registry.length > 0);
 assert.equal(new Set(registry.map(entry => entry.name)).size, registry.length);

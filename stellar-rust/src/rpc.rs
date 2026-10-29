@@ -120,20 +120,110 @@ pub fn get_account(rpc: &dyn Rpc, address: &str) -> Result<AccountState> {
         signers,
     })
 }
+/// Prepare from authoritative current state and simulate the exact native policy execution.
+/// `accounting` is required only for the existing classic/native route. ODC property/validation
+/// policies receive an ephemeral preflight binding for new signing. Nothing is submitted.
+pub fn prepare(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    request: &ExecutionRequest,
+    accounting: Option<NativeAccounting>,
+    now: u64,
+    expires_at: u64,
+) -> Result<PreparedOperation> {
+    let state = trusted_state(rpc, c, accounting)?;
+    if c.route == WalletRoute::Native {
+        return super::prepare(c, request, &state, now, expires_at);
+    }
+    let intent = prepare_for_native_preflight(c, request, &state, now, expires_at)?;
+    simulate(rpc, &intent)
+}
+pub(crate) fn reject_restoration(value: &Value) -> Result<()> {
+    if value
+        .get("restorePreamble")
+        .is_some_and(|value| !value.is_null())
+    {
+        return Err("Native policy preflight requires restoration".into());
+    }
+    if let Some(data) = value.get("transactionData") {
+        let data: SorobanTransactionData =
+            read(data.as_str().ok_or("Invalid native preflight resources")?)?;
+        if matches!(data.ext,SorobanTransactionDataExt::V1(ref ext) if !ext.archived_soroban_entries.is_empty())
+        {
+            return Err("Native policy preflight includes archived entries".into());
+        }
+    }
+    Ok(())
+}
+/// Simulate an original unsigned ODC intent and bind successful native validation to it.
+/// Supplied resource XDR or JSON booleans alone never create a signing approval.
 pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperation> {
+    validate_retained_prepared(p)?;
+    if p.config.route != WalletRoute::Odc {
+        return Err("Native contract simulation requires ODC custody".into());
+    }
+    if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&p.config.network)? {
+        return Err("Simulation network differs from installation".into());
+    }
     let v = rpc.call(
         "simulateTransaction",
-        json!({"transaction":p.transaction_xdr}),
+        json!({"transaction":p.transaction_xdr,"authMode":"enforce"}),
     )?;
-    if v.get("error").is_some() {
-        return Err("ODC simulation rejected the operation".into());
+    if v.get("error").is_some_and(|value| !value.is_null()) {
+        return Err("ODC simulation rejected the exact policy operation".into());
     }
-    attach_simulation(
-        p,
-        v["transactionData"]
-            .as_str()
-            .ok_or("Missing Soroban resource simulation")?,
-    )
+    reject_restoration(&v)?;
+    let result = readonly_result(&v)?;
+    let transfer = transfer_from_request(&p.config, &p.request)?;
+    let expected = value_map(vec![
+        ("operation_id", value_bytes(&p.request.operation.nonce)?),
+        ("token", ScVal::Address(address(&p.config.asset)?)),
+        ("from", ScVal::Address(address(&p.config.wallet)?)),
+        ("to", ScVal::Address(address(&transfer.recipient)?)),
+        ("amount", i128_value(transfer.amount)),
+        ("nonce", ScVal::U64(p.state.nonce)),
+        ("deployment_version", ScVal::U64(p.state.deployment_version)),
+    ])?;
+    if result != expected {
+        return Err("Native simulation returned a different transfer receipt".into());
+    }
+    let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+        return Err("Unsupported preflight envelope".into());
+    };
+    let OperationBody::InvokeHostFunction(op) = &env.tx.operations[0].body else {
+        return Err("Expected one native policy invocation".into());
+    };
+    let observed = v["results"][0]["auth"]
+        .as_array()
+        .ok_or("Missing native preflight authorization scope")?;
+    let auth = observed
+        .iter()
+        .map(|entry| {
+            read(
+                entry
+                    .as_str()
+                    .ok_or("Invalid native preflight authorization")?,
+            )
+        })
+        .collect::<Result<Vec<SorobanAuthorizationEntry>>>()?;
+    if auth.as_slice() != op.auth.as_slice() {
+        return Err("Native preflight authorization differs from the exact intent".into());
+    }
+    let encoded = v["transactionData"]
+        .as_str()
+        .ok_or("Missing Soroban resource simulation")?;
+    let resources: SorobanTransactionData = read(encoded)?;
+    let minimum = v["minResourceFee"]
+        .as_str()
+        .ok_or("Missing native preflight minimum fee")?
+        .parse::<u64>()
+        .map_err(err)?;
+    if resources.resource_fee < 0 || minimum > resources.resource_fee as u64 {
+        return Err("Native preflight fee is below its minimum".into());
+    }
+    let mut prepared = attach_simulation(p, encoded)?;
+    record_native_preflight(&mut prepared)?;
+    Ok(prepared)
 }
 pub trait OperationStore {
     fn record(
@@ -399,22 +489,23 @@ pub(crate) fn readonly_call(
     source: &AccountState,
     function: &str,
 ) -> Result<ScVal> {
-    let value = readonly_simulation(rpc, c, source, &c.wallet, function)?;
+    let value = readonly_simulation(rpc, c, source, &c.wallet, function, vec![])?;
     readonly_result(&value)
 }
-fn readonly_simulation(
+pub(crate) fn readonly_simulation(
     rpc: &dyn Rpc,
     c: &WalletConfig,
     source: &AccountState,
     contract: &str,
     function: &str,
+    args: Vec<ScVal>,
 ) -> Result<Value> {
     validate_config(c)?;
     source.validate_structure()?;
     let call = InvokeContractArgs {
         contract_address: address(contract)?,
         function_name: ScSymbol(function.as_bytes().to_vec().try_into().map_err(err)?),
-        args: VecM::default(),
+        args: args.try_into().map_err(err)?,
     };
     let tx = Transaction {
         source_account: muxed(&source.address)?,
@@ -436,8 +527,8 @@ fn readonly_simulation(
     let value=rpc.call("simulateTransaction",json!({"transaction":xdr(&TransactionEnvelope::Tx(TransactionV1Envelope{tx,signatures:VecM::default()}))?}))?;
     Ok(value)
 }
-fn readonly_result(value: &Value) -> Result<ScVal> {
-    if value.get("error").is_some() {
+pub(crate) fn readonly_result(value: &Value) -> Result<ScVal> {
+    if value.get("error").is_some_and(|value| !value.is_null()) {
         return Err("Contract binding simulation failed".into());
     }
     let results = value["results"]
@@ -466,7 +557,7 @@ pub fn engine_version(
     if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&c.network)? {
         return Err("Stellar RPC network differs from installation".into());
     }
-    let value = readonly_simulation(rpc, c, source, &c.engine, "engine_version")?;
+    let value = readonly_simulation(rpc, c, source, &c.engine, "engine_version", vec![])?;
     if let Some(error) = value.get("error") {
         if !error
             .as_str()
@@ -563,6 +654,7 @@ fn trusted_state_inner(
         return Ok(DiscoveredState {
             state: TrustedState {
                 contract_version: None,
+                policy_state: None,
                 source,
                 nonce: a.nonce,
                 deployment_version: a.deployment_version,
@@ -644,19 +736,23 @@ fn trusted_state_inner(
     if current_contract_version(&binding)? != contract_version {
         return Err("Policy contract release differs from stored state".into());
     }
-    let grant = map_field(state, "grant")?;
-    if addr(map_field(grant, "asset")?)? != c.asset {
+    if addr(map_field(state, "asset")?)? != c.asset {
         return Err("ODC asset differs from installation".into());
     }
+    let policy_state = PolicyStateSnapshot {
+        grant: NativeValues::from_value(map_field(state, "grant")?)?,
+        spent: properties::read_spent(rpc, c, &source)?,
+    };
     let out = TrustedState {
         contract_version: Some(contract_version),
+        policy_state: Some(policy_state),
         source,
         nonce: number(map_field(state, "nonce")?)?,
         deployment_version: deployment_version_field(state)?,
-        spent_daily: wide(map_field(state, "spent_daily")?)?,
-        spent_total: wide(map_field(state, "spent_total")?)?,
-        spent_day: number(map_field(state, "spent_day")?)?,
-        calls: number(map_field(state, "calls")?)?,
+        spent_daily: 0,
+        spent_total: 0,
+        spent_day: 0,
+        calls: 0,
         ledger,
         module_digest: module.0,
         source_hash: c.source_hash,
