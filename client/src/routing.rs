@@ -69,6 +69,14 @@ pub(crate) fn extract(args: &[String]) -> Result<(Vec<String>, Option<String>)> 
         }
         i += 1;
     }
+    if rest.first().is_none_or(|s| {
+        matches!(
+            s.as_str(),
+            "help" | "-h" | "--help" | "version" | "--version"
+        )
+    }) {
+        return Ok((rest, network));
+    }
     if let Some(n) = &network {
         let bound = allowit_client_core::config::env_value("ALLOWIT_NETWORK");
         if !bound.is_empty() && normalize(&bound)? != n {
