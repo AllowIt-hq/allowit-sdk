@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +15,26 @@ ROOT = Path(__file__).resolve().parent.parent
 def validate():
     catalog = json.loads((ROOT / 'licenses/dependencies/catalog.json').read_text())
     packages = {(p['name'], p['version'], p['crateSha256']) for p in catalog['packages']}
+    git_entries = catalog.get('gitPackages', [])
+    git_packages = set()
+    for entry in git_entries:
+        revision = entry['revision']
+        repository = entry['repository']
+        if not re.fullmatch(r'[0-9a-f]{40}', revision) or not re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?', repository):
+            raise ValueError('Invalid exact Git license source')
+        expected = 'git+' + repository + '?rev=' + revision + '#' + revision
+        if entry['source'] != expected or not re.fullmatch(r'[0-9a-f]{40}', entry['manifestGitBlob']):
+            raise ValueError('Git license source does not match its exact revision')
+        identity = (entry['name'], entry['version'], entry['source'])
+        if identity in git_packages:
+            raise ValueError('Duplicate Git license identity')
+        git_packages.add(identity)
+        for notice in entry['files']:
+            original = Path(notice['originalPath'])
+            if original.is_absolute() or '..' in original.parts:
+                raise ValueError('Git license original path escapes repository')
+            if notice['source'] != repository.removesuffix('.git') + '/blob/' + revision + '/' + original.as_posix():
+                raise ValueError('Git license notice source differs from its revision')
     tracked = subprocess.check_output(
         ['git', 'ls-files', '--', '*Cargo.lock'], cwd=ROOT, text=True
     ).splitlines()
@@ -21,12 +42,13 @@ def validate():
         for package in tomllib.loads((ROOT / lock).read_text()).get('package', []):
             source = package.get('source', '')
             if source and not source.startswith('registry+'):
-                raise ValueError(f'Non-registry dependency requires explicit license coverage: {lock}: {package["name"]}')
+                if (package['name'], package['version'], source) not in git_packages:
+                    raise ValueError(f'Non-registry dependency requires explicit exact license coverage: {lock}: {package["name"]}')
             if source.startswith('registry+'):
                 identity = (package['name'], package['version'], package['checksum'])
                 if identity not in packages:
                     raise ValueError(f'License catalog does not cover {lock}: {identity[0]} {identity[1]}')
-    entries = catalog['packages'] + catalog['toolchains']
+    entries = catalog['packages'] + catalog['toolchains'] + git_entries
     for entry in entries:
         if not entry['files']:
             raise ValueError('Empty license entry')
@@ -34,8 +56,13 @@ def validate():
             path = ROOT / notice['path']
             if not path.resolve().is_relative_to((ROOT / 'licenses').resolve()):
                 raise ValueError('License path escapes licenses directory')
-            if hashlib.sha256(path.read_bytes()).hexdigest() != notice['sha256']:
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != notice['sha256']:
                 raise ValueError(f'License text hash mismatch: {notice["path"]}')
+            if entry in git_entries:
+                blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+                if notice.get('gitBlob') != blob:
+                    raise ValueError('Git license blob identity differs from retained text')
     return len(packages)
 
 
