@@ -88,7 +88,7 @@ dependencies = [
 [[package]]
 name = "allowit-solana-vendor"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=805934454d8cf1bcb4ef2bab7b8e10536bc157cf#805934454d8cf1bcb4ef2bab7b8e10536bc157cf"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=7ddb39c0c13746644dae4cfa59a3830d511bd2a5#7ddb39c0c13746644dae4cfa59a3830d511bd2a5"
 dependencies = [
  "allowit-client-core",
  "reqwest",
