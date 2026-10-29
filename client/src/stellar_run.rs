@@ -115,7 +115,7 @@ fn journal_error(_: Error) -> Error {
 }
 fn same_policy_config(expected: &WalletConfig, actual: &WalletConfig) -> bool {
     let mut current = actual.clone();
-    // The engine signer is checked against the prepared live chain state, not frozen token metadata.
+    // The server signer is checked against the prepared live chain state, not frozen token metadata.
     current.server = expected.server.clone();
     &current == expected
 }
@@ -157,7 +157,7 @@ fn read_public_bundle(path: &Path) -> Result<Bundle> {
         || bundle.config.agent == bundle.config.server
     {
         return Err(Error::config(
-            "The public Stellar wallet must use distinct owner, agent and engine identities",
+            "The public Stellar wallet must use distinct owner, agent and server identities",
         ));
     }
     Ok(bundle)

@@ -1095,12 +1095,12 @@ fn sc_map(fields: Vec<(&str, stellar_xdr::ScVal)>) -> stellar_xdr::ScVal {
     entries.sort_by(|a, b| a.key.cmp(&b.key));
     stellar_xdr::ScVal::Map(Some(entries.try_into().unwrap()))
 }
-struct OdcAccountRpc {
+struct PolicyWalletAccountRpc {
     config: WalletConfig,
     source: AccountState,
     paused: bool,
 }
-impl rpc::Rpc for OdcAccountRpc {
+impl rpc::Rpc for PolicyWalletAccountRpc {
     fn call(&self, method: &str, params: Value) -> Result<Value> {
         use stellar_xdr::*;
         let c = &self.config;
@@ -1298,7 +1298,7 @@ fn odc_discovery_reads_current_grant_source_and_does_not_lock_to_old_roles() {
         },
     ];
     r.fee_bounds.as_mut().unwrap()[0].payer = wf(&s.source.address);
-    let rpc = OdcAccountRpc {
+    let rpc = PolicyWalletAccountRpc {
         config: c.clone(),
         source: s.source.clone(),
         paused: false,
@@ -1365,7 +1365,7 @@ fn exact_preauthorization_can_complete_an_otherwise_insufficient_native_quorum()
 #[test]
 fn paused_odc_remains_discoverable_but_cannot_authorize_execution() {
     let (c, _, s) = fixture(WalletRoute::PolicyWallet, false);
-    let rpc = OdcAccountRpc {
+    let rpc = PolicyWalletAccountRpc {
         config: c.clone(),
         source: s.source,
         paused: true,
@@ -1470,7 +1470,7 @@ fn retained_packet_validation_does_not_recompile_source_or_grant_execution() {
 }
 
 struct AdminRpc {
-    base: OdcAccountRpc,
+    base: PolicyWalletAccountRpc,
     state_contract_version: u32,
     binding_contract_version: Option<stellar_xdr::ScVal>,
     calls: Mutex<Vec<(String, Vec<stellar_xdr::ScVal>)>>,
@@ -1667,7 +1667,7 @@ fn admin_fixture(
 ) -> AdminRpc {
     let (config, _, state) = fixture(WalletRoute::PolicyWallet, false);
     AdminRpc {
-        base: OdcAccountRpc {
+        base: PolicyWalletAccountRpc {
             config,
             source: state.source,
             paused: true,
@@ -2027,7 +2027,7 @@ fn explicit_engine_release_query_distinguishes_legacy_absence_from_failures() {
 }
 
 struct PreflightRpc {
-    base: OdcAccountRpc,
+    base: PolicyWalletAccountRpc,
     request: ExecutionRequest,
     failure: &'static str,
 }
@@ -2121,7 +2121,7 @@ fn preflight_fixture() -> PreflightRpc {
     }
     c.source_hash = hash(&c.policy_source);
     PreflightRpc {
-        base: OdcAccountRpc {
+        base: PolicyWalletAccountRpc {
             config: c,
             source: s.source,
             paused: false,
@@ -2336,7 +2336,7 @@ fn simple_service_authorization_checks_exact_source_and_durable_usage() {
     c.policy_source="use allowit::v1::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{allowit::cap_per_transaction(ctx,\"1\",\"USDC\")?;Ok(())}".into();
     c.source_hash = hash(&c.policy_source);
     let rpc = PreflightRpc {
-        base: OdcAccountRpc {
+        base: PolicyWalletAccountRpc {
             config: c.clone(),
             source: s.source,
             paused: false,
@@ -2393,7 +2393,7 @@ fn selected_implementations_bind_constructor_and_both_authorities() {
         );
         assert_eq!(config.constructor_args().unwrap().len(), 1);
         let rpc = PreflightRpc {
-            base: OdcAccountRpc {
+            base: PolicyWalletAccountRpc {
                 config: c.clone(),
                 source: s.source,
                 paused: false,
@@ -2472,7 +2472,7 @@ fn common_installed_rules_cannot_omit_or_reorder_authored_checks() {
     ] {
         let rpc = ChangedRules {
             base: PreflightRpc {
-                base: OdcAccountRpc {
+                base: PolicyWalletAccountRpc {
                     config: c.clone(),
                     source: s.source.clone(),
                     paused: false,
@@ -2586,4 +2586,197 @@ fn direct_server_account_must_exist_and_authorize_its_current_threshold() {
         );
         assert!(rpc::trusted_state_for_discovery(&rpc, &rpc.base.base.config, None).is_ok());
     }
+}
+
+#[test]
+fn x402_packet_binds_both_raw_keys_and_the_complete_native_scope() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use stellar_xdr::*;
+    let (c, r, mut state) = fixture(WalletRoute::PolicyWallet, true);
+    // Raw x402 keys do not derive authority from a funded G-account or its weights.
+    state.source.master_weight = 0;
+    state.source.signers.clear();
+    let transfer = transfer_from_request(&c, &r).unwrap();
+    let entry = SorobanAuthorizationEntry {
+        credentials: SorobanCredentials::Address(SorobanAddressCredentials {
+            address: address(&c.wallet).unwrap(),
+            nonce: 17,
+            signature_expiration_ledger: state.ledger + 20,
+            signature: ScVal::Void,
+        }),
+        root_invocation: SorobanAuthorizedInvocation {
+            function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
+                contract_address: address(&c.asset).unwrap(),
+                function_name: ScSymbol(b"transfer".to_vec().try_into().unwrap()),
+                args: vec![
+                    ScVal::Address(address(&c.wallet).unwrap()),
+                    ScVal::Address(address(&transfer.recipient).unwrap()),
+                    ScVal::I128(Int128Parts {
+                        hi: 0,
+                        lo: transfer.amount as u64,
+                    }),
+                ]
+                .try_into()
+                .unwrap(),
+            }),
+            sub_invocations: VecM::default(),
+        },
+    };
+    let request = x402::SigningRequest {
+        config: c,
+        request: r,
+        state: x402::WalletState {
+            custody: state,
+            policy_engine: PolicyEngine::SimplePolicyEngine,
+            x402_enabled: true,
+            paused: false,
+        },
+        expires_at: 86700,
+        authorization_xdr: entry.to_xdr_base64(Limits::none()).unwrap(),
+    };
+    let digest = x402::signing_digest(&request, 86401).unwrap();
+    let agent = SigningKey::from_bytes(&[2; 32]).sign(&digest).to_bytes();
+    let server = SigningKey::from_bytes(&[3; 32]).sign(&digest).to_bytes();
+    let encoded = x402::assemble(&request, &agent, &server, 86401).unwrap();
+    let decoded = SorobanAuthorizationEntry::from_xdr_base64(encoded, Limits::none()).unwrap();
+    assert_eq!(decoded.root_invocation, entry.root_invocation);
+    let SorobanCredentials::Address(credential) = decoded.credentials else {
+        panic!()
+    };
+    let ScVal::Map(Some(fields)) = credential.signature else {
+        panic!()
+    };
+    assert_eq!(fields.len(), 3);
+    for (a, s) in [([0; 64], server), (agent, [0; 64]), (server, agent)] {
+        assert!(x402::assemble(&request, &a, &s, 86401).is_err());
+    }
+    for case in [
+        "nonce",
+        "version",
+        "operation",
+        "expiry",
+        "ledger",
+        "scope",
+        "network",
+        "tier",
+        "disabled",
+        "paused",
+        "zero_operation",
+    ] {
+        let mut changed = request.clone();
+        match case {
+            "tier" => changed.state.policy_engine = PolicyEngine::CommonPolicyEngine,
+            "disabled" => changed.state.x402_enabled = false,
+            "paused" => changed.state.paused = true,
+            "zero_operation" => changed.request.operation.nonce = [0; 32],
+            "nonce" => changed.state.custody.nonce += 1,
+            "version" => changed.state.custody.deployment_version += 1,
+            "operation" => changed.request.operation.nonce[0] ^= 1,
+            "expiry" => changed.expires_at -= 1,
+            "network" => changed.config.network = "stellar:mainnet".into(),
+            "ledger" | "scope" => {
+                let mut entry = entry.clone();
+                if case == "ledger" {
+                    let SorobanCredentials::Address(c) = &mut entry.credentials else {
+                        panic!()
+                    };
+                    c.signature_expiration_ledger += 1;
+                } else {
+                    entry.root_invocation.sub_invocations =
+                        vec![entry.root_invocation.clone()].try_into().unwrap();
+                }
+                changed.authorization_xdr = entry.to_xdr_base64(Limits::none()).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            x402::assemble(&changed, &agent, &server, 86401).is_err(),
+            "{case}"
+        );
+    }
+    assert!(x402::assemble(&request, &agent, &server, 86700).is_err());
+}
+
+#[test]
+fn malformed_retained_policy_wallet_envelopes_return_errors() {
+    let (c, r, s) = fixture(WalletRoute::PolicyWallet, true);
+    let mut p = prepare(&c, &r, &s, 86401, 86700).unwrap();
+    let TransactionEnvelope::Tx(mut envelope) =
+        TransactionEnvelope::from_xdr_base64(&p.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    envelope.tx.operations = Default::default();
+    p.transaction_xdr = TransactionEnvelope::Tx(envelope)
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+    assert!(validate_retained_prepared(&p).is_err());
+}
+
+#[test]
+fn exact_credit_profile_rejects_issued_asset_burns() {
+    for route in [WalletRoute::Native, WalletRoute::PolicyWallet] {
+        let (c, mut r, _) = fixture(route, true);
+        let issuer = c.asset_issuer.as_ref().unwrap();
+        let ExecutionInput::Instructions(ref mut instructions) = r.input else {
+            panic!()
+        };
+        let NativeInstruction::StellarCall { arguments, .. } = &mut instructions[0] else {
+            panic!()
+        };
+        arguments[1] = AbiValue::Account(wf(issuer));
+        r.effect_bounds[0].beneficiary = wf(issuer);
+        assert!(transfer_from_request(&c, &r).unwrap_err().contains("burn"));
+    }
+}
+
+#[test]
+fn historical_signed_issuer_payment_remains_read_only() {
+    let (c, r, state) = fixture(WalletRoute::Native, true);
+    let mut prepared = prepare(&c, &r, &state, 86401, 86700).unwrap();
+    let issuer = c.asset_issuer.as_ref().unwrap();
+    let ExecutionInput::Instructions(ref mut instructions) = prepared.request.input else {
+        panic!()
+    };
+    let NativeInstruction::StellarCall { arguments, .. } = &mut instructions[0] else {
+        panic!()
+    };
+    arguments[1] = AbiValue::Account(wf(issuer));
+    prepared.request.effect_bounds[0].beneficiary = wf(issuer);
+    let TransactionEnvelope::Tx(mut envelope) =
+        TransactionEnvelope::from_xdr_base64(&prepared.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    let mut operations = envelope.tx.operations.to_vec();
+    let OperationBody::Payment(payment) = &mut operations[0].body else {
+        panic!()
+    };
+    let stellar_xdr::ScAddress::Account(stellar_xdr::AccountId(
+        stellar_xdr::PublicKey::PublicKeyTypeEd25519(key),
+    )) = address(issuer).unwrap()
+    else {
+        panic!()
+    };
+    payment.destination = stellar_xdr::MuxedAccount::Ed25519(key);
+    envelope.tx.operations = operations.try_into().unwrap();
+    prepared.transaction_xdr = envelope_to_xdr(envelope);
+    // Reconstruct the exact formerly admitted payment and signatures without
+    // exposing a preparation path for new issuer-burn operations.
+    prepared = native_packet_bounds(prepared, 86401, 86700);
+    prepared.request_hash = hash(serde_json::to_vec(&prepared.request).unwrap());
+    let signed = retained_native_signed(prepared);
+    validate_retained_signed(&signed).unwrap();
+    assert!(
+        validate_prepared(&signed.prepared, 86401)
+            .unwrap_err()
+            .contains("burn")
+    );
+    assert!(
+        validate_signed(&signed, 86401)
+            .unwrap_err()
+            .contains("burn")
+    );
+    assert!(sign(&signed.prepared, &[2; 32], 86401).is_err());
+    assert!(prepare(&c, &signed.prepared.request, &state, 86401, 86700).is_err());
 }

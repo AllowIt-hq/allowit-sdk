@@ -27,7 +27,7 @@ pub(crate) fn server_entry(
     })
 }
 
-fn payload(network: &str, entry: &SorobanAuthorizationEntry) -> Result<[u8; 32]> {
+pub(crate) fn payload(network: &str, entry: &SorobanAuthorizationEntry) -> Result<[u8; 32]> {
     let SorobanCredentials::Address(credentials) = &entry.credentials else {
         return Err("Service address authorization is required".into());
     };
@@ -47,6 +47,9 @@ pub(crate) fn server_signature(p: &PreparedOperation, require_signed: bool) -> R
     let TransactionEnvelope::Tx(envelope) = read(&p.transaction_xdr)? else {
         return Err("Expected a policy transaction".into());
     };
+    if envelope.tx.operations.len() != 1 {
+        return Err("One exact policy invocation is required".into());
+    }
     let OperationBody::InvokeHostFunction(op) = &envelope.tx.operations[0].body else {
         return Err("Expected policy invocation".into());
     };

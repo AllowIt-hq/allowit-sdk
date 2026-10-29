@@ -19,6 +19,7 @@ pub mod properties;
 mod values;
 pub use values::NativeValues;
 pub mod rpc;
+pub mod x402;
 pub type Result<T> = std::result::Result<T, String>;
 
 pub const PROFILE: &str = "allowit-stellar-wallet-v1";
@@ -425,6 +426,9 @@ pub fn validate_config(c: &WalletConfig) -> Result<()> {
 }
 /// Decode only the admitted catalog transfer profile, with exact effect and fee bounds.
 pub fn transfer_from_request(c: &WalletConfig, r: &ExecutionRequest) -> Result<Transfer> {
+    decode_transfer(c, r, false)
+}
+fn decode_transfer(c: &WalletConfig, r: &ExecutionRequest, retained: bool) -> Result<Transfer> {
     validate_config(c)?;
     if r.operation.policy_instance != c.policy_instance || r.operation.nonce == [0; 32] {
         return Err("Operation installation or identity differs".into());
@@ -483,6 +487,9 @@ pub fn transfer_from_request(c: &WalletConfig, r: &ExecutionRequest) -> Result<T
     }
     if transfer.amount <= 0 || transfer.source != c.wallet || transfer.recipient == c.wallet {
         return Err("Invalid transfer source, amount or recipient".into());
+    }
+    if !retained && c.asset_issuer.as_deref() == Some(transfer.recipient.as_str()) {
+        return Err("Issued-asset payments to the issuer burn units instead of crediting the required recipient balance".into());
     }
     let effect = &r.effect_bounds[0];
     let asset = match &effect.asset {
@@ -618,7 +625,7 @@ fn transfer_args(c: &WalletConfig, t: &Transfer) -> Result<ScVal> {
         ("token", ScVal::Address(address(&c.asset)?)),
     ])
 }
-fn odc_request(
+fn policy_wallet_request(
     c: &WalletConfig,
     r: &ExecutionRequest,
     state: &TrustedState,
@@ -684,7 +691,11 @@ fn build(
             return Err("Unsupported policy contract version".into());
         }
     }
-    let t = transfer_from_request(c, r)?;
+    let t = decode_transfer(
+        c,
+        r,
+        matches!(packet, PacketUse::Retained | PacketUse::RetainedRevision),
+    )?;
     if admit_policy {
         verify_policy(c, r, state, now)?;
     }
@@ -738,9 +749,16 @@ fn build(
                 host_function: HostFunction::InvokeContract(InvokeContractArgs {
                     contract_address: address(&c.wallet)?,
                     function_name: ScSymbol(b"execute".to_vec().try_into().map_err(err)?),
-                    args: vec![odc_request(c, r, state, &t, expires, legacy_revision)?]
-                        .try_into()
-                        .map_err(err)?,
+                    args: vec![policy_wallet_request(
+                        c,
+                        r,
+                        state,
+                        &t,
+                        expires,
+                        legacy_revision,
+                    )?]
+                    .try_into()
+                    .map_err(err)?,
                 }),
                 auth: vec![SorobanAuthorizationEntry {
                     credentials: SorobanCredentials::SourceAccount,
@@ -748,9 +766,16 @@ fn build(
                         function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
                             contract_address: address(&c.wallet)?,
                             function_name: ScSymbol(b"execute".to_vec().try_into().map_err(err)?),
-                            args: vec![odc_request(c, r, state, &t, expires, legacy_revision)?]
-                                .try_into()
-                                .map_err(err)?,
+                            args: vec![policy_wallet_request(
+                                c,
+                                r,
+                                state,
+                                &t,
+                                expires,
+                                legacy_revision,
+                            )?]
+                            .try_into()
+                            .map_err(err)?,
                         }),
                         sub_invocations: VecM::default(),
                     },
@@ -899,6 +924,7 @@ pub(crate) fn prepare_for_native_preflight(
     )
 }
 fn validate_signing_policy(p: &PreparedOperation, now: u64) -> Result<()> {
+    transfer_from_request(&p.config, &p.request)?;
     if needs_native_preflight(&p.config)? {
         let marker = p
             .native_preflight
@@ -1162,6 +1188,7 @@ pub fn authorize(
     })
 }
 pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
+    transfer_from_request(&s.prepared.config, &s.prepared.request)?;
     if s.prepared.state.contract_version == Some(1) && needs_native_preflight(&s.prepared.config)? {
         if s.prepared.created_at > now || now >= s.prepared.expires_at {
             return Err("Signed operation is stale".into());
