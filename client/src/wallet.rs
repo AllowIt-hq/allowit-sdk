@@ -346,12 +346,15 @@ mod storage_tests {
     };
     static NEXT: AtomicU64 = AtomicU64::new(0);
     fn path() -> std::path::PathBuf {
-        std::path::PathBuf::from(format!(
-            "/private/tmp/allowit-local-key-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ))
-        .join("agent.key")
+        std::env::temp_dir()
+            .canonicalize()
+            .expect("Test temporary directory must exist")
+            .join(format!(
+                "allowit-local-key-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .join("agent.key")
     }
     #[test]
     fn generated_files_are_usable_private_and_never_replaced() {
