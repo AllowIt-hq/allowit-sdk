@@ -20,3 +20,5 @@ jobs:
       - run: cargo fmt --manifest-path client/Cargo.toml --check
       - run: cargo test --manifest-path client/Cargo.toml --locked
       - run: cargo clippy --manifest-path client/Cargo.toml --locked --all-targets -- -D warnings
+      - run: python3 -m unittest discover -s scripts/tests
+      - run: python3 scripts/package-licenses.py

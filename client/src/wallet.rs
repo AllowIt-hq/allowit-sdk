@@ -144,7 +144,7 @@ fn write_new(_: &Path, _: &[u8]) -> Result<()> {
     ))
 }
 /// Inspect a native signer file without returning its secret.
-pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
+fn read_signer(path: &Path) -> Result<Zeroizing<String>> {
     let (_lock, _) = storage(path)?;
     #[cfg(unix)]
     {
@@ -191,6 +191,17 @@ pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     if text.len() > 4096 {
         return Err(Error::config("Signer file too large"));
     }
+    Ok(text)
+}
+pub(crate) fn stellar_signing_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
+    let text = read_signer(path)?;
+    allowit_stellar_wallet::decode_seed(text.trim())
+        .map(Zeroizing::new)
+        .map_err(|_| Error::config("Invalid local Stellar signer"))
+}
+/// Inspect a native signer file without returning its secret.
+pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
+    let text = read_signer(path)?;
     let n = routing::normalize(network)?;
     let mut bytes = Zeroizing::new(if n.starts_with("solana:") {
         serde_json::from_str::<Vec<u8>>(&text)
@@ -230,6 +241,12 @@ pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     Ok(metadata)
 }
 pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {
+    if args.first().map(String::as_str) == Some("configure") {
+        return crate::stellar_owner::run(&args[1..], stdout);
+    }
+    if args.first().map(String::as_str) == Some("approve") {
+        return crate::stellar_approval::run(&args[1..], stdout);
+    }
     let value = match args.first().map(String::as_str) {
         Some("generate") => {
             if args.len() != 3 || args[1] != "--output" {

@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use stellar_strkey::{Contract, Strkey, ed25519};
 use stellar_xdr::*;
 
+pub mod owner;
 pub mod rpc;
 pub type Result<T> = std::result::Result<T, String>;
 pub const PROFILE: &str = "allowit-stellar-wallet-v1";

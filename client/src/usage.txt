@@ -48,9 +48,13 @@ it with allowit status, which accepts the server requestId or your --request-id.
 Local agent wallets:
   allowit wallet generate --network CAIP2 --output PRIVATE_FILE
   allowit wallet show --network CAIP2 PRIVATE_FILE
+  allowit wallet configure --network stellar:testnet --owner G_ADDRESS --agent G_ADDRESS --engine G_ADDRESS --request-id ID
+  allowit wallet approve --network stellar:testnet --policy-file PUBLIC_POLICY_JSON --owner G_ADDRESS --request-id ID
   Generation writes a new local 0600 signer file. Output contains public metadata only.
   setup registers public {network,address,publicKey,keyType} metadata with the server.
   Remote account key creation, secret import and secret export are refused.
+  Stellar configure prints an owner signing link for a fresh funded native account.
+  Stellar approve prints a source approval link for an existing owner-configured policy.
 
 Rail selection:
   --network CAIP2    optional explicit x402 network identifier; must match the wallet/deployment
