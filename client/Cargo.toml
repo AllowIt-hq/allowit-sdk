@@ -1,0 +1,36 @@
+[package]
+name = "allowit-client"
+version = "0.3.0-dev"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+
+[dependencies]
+getrandom = "0.3"
+allowit-client-core = { git = "https://github.com/AllowIt-hq/allowit-sdk.git", rev = "d9a22d3c74667d41303f147ee4ba2e442cea3767" }
+allowit-solana-vendor = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "7ddb39c0c13746644dae4cfa59a3830d511bd2a5" }
+serde_json_canonicalizer = "0.3"
+ed25519-dalek = "2"
+allowit-stellar-wallet = { path = "../stellar-rust" }
+allowit-native = { path = "../native-rust" }
+allowit-tempo = { git = "https://github.com/AllowIt-hq/allowit-contracts-tempo.git", rev = "fac59366570b86e4ea5cedd98216a713ce9851c8", features = ["client"] }
+# Canonical typed workflow types from the same pinned SDK submodule.
+allowit-policy-sdk = { package = "allowit-sdk", path = "..", default-features = false, features = ["std", "typed-workflow"] }
+base64 = "0.22.1"
+bs58 = "0.5.1"
+data-encoding = "2.9.0"
+libc = "0.2.190"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+regex = "1.11.1"
+reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "native-tls-vendored"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.143", features = ["raw_value", "arbitrary_precision"] }
+sha2 = "0.10.9"
+time = { version = "0.3", features = ["parsing"] }
+url = "2.5.7"
+zeroize = "1.8.2"
+
+[dev-dependencies]
+stellar-xdr = { version = "=28.0.0", features = ["std", "base64"] }
