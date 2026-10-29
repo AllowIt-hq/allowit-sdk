@@ -2,14 +2,33 @@
 
 extern crate alloc;
 
+pub mod admin;
+pub mod engine;
+pub use engine::{call_cap, daily_cap, expiry, recipient, token, total_cap, transaction_cap};
+mod policy_state;
+pub use policy_state::{
+    Grant, PolicyDefault, PolicyKey, PolicyScalar, ScalarType, Spent, State, TrustedPolicyState,
+    grant_get, spent, state_get, state_remove, state_set, with_spent,
+};
+
 #[cfg(feature = "compiler")]
 mod compiler;
 #[cfg(feature = "compiler")]
 mod stellar_codegen;
 #[cfg(feature = "compiler")]
+mod stellar_placement;
+#[cfg(feature = "compiler")]
+pub use stellar_placement::{
+    CheckPlacement, CostContext, PlacementManifest, RuleAuthority, RuleCostEstimate, RulePlacement,
+    StellarCompileOptions,
+};
+#[cfg(feature = "compiler")]
+mod stellar_functional;
+#[cfg(feature = "compiler")]
 pub use stellar_codegen::{
-    STELLAR_ARGUMENT_SCHEMA, STELLAR_SOURCE_PROFILE, StellarPolicy, StellarPolicyContext,
-    StellarSourceProfile, compile_stellar_policy,
+    STELLAR_ARGUMENT_SCHEMA, STELLAR_SOURCE_PROFILE, StellarEvaluation, StellarPolicy,
+    StellarPolicyContext, StellarSourceProfile, compile_stellar_policy,
+    compile_stellar_policy_with_options,
 };
 #[cfg(feature = "compiler")]
 mod editing;

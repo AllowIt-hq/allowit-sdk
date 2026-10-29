@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
-pub const REGISTRY_VERSION: &str = "1.6.0";
+pub const REGISTRY_VERSION: &str = "1.7.0";
 /// Canonical expression schema. New registered host operations use the source registry
 /// version and explicit target-profile admission without changing the expression encoding.
 pub const IR_VERSION: &str = "1.0.0";
 pub const TYPED_IR_VERSION: &str = "1.1.0";
 /// Daily caps require new authenticated accounting; older artifacts require recompilation.
 pub fn supported_registry_version(version: &str) -> bool {
-    version == REGISTRY_VERSION
+    matches!(version, "1.6.0" | REGISTRY_VERSION)
 }
 pub const MAX_SOURCE_BYTES: usize = 32768;
 pub const MAX_NODES: usize = 2048;
@@ -361,6 +361,9 @@ pub struct ServiceCallPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
+    /// Trusted adapter capability. Public Context JSON cannot populate this field.
+    #[serde(skip)]
+    pub policy_state: Option<crate::TrustedPolicyState>,
     #[serde(skip)]
     #[cfg(feature = "typed-workflow")]
     pub workflow: Option<alloc::boxed::Box<crate::typed_workflow::WorkflowEnvironment>>,
@@ -437,6 +440,7 @@ impl Default for Context {
             #[cfg(feature = "typed-workflow")]
             service_call_input: None,
             native_policy_storage: None,
+            policy_state: None,
             amount_units: 0,
             allocation_units: 0,
             spent_units: 0,

@@ -57,6 +57,25 @@ impl Collector {
                     "confidence" => Some(ExecutionFeature::ConfidenceEvidence),
                     "require_user_input" => Some(ExecutionFeature::OwnerInput),
                     "cap_purchase_tiers" => Some(ExecutionFeature::PurchaseHistory),
+                    name if name.starts_with("engine::")
+                        || name.starts_with("self::")
+                        || [
+                            "daily_cap",
+                            "transaction_cap",
+                            "total_cap",
+                            "call_cap",
+                            "recipient",
+                            "expiry",
+                            "token",
+                        ]
+                        .contains(&name) =>
+                    {
+                        Some(ExecutionFeature::NativePolicyStorage)
+                    }
+                    "spent" | "with_spent" | "native_ok" | "native_fail" | "__native_return"
+                    | "state_get" | "state_set" | "state_remove" | "grant_get" => {
+                        Some(ExecutionFeature::NativePolicyStorage)
+                    }
                     "context_u64" => {
                         match args.get(1) {
                             Some(Expr::String { value }) => {

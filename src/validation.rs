@@ -15,6 +15,9 @@ enum Type {
     Boolean,
     Unit,
     Context,
+    Grant,
+    State,
+    Spent,
     Interval,
     Strings,
     #[cfg(feature = "typed-workflow")]
@@ -170,7 +173,9 @@ impl Validator<'_> {
                         | Type::Strings
                         | Type::Integer
                         | Type::Boolean
-                        | Type::Interval => true,
+                        | Type::Interval
+                        | Type::Spent
+                        | Type::State => true,
                         #[cfg(feature = "typed-workflow")]
                         Type::Workflow(_) => true,
                         _ => false,
@@ -231,8 +236,11 @@ impl Validator<'_> {
                             ));
                         }
                     } else {
-                        if !top || index + 1 != block.len() || ty != result(Type::Unit) {
-                            return Err(bad("Finish with Ok(()) or return fail(\"reason\")."));
+                        if !top
+                            || index + 1 != block.len()
+                            || !matches!(&ty,Type::Result(v) if matches!(&**v,Type::Unit|Type::Spent))
+                        {
+                            return Err(bad("Finish with the entrypoint's checked policy result."));
                         }
                         terminal = true;
                     }
@@ -244,8 +252,9 @@ impl Validator<'_> {
                             "A bounded loop can only return a refusal; it must check every entry before allowing.",
                         ));
                     }
-                    if self.expr(value, env, depth + 1, false)? != result(Type::Unit) {
-                        return Err(bad("A return must be Ok(()) or fail(\"reason\")."));
+                    if !matches!(self.expr(value, env, depth + 1, false)?,Type::Result(v) if matches!(*v,Type::Unit|Type::Spent))
+                    {
+                        return Err(bad("Return a checked policy result."));
                     }
                     terminal = true;
                 }
@@ -523,6 +532,80 @@ impl Validator<'_> {
                     .iter()
                     .map(|a| self.expr(a, env, depth + 1, false))
                     .collect::<Result<Vec<_>, _>>()?;
+                if name == "native_ok" || name == "__native_return" || name == "native_fail" {
+                    let expected = if name == "native_ok" {
+                        Type::Spent
+                    } else if name == "__native_return" {
+                        result(Type::Spent)
+                    } else {
+                        Type::String
+                    };
+                    if types != [expected] {
+                        return Err(bad(
+                            "A native source must return exactly Result<Spent, PolicyError>.",
+                        ));
+                    }
+                    return Ok(result(Type::Spent));
+                }
+                if [
+                    "daily_cap",
+                    "transaction_cap",
+                    "total_cap",
+                    "call_cap",
+                    "recipient",
+                    "expiry",
+                    "token",
+                ]
+                .contains(
+                    &name
+                        .trim_start_matches("engine::")
+                        .trim_start_matches("self::"),
+                ) {
+                    if types != [Type::Context, Type::State] {
+                        return Err(bad(
+                            "Engine checks require the trusted request and engine state.",
+                        ));
+                    }
+                    return Ok(result(Type::Spent));
+                }
+                if name == "spent" {
+                    if types != [Type::State] {
+                        return Err(bad("Read spent from the trusted engine state."));
+                    }
+                    return Ok(result(Type::Spent));
+                }
+                if name == "with_spent" {
+                    if types != [Type::State, Type::Spent] {
+                        return Err(bad(
+                            "with_spent requires state and the replacement spent map.",
+                        ));
+                    }
+                    return Ok(result(Type::State));
+                }
+                if ["state_get", "grant_get", "state_set", "state_remove"].contains(&name.as_str())
+                {
+                    let count = if name == "state_remove" { 2 } else { 3 };
+                    if types.len() != count
+                        || types[0]
+                            != if name == "grant_get" {
+                                Type::Grant
+                            } else {
+                                Type::Spent
+                            }
+                        || !matches!(args.get(1), Some(Expr::String { .. }))
+                        || (count == 3
+                            && !matches!(types[2], Type::Integer | Type::Boolean | Type::String))
+                    {
+                        return Err(bad(
+                            "Named helpers require a spent or Grant value, a literal name and the typed scalar.",
+                        ));
+                    }
+                    return Ok(if name == "state_get" || name == "grant_get" {
+                        result(types[2].clone())
+                    } else {
+                        result(Type::Spent)
+                    });
+                }
                 let expected = match name.as_str() {
                     #[cfg(feature = "typed-workflow")]
                     "allowit::execution_request_validate" => alloc::vec![Type::Workflow(
@@ -877,6 +960,8 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
     }
     let mut env = BTreeMap::new();
     env.insert("ctx".to_string(), Type::Context);
+    env.insert("__allowit_grant".to_string(), Type::Grant);
+    env.insert("__allowit_state".to_string(), Type::State);
     let mut validator = Validator {
         #[cfg(feature = "typed-workflow")]
         loop_depth: 0,
@@ -901,7 +986,9 @@ pub fn validate_program(program: &Program) -> Result<(), CompileError> {
         tier_count: 0,
     };
     if !validator.block(&program.statements, &mut env, 0, true)? {
-        return Err(bad("Each path must return Ok(()) or fail(\"reason\")."));
+        return Err(bad(
+            "Each path must return its declared policy result or fail.",
+        ));
     }
     #[cfg(feature = "typed-workflow")]
     if validator.service_profile()
@@ -1153,6 +1240,8 @@ pub(crate) fn typed_nodes(
     };
     let mut env = BTreeMap::new();
     env.insert("ctx".into(), Type::Context);
+    env.insert("__allowit_grant".into(), Type::Grant);
+    env.insert("__allowit_state".into(), Type::State);
     validator.block(&program.statements, &mut env, 0, true)?;
     Ok(validator.typed_nodes)
 }
@@ -1185,6 +1274,8 @@ pub(crate) fn typed_budgets(
     };
     let mut env = BTreeMap::new();
     env.insert("ctx".into(), Type::Context);
+    env.insert("__allowit_grant".into(), Type::Grant);
+    env.insert("__allowit_state".into(), Type::State);
     v.block(&program.statements, &mut env, 0, true)?;
     Ok(v.budgets)
 }
@@ -1227,4 +1318,101 @@ fn valid_typed_name(s: &str) -> bool {
 #[cfg(not(feature = "typed-workflow"))]
 fn valid_typed_name(_s: &str) -> bool {
     false
+}
+
+/// Historical 1.6 artifacts cannot claim the new named-state/rule dataflow surface.
+#[cfg(feature = "compiler")]
+pub(crate) fn registry_program_compatible(version: &str, program: &Program) -> bool {
+    if version == crate::REGISTRY_VERSION {
+        return true;
+    }
+    if version != "1.6.0" {
+        return false;
+    }
+    let mut blocks = alloc::vec![program.statements.as_slice()];
+    let mut expressions = Vec::new();
+    while let Some(block) = blocks.pop() {
+        for statement in block {
+            match statement {
+                Statement::Let { value, .. }
+                | Statement::Expression { value, .. }
+                | Statement::Return { value, .. } => expressions.push(value),
+                Statement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    expressions.push(condition);
+                    blocks.push(then_branch);
+                    blocks.push(else_branch);
+                }
+                #[cfg(feature = "typed-workflow")]
+                Statement::IfSome {
+                    value,
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    expressions.push(value);
+                    blocks.push(then_branch);
+                    blocks.push(else_branch);
+                }
+                #[cfg(feature = "typed-workflow")]
+                Statement::ForEach { values, body, .. } => {
+                    expressions.push(values);
+                    blocks.push(body);
+                }
+            }
+        }
+    }
+    while let Some(expr) = expressions.pop() {
+        match expr {
+            Expr::Call { name, args, .. } => {
+                if name.starts_with("engine::")
+                    || name.starts_with("self::")
+                    || [
+                        "spent",
+                        "with_spent",
+                        "state_get",
+                        "state_set",
+                        "state_remove",
+                        "grant_get",
+                        "native_ok",
+                        "native_fail",
+                        "__native_return",
+                        "daily_cap",
+                        "transaction_cap",
+                        "total_cap",
+                        "call_cap",
+                        "recipient",
+                        "expiry",
+                        "token",
+                    ]
+                    .contains(&name.as_str())
+                {
+                    return false;
+                }
+                expressions.extend(args);
+            }
+            Expr::Variable { name }
+                if ["__allowit_grant", "__allowit_state"].contains(&name.as_str()) =>
+            {
+                return false;
+            }
+            Expr::Try { value }
+            | Expr::Await { value }
+            | Expr::Not { value }
+            | Expr::Field { object: value, .. } => expressions.push(value),
+            #[cfg(feature = "typed-workflow")]
+            Expr::Borrow { value } => expressions.push(value),
+            Expr::Binary { left, right, .. } => {
+                expressions.push(left);
+                expressions.push(right);
+            }
+            Expr::Array { values } => expressions.extend(values),
+            _ => {}
+        }
+    }
+    true
 }

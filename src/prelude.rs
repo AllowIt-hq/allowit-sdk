@@ -1,7 +1,10 @@
 //! Rust type-checking facade for policy source. Authoritative execution uses the validated IR.
 //! The async approval facade fails closed; the oracle interpreter supplies authenticated answers.
+pub use crate::engine::{
+    call_cap, daily_cap, expiry, recipient, token, total_cap, transaction_cap,
+};
 pub use crate::primitives::OwnerLimit;
-pub use crate::{ConfidenceInterval, Context};
+pub use crate::{ConfidenceInterval, Context, Grant, Spent, State, engine};
 use alloc::string::String;
 pub type PolicyResult = Result<(), PolicyError>;
 #[derive(Debug, Clone, PartialEq, Eq)]

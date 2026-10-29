@@ -44,6 +44,31 @@ fn new() -> PolicyParams {
 
 `allowit::stored_limit(ctx, params.action_limit)?` reads adapter-verified `Context.native_policy_storage`. Only these two fields work. JSON and portable contracts reject native storage. Missing state fails closed.
 
+## Native named state and rule placement
+
+A functional Stellar policy receives the request, owner Grant and current state separately. It returns the exact spent map to persist:
+
+```rust
+use allowit::v1::prelude::*;
+async fn _execute(request: &Context, grant: &Grant, state: &State) -> Result<Spent, PolicyError> {
+    let next = allowit::daily_cap(request, state)?;
+    let n = allowit::state_get(&next, "custom_count", 0u64)?;
+    allowit::state_set(next, "custom_count", n + 1)
+}
+```
+
+Direct native rule amounts use the installed asset's base units. Existing classic amount helpers keep their original authoring units.
+
+Grant and spent preserve arbitrary native named values. Typed `grant_get` and `state_get` read a requested `u64`, Boolean or string. A missing key uses its source default. A different native type rejects the executed read. Unrelated values remain unchanged. Property names are source literals. The adapter reads the trusted native spent map; request JSON cannot supply it.
+
+`spent(state)` copies the map. `state_set` and `state_remove` return changed copies. `with_spent(state, values)` replaces the map while preserving Grant. Only the final returned map persists. A denial or failed native effect rolls back the operation. The namespace uses the stable policy instance, so compatible policy redeployments preserve named values. No named value can overwrite kernel ownership, asset binding, pause, version or replay records.
+
+`allowit::*` rule calls use deterministic authoring placement. `engine::*` selects the shared engine. `self::*` bundles only eligible owner-controlled pure rules. Bundled and shared forms use the same canonical rule implementation. System authority checks cannot bundle locally. Each selected rule receives the complete Grant and spent maps; declaring a Grant key does not activate a check.
+
+`compile_stellar_policy_with_options` accepts `StellarCompileOptions` and returns a placement manifest with authority, request, selection and reason. `Auto` can compare owner-supplied deployment and per-call costs against an expected transaction volume. All costs must use the same documented comparable unit and compatible network, rule digest, source profile and registry context. Missing or incompatible estimates use the authority default, without an optimization claim. No runtime fallback changes placement. Native signing still requires actual policy simulation, whether rules bundle locally or use the shared engine.
+
+The manifest's `possible_shared_spent_writer` flag marks policies that may adopt a shared engine's whole returned spent map. Local identifies where a rule runs. It does not make accounting independent of earlier shared writers. A later bundled check can read counters changed by a prior shared result.
+
 ## Run
 
 Use Rust 1.98 or later and the locked dependencies.
@@ -104,7 +129,7 @@ Compilation returns `policy`, hashes, workflow and IR. Evaluation accepts source
 
 Hosts authenticate edits. Stale IDs fail. Workflow spans use UTF-16 offsets. Diagnostic byte spans use UTF-8. Oracle `trace: true` records execution, not settlement. Bind traces to requests/revisions.
 
-Enable `typed-workflow` for host workflows/services. Typed APIs install authenticated records. Contracts authenticate IR without recompiling source. Use registry 1.6 readers for current policy artifacts.
+Enable `typed-workflow` for host workflows/services. Typed APIs install authenticated records. Contracts authenticate IR without recompiling source. Use registry 1.7 readers for named state and functional native policies. Known original registry 1.6 programs remain valid; new constructs cannot claim that older registry.
 
 Service policies bind an exact asset with `require_asset` or a monetary cap. Each policy supports one `allowit::service_call`. Typed adapters bind canonical input, settle the exact admitted amount, enforce payment/swap/fee ceilings and native limits, and deduplicate execution. Execute effects only from successful in-process evaluation. Contracts reject service calls. Native policy-only evaluation requires verified owner/source/executor authority and actual funding.
 

@@ -120,20 +120,180 @@ pub fn get_account(rpc: &dyn Rpc, address: &str) -> Result<AccountState> {
         signers,
     })
 }
+/// Prepare from authoritative current state and simulate the exact native policy execution.
+/// `accounting` is required only for the existing classic/native route. ODC property/validation
+/// policies receive an ephemeral preflight binding for new signing. Nothing is submitted.
+pub fn prepare(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    request: &ExecutionRequest,
+    accounting: Option<NativeAccounting>,
+    now: u64,
+    expires_at: u64,
+) -> Result<PreparedOperation> {
+    let state = trusted_state(rpc, c, accounting)?;
+    if c.route == WalletRoute::Native {
+        return super::prepare(c, request, &state, now, expires_at);
+    }
+    let intent = prepare_for_native_preflight(c, request, &state, now, expires_at)?;
+    simulate(rpc, &intent)
+}
+pub(crate) fn reject_restoration(value: &Value) -> Result<()> {
+    if value
+        .get("restorePreamble")
+        .is_some_and(|value| !value.is_null())
+    {
+        return Err("Native policy preflight requires restoration".into());
+    }
+    if let Some(data) = value.get("transactionData") {
+        let data: SorobanTransactionData =
+            read(data.as_str().ok_or("Invalid native preflight resources")?)?;
+        if matches!(data.ext,SorobanTransactionDataExt::V1(ref ext) if !ext.archived_soroban_entries.is_empty())
+        {
+            return Err("Native policy preflight includes archived entries".into());
+        }
+    }
+    Ok(())
+}
+/// Simulate an original unsigned ODC intent and bind successful native validation to it.
+/// Supplied resource XDR or JSON booleans alone never create a signing approval.
 pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperation> {
+    validate_retained_prepared(p)?;
+    if p.config.route != WalletRoute::Odc {
+        return Err("Native contract simulation requires ODC custody".into());
+    }
+    if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&p.config.network)? {
+        return Err("Simulation network differs from installation".into());
+    }
     let v = rpc.call(
         "simulateTransaction",
-        json!({"transaction":p.transaction_xdr}),
+        json!({"transaction":p.transaction_xdr,"authMode":"enforce"}),
     )?;
-    if v.get("error").is_some() {
-        return Err("ODC simulation rejected the operation".into());
+    if v.get("error").is_some_and(|value| !value.is_null()) {
+        return Err("ODC simulation rejected the exact policy operation".into());
     }
-    attach_simulation(
-        p,
-        v["transactionData"]
-            .as_str()
-            .ok_or("Missing Soroban resource simulation")?,
-    )
+    reject_restoration(&v)?;
+    let result = readonly_result(&v)?;
+    let transfer = transfer_from_request(&p.config, &p.request)?;
+    let expected = value_map(vec![
+        ("operation_id", value_bytes(&p.request.operation.nonce)?),
+        ("token", ScVal::Address(address(&p.config.asset)?)),
+        ("from", ScVal::Address(address(&p.config.wallet)?)),
+        ("to", ScVal::Address(address(&transfer.recipient)?)),
+        ("amount", i128_value(transfer.amount)),
+        ("nonce", ScVal::U64(p.state.nonce)),
+        ("deployment_version", ScVal::U64(p.state.deployment_version)),
+    ])?;
+    if result != expected {
+        return Err("Native simulation returned a different transfer receipt".into());
+    }
+    let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+        return Err("Unsupported preflight envelope".into());
+    };
+    let OperationBody::InvokeHostFunction(op) = &env.tx.operations[0].body else {
+        return Err("Expected one native policy invocation".into());
+    };
+    let observed = v["results"][0]["auth"]
+        .as_array()
+        .ok_or("Missing native preflight authorization scope")?;
+    let auth = observed
+        .iter()
+        .map(|entry| {
+            read(
+                entry
+                    .as_str()
+                    .ok_or("Invalid native preflight authorization")?,
+            )
+        })
+        .collect::<Result<Vec<SorobanAuthorizationEntry>>>()?;
+    if auth.as_slice() != op.auth.as_slice() {
+        return Err("Native preflight authorization differs from the exact intent".into());
+    }
+    let encoded = v["transactionData"]
+        .as_str()
+        .ok_or("Missing Soroban resource simulation")?;
+    let resources: SorobanTransactionData = read(encoded)?;
+    let minimum = v["minResourceFee"]
+        .as_str()
+        .ok_or("Missing native preflight minimum fee")?
+        .parse::<u64>()
+        .map_err(err)?;
+    if resources.resource_fee < 0 || minimum > resources.resource_fee as u64 {
+        return Err("Native preflight fee is below its minimum".into());
+    }
+    let mut prepared = attach_simulation(p, encoded)?;
+    record_native_preflight(&mut prepared)?;
+    Ok(prepared)
+}
+/// Revalidate an existing unsigned gateway intent through a locally trusted native RPC.
+/// The original transaction, hash and operation identity remain unchanged. Current authority,
+/// policy configuration and nonce must match the intent; its existing resources must cover
+/// fresh simulation. Only the private in-memory signing marker is added. Nothing is submitted.
+pub fn revalidate_prepared(
+    rpc: &dyn Rpc,
+    p: &PreparedOperation,
+    now: u64,
+) -> Result<PreparedOperation> {
+    validate_retained_prepared(p)?;
+    if p.config.route != WalletRoute::Odc
+        || p.state.contract_version != Some(1)
+        || p.created_at > now
+        || now >= p.expires_at
+    {
+        return Err("Current unexpired ODC intent is required for native revalidation".into());
+    }
+    let mut current = trusted_state(rpc, &p.config, None)?;
+    // Observation ledgers can advance without changing the transaction's authority or state.
+    current.ledger = p.state.ledger;
+    if current != p.state {
+        return Err("Current native state differs from the existing prepared intent".into());
+    }
+    let original: SorobanTransactionData = read(
+        p.simulation_data
+            .as_deref()
+            .ok_or("Existing intent has no bounded Soroban resources")?,
+    )?;
+    reject_restoration(&json!({"transactionData":xdr(&original)?}))?;
+    let mut keys = std::collections::BTreeSet::new();
+    if !original
+        .resources
+        .footprint
+        .read_only
+        .iter()
+        .chain(original.resources.footprint.read_write.iter())
+        .all(|key| keys.insert(key))
+    {
+        return Err("Existing resource footprint has duplicate or overlapping keys".into());
+    }
+    let simulated = simulate(rpc, p)?;
+    let required: SorobanTransactionData = read(
+        simulated
+            .simulation_data
+            .as_deref()
+            .ok_or("Native simulation omitted resource requirements")?,
+    )?;
+    let have = &original.resources;
+    let need = &required.resources;
+    let footprint_covers =
+        need.footprint
+            .read_write
+            .iter()
+            .all(|k| have.footprint.read_write.contains(k))
+            && need.footprint.read_only.iter().all(|k| {
+                have.footprint.read_only.contains(k) || have.footprint.read_write.contains(k)
+            });
+    if !footprint_covers
+        || have.instructions < need.instructions
+        || have.disk_read_bytes < need.disk_read_bytes
+        || have.write_bytes < need.write_bytes
+        || original.resource_fee < required.resource_fee
+    {
+        return Err("Existing transaction resources do not cover native revalidation".into());
+    }
+    let mut validated = p.clone();
+    record_native_preflight(&mut validated)?;
+    validate_prepared(&validated, now)?;
+    Ok(validated)
 }
 pub trait OperationStore {
     fn record(
@@ -333,13 +493,14 @@ pub fn recover(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeAccounting {
     pub nonce: u64,
-    pub revision: u64,
+    #[serde(alias = "revision")]
+    pub deployment_version: u64,
     pub spent_daily: i128,
     pub spent_total: i128,
     pub spent_day: u64,
     pub calls: u64,
 }
-fn map_field<'a>(value: &'a ScVal, name: &str) -> Result<&'a ScVal> {
+pub(crate) fn map_field<'a>(value: &'a ScVal, name: &str) -> Result<&'a ScVal> {
     let ScVal::Map(Some(map)) = value else {
         return Err("Expected contract record".into());
     };
@@ -348,20 +509,35 @@ fn map_field<'a>(value: &'a ScVal, name: &str) -> Result<&'a ScVal> {
         .map(|e| &e.val)
         .ok_or_else(|| format!("Missing contract field {name}"))
 }
-fn number(value: &ScVal) -> Result<u64> {
+pub(crate) fn current_contract_version(value: &ScVal) -> Result<u32> {
+    match map_field(value, "contract_version")? {
+        ScVal::U32(1) => Ok(1),
+        _ => Err("Unsupported policy contract version".into()),
+    }
+}
+pub(crate) fn deployment_version_field(state: &ScVal) -> Result<u64> {
+    if ["revision", "policy_version"]
+        .iter()
+        .any(|key| map_field(state, key).is_ok())
+    {
+        return Err("Unexpected legacy deployment field in current state".into());
+    }
+    number(map_field(state, "deployment_version")?)
+}
+pub(crate) fn number(value: &ScVal) -> Result<u64> {
     match value {
         ScVal::U32(v) => Ok((*v).into()),
         ScVal::U64(v) => Ok(*v),
         _ => Err("Expected contract unsigned integer".into()),
     }
 }
-fn wide(value: &ScVal) -> Result<i128> {
+pub(crate) fn wide(value: &ScVal) -> Result<i128> {
     match value {
         ScVal::I128(v) => Ok((i128::from(v.hi) << 64) | i128::from(v.lo)),
         _ => Err("Expected native i128 amount".into()),
     }
 }
-fn digest_field(value: &ScVal) -> Result<[u8; 32]> {
+pub(crate) fn digest_field(value: &ScVal) -> Result<[u8; 32]> {
     match value {
         ScVal::Bytes(v) => {
             v.0.as_slice()
@@ -371,22 +547,35 @@ fn digest_field(value: &ScVal) -> Result<[u8; 32]> {
         _ => Err("Expected bytes32".into()),
     }
 }
-fn addr(value: &ScVal) -> Result<String> {
+pub(crate) fn addr(value: &ScVal) -> Result<String> {
     match value {
         ScVal::Address(a) => address_text(a),
         _ => Err("Expected native contract address".into()),
     }
 }
-fn readonly_call(
+pub(crate) fn readonly_call(
     rpc: &dyn Rpc,
     c: &WalletConfig,
     source: &AccountState,
     function: &str,
 ) -> Result<ScVal> {
+    let value = readonly_simulation(rpc, c, source, &c.wallet, function, vec![])?;
+    readonly_result(&value)
+}
+pub(crate) fn readonly_simulation(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    source: &AccountState,
+    contract: &str,
+    function: &str,
+    args: Vec<ScVal>,
+) -> Result<Value> {
+    validate_config(c)?;
+    source.validate_structure()?;
     let call = InvokeContractArgs {
-        contract_address: address(&c.wallet)?,
+        contract_address: address(contract)?,
         function_name: ScSymbol(function.as_bytes().to_vec().try_into().map_err(err)?),
-        args: VecM::default(),
+        args: args.try_into().map_err(err)?,
     };
     let tx = Transaction {
         source_account: muxed(&source.address)?,
@@ -406,7 +595,10 @@ fn readonly_call(
         ext: TransactionExt::V0,
     };
     let value=rpc.call("simulateTransaction",json!({"transaction":xdr(&TransactionEnvelope::Tx(TransactionV1Envelope{tx,signatures:VecM::default()}))?}))?;
-    if value.get("error").is_some() {
+    Ok(value)
+}
+pub(crate) fn readonly_result(value: &Value) -> Result<ScVal> {
+    if value.get("error").is_some_and(|value| !value.is_null()) {
         return Err("Contract binding simulation failed".into());
     }
     let results = value["results"]
@@ -416,6 +608,69 @@ fn readonly_call(
         return Err("Unexpected binding result count".into());
     }
     read(results[0]["xdr"].as_str().ok_or("Missing binding XDR")?)
+}
+/// Read the selected ODC engine's executable release metadata without authorizing a call.
+/// `None` requires a host diagnostic that the selected engine has no `engine_version` export.
+/// Transport failures, unavailable diagnostics and malformed metadata are errors. This query
+/// does not attest engine health or code identity and is never required by owner operations.
+/// `rpc` must serve the configured network; `c.engine` selects the queried contract.
+/// `source` supplies the native simulation account; this function does not load keys or sign.
+pub fn engine_version(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    source: &AccountState,
+) -> Result<Option<u32>> {
+    validate_config(c)?;
+    if c.route != WalletRoute::Odc {
+        return Err("Engine metadata requires an ODC contract".into());
+    }
+    if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&c.network)? {
+        return Err("Stellar RPC network differs from installation".into());
+    }
+    let value = readonly_simulation(rpc, c, source, &c.engine, "engine_version", vec![])?;
+    if let Some(error) = value.get("error") {
+        if !error
+            .as_str()
+            .is_some_and(|v| v.contains("Error(WasmVm, MissingValue)"))
+        {
+            return Err("Engine version simulation failed".into());
+        }
+        let ScAddress::Contract(engine) = address(&c.engine)? else {
+            return Err("Engine is not a contract".into());
+        };
+        let events = value["events"]
+            .as_array()
+            .ok_or("Missing engine version diagnostics")?;
+        let mut absent = false;
+        for encoded in events {
+            let event: DiagnosticEvent =
+                read(encoded.as_str().ok_or("Invalid engine diagnostic XDR")?)?;
+            let ContractEventBody::V0(body) = &event.event.body;
+            if !event.in_successful_contract_call
+                && event.event.type_ == ContractEventType::Diagnostic
+                && event.event.contract_id.as_ref() == Some(&engine)
+                && body.topics.as_slice()
+                    == [
+                        value_symbol("error")?,
+                        ScVal::Error(ScError::WasmVm(ScErrorCode::MissingValue)),
+                    ]
+                && matches!(&body.data, ScVal::Vec(Some(args)) if args.len() == 2
+                    && matches!(&args[0], ScVal::String(message) if message.0.as_slice() == b"trying to invoke non-existent contract function")
+                    && args[1] == value_symbol("engine_version")?)
+            {
+                absent = true;
+            }
+        }
+        return if absent {
+            Ok(None)
+        } else {
+            Err("Engine metadata failure is not an absent version export".into())
+        };
+    }
+    match readonly_result(&value)? {
+        ScVal::U32(version) if version > 0 => Ok(Some(version)),
+        _ => Err("Invalid engine release version".into()),
+    }
 }
 /// Fetch native authority and ODC state from the configured chain. Native usage must
 /// come from the authoritative durable coordinator, never an implicit zero counter.
@@ -468,9 +723,11 @@ fn trusted_state_inner(
         let a = accounting.ok_or("Native wallet requires authoritative policy accounting")?;
         return Ok(DiscoveredState {
             state: TrustedState {
+                contract_version: None,
+                policy_state: None,
                 source,
                 nonce: a.nonce,
-                revision: a.revision,
+                deployment_version: a.deployment_version,
                 spent_daily: a.spent_daily,
                 spent_total: a.spent_total,
                 spent_day: a.spent_day,
@@ -523,9 +780,7 @@ fn trusted_state_inner(
         .find(|e| e.key == ScVal::U32(0))
         .map(|e| &e.val)
         .ok_or("Missing ODC custody state")?;
-    if number(map_field(state, "version")?)? != 1 {
-        return Err("Unsupported ODC custody state version".into());
-    }
+    let contract_version = current_contract_version(state)?;
     let paused = match map_field(state, "paused")? {
         ScVal::Bool(value) => *value,
         _ => return Err("Invalid ODC pause state".into()),
@@ -548,18 +803,26 @@ fn trusted_state_inner(
     {
         return Err("Compiled policy binding differs from installation".into());
     }
-    let grant = map_field(state, "grant")?;
-    if addr(map_field(grant, "asset")?)? != c.asset {
+    if current_contract_version(&binding)? != contract_version {
+        return Err("Policy contract release differs from stored state".into());
+    }
+    if addr(map_field(state, "asset")?)? != c.asset {
         return Err("ODC asset differs from installation".into());
     }
+    let policy_state = PolicyStateSnapshot {
+        grant: NativeValues::from_value(map_field(state, "grant")?)?,
+        spent: properties::read_spent(rpc, c, &source)?,
+    };
     let out = TrustedState {
+        contract_version: Some(contract_version),
+        policy_state: Some(policy_state),
         source,
         nonce: number(map_field(state, "nonce")?)?,
-        revision: number(map_field(state, "revision")?)?,
-        spent_daily: wide(map_field(state, "spent_daily")?)?,
-        spent_total: wide(map_field(state, "spent_total")?)?,
-        spent_day: number(map_field(state, "spent_day")?)?,
-        calls: number(map_field(state, "calls")?)?,
+        deployment_version: deployment_version_field(state)?,
+        spent_daily: 0,
+        spent_total: 0,
+        spent_day: 0,
+        calls: 0,
         ledger,
         module_digest: module.0,
         source_hash: c.source_hash,
@@ -569,4 +832,42 @@ fn trusted_state_inner(
         policy_instance: c.policy_instance,
     };
     Ok(DiscoveredState { state: out, paused })
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn current_contract_metadata_and_counter_are_exact() {
+        for value in [
+            ScVal::U32(0),
+            ScVal::U32(2),
+            ScVal::U64(1),
+            ScVal::Bool(true),
+        ] {
+            assert!(
+                current_contract_version(&value_map(vec![("contract_version", value)]).unwrap())
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            current_contract_version(
+                &value_map(vec![("contract_version", ScVal::U32(1))]).unwrap()
+            )
+            .unwrap(),
+            1
+        );
+        for old in ["revision", "policy_version"] {
+            assert!(
+                deployment_version_field(
+                    &value_map(vec![
+                        ("deployment_version", ScVal::U64(3)),
+                        (old, ScVal::U64(3))
+                    ])
+                    .unwrap()
+                )
+                .is_err()
+            );
+        }
+    }
 }

@@ -117,6 +117,7 @@ fn preference_threshold(expr: &SynExpr, direction: &str) -> Result<(bool, String
 
 struct Parser {
     nodes: usize,
+    native_entry: bool,
     params: Option<std::collections::BTreeMap<String, Expr>>,
     helper_calls: Vec<(String, SourceSpan)>,
     preference_steps: Vec<(SourceSpan, Vec<String>)>,
@@ -714,7 +715,12 @@ impl Parser {
                 let Pat::Ident(ident) = pat else {
                     return Err(error(pat.span(), "Use a simple immutable variable name."));
                 };
-                if ident.ident == "params" || ident.ident.to_string().starts_with("__allowit_") {
+                if ident.ident == "params"
+                    || ident.ident.to_string().starts_with("__allowit_")
+                    || (self.native_entry
+                        && ["request", "grant", "state"]
+                            .contains(&ident.ident.to_string().as_str()))
+                {
                     return Err(error(
                         ident.span(),
                         "This variable prefix is reserved for policy helpers.",
@@ -884,6 +890,9 @@ impl Parser {
                     && p.path.segments.len() == 1
                     && p.path.segments[0].arguments.is_empty() =>
             {
+                if self.native_entry && p.path.segments[0].ident == "ctx" {
+                    return Err(error(p.span(), "Use the declared request parameter."));
+                }
                 if p.path.segments[0]
                     .ident
                     .to_string()
@@ -895,11 +904,27 @@ impl Parser {
                     ));
                 }
                 Expr::Variable {
-                    name: p.path.segments[0].ident.to_string(),
+                    name: if self.native_entry {
+                        match p.path.segments[0].ident.to_string().as_str() {
+                            "request" => "ctx".into(),
+                            "grant" => "__allowit_grant".into(),
+                            "state" => "__allowit_state".into(),
+                            other => other.into(),
+                        }
+                    } else {
+                        p.path.segments[0].ident.to_string()
+                    },
                 }
             }
             SynExpr::Tuple(t) if t.elems.is_empty() => Expr::Unit,
             SynExpr::Paren(p) => self.expr(&p.expr, depth + 1)?,
+            SynExpr::Reference(r)
+                if self.native_entry
+                    && r.mutability.is_none()
+                    && matches!(&*r.expr, SynExpr::Path(_)) =>
+            {
+                self.expr(&r.expr, depth + 1)?
+            }
             SynExpr::Reference(r)
                 if r.mutability.is_none() && matches!(&*r.expr, SynExpr::Array(_)) =>
             {
@@ -1021,6 +1046,13 @@ impl Parser {
                 if self.params.is_some() && name != "Ok" && p.path.segments.len() != 2 {
                     return Err(error(p.span(), "Use the exact namespaced system function."));
                 }
+                let name = if self.native_entry && name == "Ok" {
+                    "native_ok".into()
+                } else if self.native_entry && name == "fail" {
+                    "native_fail".into()
+                } else {
+                    name
+                };
                 Expr::Call {
                     name,
                     args: c
@@ -1069,6 +1101,12 @@ fn source_slice(source: &str, span: SourceSpan) -> String {
 fn direct_call(expr: &Expr) -> Option<(&str, &[Expr])> {
     match expr {
         Expr::Try { value } | Expr::Await { value } => direct_call(value),
+        Expr::Call { name, args, .. }
+            if ["__native_return", "native_ok"].contains(&name.as_str()) =>
+        {
+            args.first().and_then(direct_call)
+        }
+        Expr::Call { name, args, .. } if name == "native_fail" => Some(("fail", args)),
         Expr::Call { name, args, .. } if name != "Ok" => Some((name, args)),
         _ => None,
     }
@@ -1093,8 +1131,15 @@ fn argument(expr: &Expr) -> String {
 fn walk_expr(expr: &Expr, calls: &mut Vec<(String, SourceSpan)>) {
     match expr {
         Expr::Call { name, args, span } => {
-            if name != "Ok" {
-                calls.push((name.clone(), *span));
+            if !["Ok", "native_ok", "__native_return"].contains(&name.as_str()) {
+                calls.push((
+                    if name == "native_fail" {
+                        "fail".into()
+                    } else {
+                        name.clone()
+                    },
+                    *span,
+                ));
             }
             for arg in args {
                 walk_expr(arg, calls);
@@ -1211,6 +1256,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         )
     })?;
     let sig = &f.sig;
+    let native_entry = params.is_none() && sig.inputs.len() == 3 && sig.ident == "_execute";
     let valid_entry = (sig.ident == "_execute" && matches!(f.vis, syn::Visibility::Inherited))
         || ((sig.ident == "execute" || sig.ident == "evaluate" || sig.ident == "exec")
             && matches!(f.vis, syn::Visibility::Public(_)));
@@ -1223,26 +1269,39 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         || sig.variadic.is_some()
         || !sig.generics.params.is_empty()
         || sig.generics.where_clause.is_some()
-        || sig.inputs.len() != if params.is_some() { 2 } else { 1 }
+        || sig.inputs.len()
+            != if native_entry {
+                3
+            } else if params.is_some() {
+                2
+            } else {
+                1
+            }
         || (params.is_some() && sig.ident != "_execute")
     {
         return Err(error(
             sig.span(),
-            "Use private async fn _execute(ctx: &Context) -> PolicyResult, or a public legacy entrypoint.",
+            "Use a supported policy entrypoint. Functional native source returns Result<Spent, PolicyError> from _execute(request, grant, state).",
         ));
     }
-    let valid_arg = matches!(&sig.inputs[0],FnArg::Typed(arg) if arg.attrs.is_empty()&&matches!(&*arg.pat,Pat::Ident(p) if p.ident=="ctx"&&p.mutability.is_none()&&p.by_ref.is_none()&&p.subpat.is_none())&&matches!(&*arg.ty,Type::Reference(r) if r.mutability.is_none()&&r.lifetime.is_none()&&matches!(&*r.elem,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"Context"))));
+    let valid_arg = matches!(&sig.inputs[0],FnArg::Typed(arg) if arg.attrs.is_empty()&&matches!(&*arg.pat,Pat::Ident(p) if p.ident==if native_entry {"request"}else{"ctx"}&&p.mutability.is_none()&&p.by_ref.is_none()&&p.subpat.is_none())&&matches!(&*arg.ty,Type::Reference(r) if r.mutability.is_none()&&r.lifetime.is_none()&&matches!(&*r.elem,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"Context"))));
     let valid_params = params.is_none()
         || matches!(&sig.inputs[1],FnArg::Typed(arg) if arg.attrs.is_empty()&&matches!(&*arg.pat,Pat::Ident(p) if p.ident=="params"&&p.mutability.is_none()&&p.by_ref.is_none()&&p.subpat.is_none())&&matches!(&*arg.ty,Type::Reference(r) if r.mutability.is_none()&&r.lifetime.is_none()&&matches!(&*r.elem,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"PolicyParams"))));
-    let valid_return = matches!(&sig.output,ReturnType::Type(_,ty) if matches!(&**ty,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"PolicyResult")));
-    if !valid_arg || !valid_params || !valid_return {
+    let valid_return = if native_entry {
+        matches!(&sig.output,ReturnType::Type(_,ty) if matches!(&**ty,Type::Path(p) if p.qself.is_none()&&p.path.segments.len()==1&&p.path.segments[0].ident=="Result"&&matches!(&p.path.segments[0].arguments,syn::PathArguments::AngleBracketed(args) if args.args.len()==2&&matches!(&args.args[0],syn::GenericArgument::Type(Type::Path(p)) if simple_path(&p.path,"Spent"))&&matches!(&args.args[1],syn::GenericArgument::Type(Type::Path(p)) if simple_path(&p.path,"PolicyError")))))
+    } else {
+        matches!(&sig.output,ReturnType::Type(_,ty) if matches!(&**ty,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,"PolicyResult")))
+    };
+    let native_args=!native_entry || [(1,"grant","Grant"),(2,"state","State")].iter().all(|(i,name,ty)|matches!(&sig.inputs[*i],FnArg::Typed(arg) if arg.attrs.is_empty()&&matches!(&*arg.pat,Pat::Ident(p) if p.ident==*name&&p.mutability.is_none()&&p.by_ref.is_none()&&p.subpat.is_none())&&matches!(&*arg.ty,Type::Reference(r) if r.mutability.is_none()&&r.lifetime.is_none()&&matches!(&*r.elem,Type::Path(p) if p.qself.is_none()&&simple_path(&p.path,ty)))));
+    if !valid_arg || !valid_params || !valid_return || !native_args {
         return Err(error(
             sig.span(),
-            "Use private async fn _execute(ctx: &Context) -> PolicyResult, or a public legacy entrypoint.",
+            "Use a supported policy entrypoint. Functional native source returns Result<Spent, PolicyError> from _execute(request, grant, state).",
         ));
     }
     let mut parser = Parser {
         nodes: 0,
+        native_entry,
         params,
         helper_calls: vec![],
         preference_steps: vec![],
@@ -1251,6 +1310,36 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         version: IR_VERSION.into(),
         statements: parser.block(&f.block, 0)?,
     };
+    if native_entry {
+        fn boundaries(block: &mut [Statement]) {
+            for statement in block {
+                match statement {
+                    Statement::Return { value, span }
+                    | Statement::Expression {
+                        value,
+                        semicolon: false,
+                        span,
+                    } => {
+                        *value = Expr::Call {
+                            name: "__native_return".into(),
+                            args: vec![value.clone()],
+                            span: *span,
+                        };
+                    }
+                    Statement::If {
+                        then_branch,
+                        else_branch,
+                        ..
+                    } => {
+                        boundaries(then_branch);
+                        boundaries(else_branch);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        boundaries(&mut ir.statements);
+    }
     if crate::typed_workflow::required(&ir) {
         ir.version = crate::TYPED_IR_VERSION.into();
     }
@@ -1396,7 +1485,7 @@ fn validate_signature(tokens: &proc_macro2::TokenStream) -> Result<(), CompileEr
     fn invalid() -> CompileError {
         CompileError::new(
             "INVALID_POLICY",
-            "Use an optional allowit::v1::prelude import and one private async fn _execute(ctx: &Context) -> PolicyResult { ... }, or a public legacy entrypoint.",
+            "Use an optional allowit::v1::prelude import and one supported policy entrypoint. Functional native source declares request, grant and state and returns Result<Spent, PolicyError>.",
         )
     }
     fn matches(token: Option<TokenTree>, expected: &str) -> bool {
@@ -1455,6 +1544,29 @@ fn validate_signature(tokens: &proc_macro2::TokenStream) -> Result<(), CompileEr
     };
     if params.delimiter() != Delimiter::Parenthesis {
         return Err(invalid());
+    }
+    let native = params
+        .stream()
+        .to_string()
+        .split_whitespace()
+        .collect::<String>();
+    if !public
+        && [
+            "request:&Context,grant:&Grant,state:&State",
+            "request:&Context,grant:&Grant,state:&State,",
+        ]
+        .contains(&native.as_str())
+    {
+        expect(
+            &mut iter,
+            &["-", ">", "Result", "<", "Spent", ",", "PolicyError", ">"],
+        )?;
+        if !matches!(iter.next(),Some(TokenTree::Group(body)) if body.delimiter()==Delimiter::Brace)
+            || iter.next().is_some()
+        {
+            return Err(invalid());
+        }
+        return Ok(());
     }
     let mut params = params.stream().into_iter();
     expect(&mut params, &["ctx", ":", "&", "Context"])?;
@@ -1635,6 +1747,8 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                         || ident == "return"
                         || ident == "Ok"
                         || ident == "allowit"
+                        || ident == "engine"
+                        || ident == "self"
                         || crate::registry::function(&ident.to_string()).is_some() =>
                 {
                     current.after_if_body = false;
@@ -1696,7 +1810,9 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                 stack.push(frame(group.stream(), scope, depth));
             }
             TokenTree::Ident(ident) => {
-                if current.scope != Scope::File && ident == "allowit" {
+                if current.scope != Scope::File
+                    && ["allowit", "engine", "self"].contains(&ident.to_string().as_str())
+                {
                     let mut lookahead = current.iter.clone();
                     if matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':' && p.spacing() == proc_macro2::Spacing::Joint)
                         && matches!(lookahead.next(), Some(TokenTree::Punct(p)) if p.as_char() == ':')
