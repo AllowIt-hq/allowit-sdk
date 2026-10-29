@@ -57,7 +57,7 @@ pub(crate) fn operation_nonce(policy_id: &str, request_id: &str) -> [u8; 32] {
 
 fn decode_reader<T: DeserializeOwned>(reader: impl Read) -> Result<T> {
     // The stream cap also protects against a file that grows after the metadata check.
-    let mut bytes = Vec::with_capacity(4096);
+    let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(4096));
     reader
         .take(MAX_REQUEST_BYTES as u64 + 1)
         .read_to_end(&mut bytes)

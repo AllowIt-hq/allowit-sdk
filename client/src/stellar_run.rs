@@ -36,8 +36,13 @@ struct Bundle {
     config: WalletConfig,
     endpoints: Endpoints,
     /// Customer secret. This field is decoded locally and never serialized or sent.
-    #[serde(default)]
-    signing_seed: Option<String>,
+    #[serde(default, deserialize_with = "local_secret")]
+    signing_seed: Option<Zeroizing<String>>,
+}
+fn local_secret<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> std::result::Result<Option<Zeroizing<String>>, D::Error> {
+    String::deserialize(decoder).map(|value| Some(Zeroizing::new(value)))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -121,8 +126,8 @@ fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
     checked(sdk::validate_config(&bundle.config))
 }
 fn read_public_bundle(path: &Path) -> Result<Bundle> {
-    let bundle: Bundle = crate::typed_request::read_request_file(path)?;
-    if bundle.signing_seed.is_some() {
+    let mut bundle: Bundle = crate::typed_request::read_request_file(path)?;
+    if let Some(_private) = bundle.signing_seed.take() {
         return Err(Error::config(
             "The public Stellar bundle must not contain signing material",
         ));
@@ -205,12 +210,10 @@ impl Client {
                 .collect::<Vec<_>>(),
         );
         let mut bundle: Bundle = decode_bytes(&bytes)?;
-        let private = Zeroizing::new(
-            bundle
-                .signing_seed
-                .take()
-                .ok_or_else(|| Error::config("The legacy Stellar token lacks its local signer"))?,
-        );
+        let private = bundle
+            .signing_seed
+            .take()
+            .ok_or_else(|| Error::config("The legacy Stellar token lacks its local signer"))?;
         let seed = Zeroizing::new(checked(sdk::decode_seed(&private))?);
         // Signer membership is checked against current chain authority by the service.
         bundle.config.agent = sdk::account_for_seed(&seed);

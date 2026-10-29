@@ -1,0 +1,10 @@
+[package]
+name = "allowit-service-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde_json = "1.0.150"
+sha2 = "0.10.9"

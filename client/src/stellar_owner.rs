@@ -50,6 +50,12 @@ fn fetch(path: &str) -> Result<serde_json::Value> {
     }
     serde_json::from_slice(&bytes).map_err(|_| Error::config("Invalid Stellar state"))
 }
+fn clock() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .map_err(|_| Error::config("System time is unavailable"))
+}
 
 pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {
     let usage = "allowit wallet configure --network stellar:testnet --owner G_ADDRESS --agent G_ADDRESS --engine G_ADDRESS --request-id ID [--fee-per-operation 100]";
@@ -147,18 +153,16 @@ pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {
             high_threshold: threshold("high_threshold")?,
             signers: vec![],
         };
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| Error::config("System time is unavailable"))?
-            .as_secs();
+        let now = clock()?;
         let prepared = prepare_native_setup(&current, agent, engine, id, &network, fee, now)
             .map_err(Error::config)?;
         store.save(id, &prepared)?;
         prepared
     };
     let url = signing_url(&crate::config::env_value("ALLOWIT_URL"), &setup)?;
+    let expired = setup.expires_at <= clock()?;
     *stdout += &crate::output::json(
-        &serde_json::json!({"state":"awaiting_owner_signature","executed":false,"requestId":id,"signingUrl":url,"intentDigest":setup.intent_digest,"transactionHash":setup.transaction_hash}),
+        &serde_json::json!({"state":if expired {"owner_intent_expired"}else{"awaiting_owner_signature"},"executed":false,"recoveryOnly":expired,"requestId":id,"signingUrl":url,"intentDigest":setup.intent_digest,"transactionHash":setup.transaction_hash}),
     );
     Ok(10)
 }

@@ -69,12 +69,17 @@ pub(crate) fn extract(args: &[String]) -> Result<(Vec<String>, Option<String>)> 
         }
         i += 1;
     }
-    if rest.first().is_none_or(|s| {
-        matches!(
-            s.as_str(),
-            "help" | "-h" | "--help" | "version" | "--version"
-        )
-    }) {
+    if rest
+        .iter()
+        .take_while(|s| s.as_str() != "--")
+        .any(|s| matches!(s.as_str(), "-h" | "--help" | "-help"))
+        || rest.first().is_none_or(|s| {
+            matches!(
+                s.as_str(),
+                "help" | "-h" | "--help" | "version" | "--version"
+            )
+        })
+    {
         return Ok((rest, network));
     }
     if let Some(n) = &network {

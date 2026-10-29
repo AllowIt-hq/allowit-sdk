@@ -58,7 +58,7 @@ pub fn intent_digest(v: &ApprovalIntent) -> Result<String> {
             v.ir_hash,
             hash(binding)
         ]))
-        .unwrap(),
+        .map_err(|_| Error::config("Cannot encode Stellar approval identity"))?,
     ))
 }
 pub fn validate(v: &ApprovalIntent) -> Result<()> {
@@ -74,10 +74,14 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
         || v.source.len() > 32_768
         || v.source_hash != hash(v.source.as_bytes())
         || v.ir_hash.len() != 64
-        || !v.ir_hash.bytes().all(|b| b.is_ascii_hexdigit())
+        || !v
+            .ir_hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || b.route != "native"
         || b.asset_symbol.is_empty()
-        || b.asset_symbol.len() > 32
+        || b.asset_symbol.len() > 12
+        || !b.asset_symbol.bytes().all(|b| b.is_ascii_alphanumeric())
         || b.max_fee_stroops < 100
         || b.max_fee_stroops > 1_000_000
     {
@@ -97,9 +101,25 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
     allowit_stellar_wallet::address(&b.asset).map_err(Error::config)?;
     for h in [&b.policy_instance, &b.module_digest] {
         allowit_stellar_wallet::unhex::<32>(h).map_err(Error::config)?;
+        if !h
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(Error::config(
+                "Stellar policy identities must use lowercase hexadecimal",
+            ));
+        }
     }
     if let Some(h) = &b.deployment_id {
         allowit_stellar_wallet::unhex::<32>(h).map_err(Error::config)?;
+        if !h
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(Error::config(
+                "Stellar deployment identity must use lowercase hexadecimal",
+            ));
+        }
     }
     if intent_digest(v)? != v.intent_digest {
         return Err(Error::config("The Stellar policy approval changed"));
@@ -266,5 +286,23 @@ mod tests {
         policy = f["policy"].clone();
         policy["runtime"]["wallet"]["profile"] = serde_json::json!("allowit-stellar-odc-v1");
         assert!(approval_for_policy(&policy, &intent.owner, &intent.request_id).is_err());
+    }
+    #[test]
+    fn native_approval_preserves_separate_owner_authority_and_canonical_asset_identity() {
+        let f = fixture();
+        let mut intent: ApprovalIntent = serde_json::from_value(f["intent"].clone()).unwrap();
+        // Existing installations can give a distinct owner weight-three administration authority.
+        intent.owner = allowit_stellar_wallet::account_for_seed(&[9; 32]);
+        intent.intent_digest = intent_digest(&intent).unwrap();
+        validate(&intent).unwrap();
+        for symbol in ["XLM\n", "USDC\u{202e}", "TOO_LONG_ASSET"] {
+            let mut altered = intent.clone();
+            altered.binding.asset_symbol = symbol.into();
+            altered.intent_digest = intent_digest(&altered).unwrap();
+            assert!(validate(&altered).is_err());
+        }
+        intent.ir_hash = "AB".repeat(32);
+        intent.intent_digest = intent_digest(&intent).unwrap();
+        assert!(validate(&intent).is_err());
     }
 }

@@ -12,3 +12,5 @@
 /evidence/
 
 /templates/policy/target/
+__pycache__/
+*.py[cod]

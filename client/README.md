@@ -36,6 +36,8 @@ The owner keeps administration authority. The agent and configured engine jointl
 medium-threshold operations. The browser checks the configured engine identity and current account
 before Freighter signs. It saves the exact signed XDR before submission. Recovery checks its original
 hash and can resend only those saved bytes.
+Repeating a setup request after its signing deadline returns the original link as recovery-only.
+It never prepares replacement bytes under that request ID. Use a new request ID for an unsigned setup.
 
 `approve` requires a policy already stored under the owner and a service-configured native installation.
 It binds the complete source, revision and public wallet binding. The browser compares those terms to
@@ -52,6 +54,7 @@ The validated public bundle selects the Stellar network automatically. An explic
 server connection. `--source` includes the exact public source. Stellar `exec` requires a typed
 `--request-file`. `status POLICY REQUEST_ID` recovers the original execution. Unsupported policy
 lifecycle commands fail without using another rail.
+Public `show` requires the public bundle. A legacy secret-bearing token is used only by `exec` and `status`.
 
 For an existing Stellar policy, `policy deploy --network stellar:testnet` forwards to the approval
 continuation. Set `ALLOWIT_STELLAR_POLICY_FILE`, `ALLOWIT_OWNER` and `ALLOWIT_REQUEST_ID`. Omit the

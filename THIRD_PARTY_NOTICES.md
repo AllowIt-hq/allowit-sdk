@@ -13,9 +13,9 @@ The license materials in this file, the root [MIT license](LICENSE) and [license
 
 Published crates that declare Apache-2.0 but omit a license file are accompanied by the complete standard Apache-2.0 text. For dual-licensed entries using this fallback, the catalog records the Apache-2.0 alternative. The `void` 1.0.2 crate declares MIT; its publisher's subsequently added MIT copyright and permission notice is retained verbatim, with that provenance recorded. The `r-efi` packages' published `AUTHORS` files include the full MIT grant, used here as the permissive alternative.
 
-The catalog also covers the client facade's exact Git dependencies. Each entry binds the canonical
+The catalog also covers the client and service SDKs' exact Git dependencies. Each entry binds the canonical
 repository, commit, package manifest and upstream MIT license text. Package identity and license
-declarations remain separate for the SDK core, Solana adapter and Tempo adapter.
+declarations remain separate for the SDK cores, Solana adapter and Tempo adapter.
 
 Use Python 3.11 or later. Run `python3 scripts/package-licenses.py` to verify every current locked dependency and license-input hash. Run `python3 scripts/package-licenses.py <artifact-directory>` to add the full companion materials to a binary archive before distribution. New dependencies, changed Git revisions or changed locked archive checksums require an updated catalog before packaging.
 
