@@ -333,7 +333,8 @@ pub fn recover(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeAccounting {
     pub nonce: u64,
-    pub revision: u64,
+    #[serde(alias = "revision")]
+    pub deployment_version: u64,
     pub spent_daily: i128,
     pub spent_total: i128,
     pub spent_day: u64,
@@ -348,16 +349,20 @@ pub(crate) fn map_field<'a>(value: &'a ScVal, name: &str) -> Result<&'a ScVal> {
         .map(|e| &e.val)
         .ok_or_else(|| format!("Missing contract field {name}"))
 }
-pub(crate) fn policy_version_field(state: &ScVal, schema: u64) -> Result<u64> {
-    let (field, other) = match schema {
-        1 => ("revision", "policy_version"),
-        2 => ("policy_version", "revision"),
-        _ => return Err("Unsupported ODC state version".into()),
-    };
-    if map_field(state, other).is_ok() {
-        return Err("ODC state contains conflicting version fields".into());
+pub(crate) fn current_contract_version(value: &ScVal) -> Result<u32> {
+    match map_field(value, "contract_version")? {
+        ScVal::U32(1) => Ok(1),
+        _ => Err("Unsupported policy contract version".into()),
     }
-    number(map_field(state, field)?)
+}
+pub(crate) fn deployment_version_field(state: &ScVal) -> Result<u64> {
+    if ["revision", "policy_version"]
+        .iter()
+        .any(|key| map_field(state, key).is_ok())
+    {
+        return Err("Unexpected legacy deployment field in current state".into());
+    }
+    number(map_field(state, "deployment_version")?)
 }
 pub(crate) fn number(value: &ScVal) -> Result<u64> {
     match value {
@@ -394,8 +399,20 @@ pub(crate) fn readonly_call(
     source: &AccountState,
     function: &str,
 ) -> Result<ScVal> {
+    let value = readonly_simulation(rpc, c, source, &c.wallet, function)?;
+    readonly_result(&value)
+}
+fn readonly_simulation(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    source: &AccountState,
+    contract: &str,
+    function: &str,
+) -> Result<Value> {
+    validate_config(c)?;
+    source.validate_structure()?;
     let call = InvokeContractArgs {
-        contract_address: address(&c.wallet)?,
+        contract_address: address(contract)?,
         function_name: ScSymbol(function.as_bytes().to_vec().try_into().map_err(err)?),
         args: VecM::default(),
     };
@@ -417,6 +434,9 @@ pub(crate) fn readonly_call(
         ext: TransactionExt::V0,
     };
     let value=rpc.call("simulateTransaction",json!({"transaction":xdr(&TransactionEnvelope::Tx(TransactionV1Envelope{tx,signatures:VecM::default()}))?}))?;
+    Ok(value)
+}
+fn readonly_result(value: &Value) -> Result<ScVal> {
     if value.get("error").is_some() {
         return Err("Contract binding simulation failed".into());
     }
@@ -427,6 +447,69 @@ pub(crate) fn readonly_call(
         return Err("Unexpected binding result count".into());
     }
     read(results[0]["xdr"].as_str().ok_or("Missing binding XDR")?)
+}
+/// Read the selected ODC engine's executable release metadata without authorizing a call.
+/// `None` requires a host diagnostic that the selected engine has no `engine_version` export.
+/// Transport failures, unavailable diagnostics and malformed metadata are errors. This query
+/// does not attest engine health or code identity and is never required by owner operations.
+/// `rpc` must serve the configured network; `c.engine` selects the queried contract.
+/// `source` supplies the native simulation account; this function does not load keys or sign.
+pub fn engine_version(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    source: &AccountState,
+) -> Result<Option<u32>> {
+    validate_config(c)?;
+    if c.route != WalletRoute::Odc {
+        return Err("Engine metadata requires an ODC contract".into());
+    }
+    if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&c.network)? {
+        return Err("Stellar RPC network differs from installation".into());
+    }
+    let value = readonly_simulation(rpc, c, source, &c.engine, "engine_version")?;
+    if let Some(error) = value.get("error") {
+        if !error
+            .as_str()
+            .is_some_and(|v| v.contains("Error(WasmVm, MissingValue)"))
+        {
+            return Err("Engine version simulation failed".into());
+        }
+        let ScAddress::Contract(engine) = address(&c.engine)? else {
+            return Err("Engine is not a contract".into());
+        };
+        let events = value["events"]
+            .as_array()
+            .ok_or("Missing engine version diagnostics")?;
+        let mut absent = false;
+        for encoded in events {
+            let event: DiagnosticEvent =
+                read(encoded.as_str().ok_or("Invalid engine diagnostic XDR")?)?;
+            let ContractEventBody::V0(body) = &event.event.body;
+            if !event.in_successful_contract_call
+                && event.event.type_ == ContractEventType::Diagnostic
+                && event.event.contract_id.as_ref() == Some(&engine)
+                && body.topics.as_slice()
+                    == [
+                        value_symbol("error")?,
+                        ScVal::Error(ScError::WasmVm(ScErrorCode::MissingValue)),
+                    ]
+                && matches!(&body.data, ScVal::Vec(Some(args)) if args.len() == 2
+                    && matches!(&args[0], ScVal::String(message) if message.0.as_slice() == b"trying to invoke non-existent contract function")
+                    && args[1] == value_symbol("engine_version")?)
+            {
+                absent = true;
+            }
+        }
+        return if absent {
+            Ok(None)
+        } else {
+            Err("Engine metadata failure is not an absent version export".into())
+        };
+    }
+    match readonly_result(&value)? {
+        ScVal::U32(version) if version > 0 => Ok(Some(version)),
+        _ => Err("Invalid engine release version".into()),
+    }
 }
 /// Fetch native authority and ODC state from the configured chain. Native usage must
 /// come from the authoritative durable coordinator, never an implicit zero counter.
@@ -479,10 +562,10 @@ fn trusted_state_inner(
         let a = accounting.ok_or("Native wallet requires authoritative policy accounting")?;
         return Ok(DiscoveredState {
             state: TrustedState {
-                contract_interface_version: 1,
+                contract_version: None,
                 source,
                 nonce: a.nonce,
-                policy_version: a.revision,
+                deployment_version: a.deployment_version,
                 spent_daily: a.spent_daily,
                 spent_total: a.spent_total,
                 spent_day: a.spent_day,
@@ -535,10 +618,7 @@ fn trusted_state_inner(
         .find(|e| e.key == ScVal::U32(0))
         .map(|e| &e.val)
         .ok_or("Missing ODC custody state")?;
-    let state_version = number(map_field(state, "version")?)?;
-    if !matches!(state_version, 1 | 2) {
-        return Err("Unsupported ODC custody state version".into());
-    }
+    let contract_version = current_contract_version(state)?;
     let paused = match map_field(state, "paused")? {
         ScVal::Bool(value) => *value,
         _ => return Err("Invalid ODC pause state".into()),
@@ -561,22 +641,18 @@ fn trusted_state_inner(
     {
         return Err("Compiled policy binding differs from installation".into());
     }
-    let interface_version = match map_field(&binding, "interface_version") {
-        Ok(value) => number(value)?,
-        Err(_) => 1,
-    };
-    if !matches!(interface_version, 1 | 2) || state_version > interface_version {
-        return Err("ODC interface and state version differ".into());
+    if current_contract_version(&binding)? != contract_version {
+        return Err("Policy contract release differs from stored state".into());
     }
     let grant = map_field(state, "grant")?;
     if addr(map_field(grant, "asset")?)? != c.asset {
         return Err("ODC asset differs from installation".into());
     }
     let out = TrustedState {
-        contract_interface_version: interface_version as u32,
+        contract_version: Some(contract_version),
         source,
         nonce: number(map_field(state, "nonce")?)?,
-        policy_version: policy_version_field(state, state_version)?,
+        deployment_version: deployment_version_field(state)?,
         spent_daily: wide(map_field(state, "spent_daily")?)?,
         spent_total: wide(map_field(state, "spent_total")?)?,
         spent_day: number(map_field(state, "spent_day")?)?,
@@ -596,13 +672,36 @@ fn trusted_state_inner(
 mod version_tests {
     use super::*;
     #[test]
-    fn mixed_legacy_and_current_version_fields_are_rejected() {
-        let mixed = value_map(vec![
-            ("revision", ScVal::U64(3)),
-            ("policy_version", ScVal::U64(3)),
-        ])
-        .unwrap();
-        assert!(policy_version_field(&mixed, 1).is_err());
-        assert!(policy_version_field(&mixed, 2).is_err());
+    fn current_contract_metadata_and_counter_are_exact() {
+        for value in [
+            ScVal::U32(0),
+            ScVal::U32(2),
+            ScVal::U64(1),
+            ScVal::Bool(true),
+        ] {
+            assert!(
+                current_contract_version(&value_map(vec![("contract_version", value)]).unwrap())
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            current_contract_version(
+                &value_map(vec![("contract_version", ScVal::U32(1))]).unwrap()
+            )
+            .unwrap(),
+            1
+        );
+        for old in ["revision", "policy_version"] {
+            assert!(
+                deployment_version_field(
+                    &value_map(vec![
+                        ("deployment_version", ScVal::U64(3)),
+                        (old, ScVal::U64(3))
+                    ])
+                    .unwrap()
+                )
+                .is_err()
+            );
+        }
     }
 }

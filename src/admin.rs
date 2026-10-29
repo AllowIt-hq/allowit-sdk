@@ -4,11 +4,12 @@
 //! it has a real owner-authorized preparation path. No default changes rails or
 //! substitutes an unsupported operation.
 
-/// The policy configuration version, shared by redeployment and administration.
+/// The ordered owner-configuration counter, shared by deployment and pause.
+/// The vendor requires target `n + 1` for active deployment version `n`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PolicyVersion(pub u64);
+pub struct DeploymentVersion(pub u64);
 
-impl PolicyVersion {
+impl DeploymentVersion {
     pub fn next(self) -> Option<Self> {
         self.0.checked_add(1).map(Self)
     }
@@ -24,9 +25,11 @@ pub trait DeployPolicy {
     type Artifact;
     type Output;
     type Error;
+    /// `deployment_version` is the next ordered configuration target.
+    /// `artifact` is the vendor's complete owner-reviewed deployment configuration.
     fn deploy_policy(
         &mut self,
-        policy_version: PolicyVersion,
+        deployment_version: DeploymentVersion,
         artifact: Self::Artifact,
     ) -> Result<Self::Output, Self::Error>;
 }
@@ -36,10 +39,11 @@ pub trait DeployPolicy {
 pub trait SetPause {
     type Output;
     type Error;
+    /// `paused` selects pause or resume; `deployment_version` is the next target.
     fn set_pause(
         &mut self,
         paused: bool,
-        policy_version: PolicyVersion,
+        deployment_version: DeploymentVersion,
     ) -> Result<Self::Output, Self::Error>;
 }
 
@@ -48,6 +52,7 @@ pub trait SetPause {
 pub trait RecoverFunds {
     type Output;
     type Error;
+    /// `token` selects the native token contract or vendor asset identity.
     fn recover_funds(&mut self, token: &str) -> Result<Self::Output, Self::Error>;
 }
 
@@ -73,10 +78,10 @@ impl<V> Admin<V> {
 impl<V: DeployPolicy> Admin<V> {
     pub fn deploy_policy(
         &mut self,
-        policy_version: PolicyVersion,
+        deployment_version: DeploymentVersion,
         artifact: V::Artifact,
     ) -> Result<V::Output, V::Error> {
-        self.vendor.deploy_policy(policy_version, artifact)
+        self.vendor.deploy_policy(deployment_version, artifact)
     }
 }
 
@@ -84,9 +89,9 @@ impl<V: SetPause> Admin<V> {
     pub fn set_pause(
         &mut self,
         paused: bool,
-        policy_version: PolicyVersion,
+        deployment_version: DeploymentVersion,
     ) -> Result<V::Output, V::Error> {
-        self.vendor.set_pause(paused, policy_version)
+        self.vendor.set_pause(paused, deployment_version)
     }
 }
 
@@ -108,7 +113,7 @@ mod tests {
         type Error = &'static str;
         fn deploy_policy(
             &mut self,
-            version: PolicyVersion,
+            version: DeploymentVersion,
             artifact: Self::Artifact,
         ) -> Result<Self::Output, Self::Error> {
             self.seen
@@ -122,10 +127,10 @@ mod tests {
         fn set_pause(
             &mut self,
             paused: bool,
-            policy_version: PolicyVersion,
+            deployment_version: DeploymentVersion,
         ) -> Result<bool, &'static str> {
             self.seen
-                .push(alloc::format!("pause:{paused}:{}", policy_version.0));
+                .push(alloc::format!("pause:{paused}:{}", deployment_version.0));
             Ok(paused)
         }
     }
@@ -143,11 +148,11 @@ mod tests {
             seen: alloc::vec![],
         });
         assert_eq!(
-            admin.deploy_policy(PolicyVersion(4), "artifact"),
+            admin.deploy_policy(DeploymentVersion(4), "artifact"),
             Ok("vendor deployment")
         );
-        assert_eq!(admin.set_pause(true, PolicyVersion(5)), Ok(true));
-        assert_eq!(admin.set_pause(false, PolicyVersion(6)), Ok(false));
+        assert_eq!(admin.set_pause(true, DeploymentVersion(5)), Ok(true));
+        assert_eq!(admin.set_pause(false, DeploymentVersion(6)), Ok(false));
         assert_eq!(
             admin.recover_funds("token-address"),
             Err("owner authorization required")
@@ -164,10 +169,10 @@ mod tests {
     }
     #[test]
     fn versions_reject_replay_skips_and_overflow() {
-        assert!(PolicyVersion(8).follows(PolicyVersion(7)));
-        assert!(!PolicyVersion(7).follows(PolicyVersion(7)));
-        assert!(!PolicyVersion(9).follows(PolicyVersion(7)));
-        assert_eq!(PolicyVersion(u64::MAX).next(), None);
-        assert!(!PolicyVersion(0).follows(PolicyVersion(u64::MAX)));
+        assert!(DeploymentVersion(8).follows(DeploymentVersion(7)));
+        assert!(!DeploymentVersion(7).follows(DeploymentVersion(7)));
+        assert!(!DeploymentVersion(9).follows(DeploymentVersion(7)));
+        assert_eq!(DeploymentVersion(u64::MAX).next(), None);
+        assert!(!DeploymentVersion(0).follows(DeploymentVersion(u64::MAX)));
     }
 }

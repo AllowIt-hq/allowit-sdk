@@ -1,6 +1,6 @@
 //! Owner preparation for the versioned ODC interface. No keys or submissions.
 use crate::*;
-use allowit_policy_sdk::admin::{DeployPolicy, PolicyVersion, RecoverFunds, SetPause};
+use allowit_policy_sdk::admin::{DeployPolicy, DeploymentVersion, RecoverFunds, SetPause};
 use serde_json::json;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,31 +42,36 @@ impl Grant {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyDeployment {
+    /// Native address of the desired policy owner; a changed owner must authorize too.
     pub owner: String,
+    /// Desired delegated agent address. Enabling x402 requires a native G-account.
     pub agent: String,
+    /// Desired veto engine contract address.
     pub engine: String,
+    /// Complete native spending permissions for this deployment.
     pub grant: Grant,
+    /// Desired agent pause state after deployment.
     pub paused: bool,
-    pub x402_signer: Option<[u8; 32]>,
+    /// Owner opt-in to x402 using the configured native G-agent Ed25519 key.
+    pub x402_enabled: bool,
+    /// Optional uploaded policy executable hash to install atomically.
     pub wasm_hash: Option<[u8; 32]>,
 }
 impl PolicyDeployment {
-    fn value(&self, version: PolicyVersion) -> Result<ScVal> {
+    fn value(&self, version: DeploymentVersion) -> Result<ScVal> {
         value_map(vec![
-            ("policy_version", ScVal::U64(version.0)),
+            ("deployment_version", ScVal::U64(version.0)),
             ("owner", ScVal::Address(address(&self.owner)?)),
             ("agent", ScVal::Address(address(&self.agent)?)),
             ("engine", ScVal::Address(address(&self.engine)?)),
             ("grant", self.grant.value()?),
             ("paused", ScVal::Bool(self.paused)),
-            (
-                "x402_signer",
-                self.x402_signer
-                    .as_ref()
-                    .map(|k| value_bytes(k))
-                    .transpose()?
-                    .unwrap_or(ScVal::Void),
-            ),
+            {
+                if self.x402_enabled {
+                    account_key(&self.agent)?;
+                }
+                ("x402_enabled", ScVal::Bool(self.x402_enabled))
+            },
             (
                 "wasm_hash",
                 self.wasm_hash
@@ -88,7 +93,8 @@ pub struct PreparedOwnerOperation {
     pub wallet: String,
     pub owner: String,
     pub function: String,
-    pub policy_version: u64,
+    /// Target deployment version, or the unchanged observed version for recovery.
+    pub deployment_version: u64,
     pub transaction_xdr: String,
     pub transaction_hash: [u8; 32],
     pub expires_at: u64,
@@ -104,11 +110,11 @@ pub struct OwnerAdmin<'a> {
 }
 struct Snapshot {
     owner: AccountState,
-    policy_version: PolicyVersion,
+    deployment_version: DeploymentVersion,
 }
 impl OwnerAdmin<'_> {
     fn snapshot(&self) -> Result<Snapshot> {
-        use rpc::{addr, digest_field, map_field, number};
+        use rpc::{addr, digest_field, map_field};
         let c = self.config;
         validate_config(c)?;
         if c.route != WalletRoute::Odc {
@@ -154,10 +160,7 @@ impl OwnerAdmin<'_> {
             .find(|e| e.key == ScVal::U32(0))
             .map(|e| &e.val)
             .ok_or("Missing ODC custody state")?;
-        let state_version = number(map_field(state, "version")?)?;
-        if !matches!(state_version, 1 | 2) {
-            return Err("Unsupported ODC state version".into());
-        }
+        let contract_version = rpc::current_contract_version(state)?;
         let current_owner = addr(map_field(state, "owner")?)?;
         if current_owner != c.owner {
             return Err("Current owner differs from the bound owner".into());
@@ -167,7 +170,7 @@ impl OwnerAdmin<'_> {
         let owner = rpc::get_account(self.rpc, &current_owner)?;
         owner.validate_structure()?;
         let binding = rpc::readonly_call(self.rpc, c, &owner, "policy_binding")?;
-        if number(map_field(&binding, "interface_version")?)? != 2
+        if rpc::current_contract_version(&binding)? != contract_version
             || digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
             || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
             || digest_field(map_field(&binding, "source_digest")?)? != c.source_hash
@@ -175,7 +178,7 @@ impl OwnerAdmin<'_> {
                 != hash(ARGUMENT_SCHEMA)
             || map_field(&binding, "entrypoint")? != &value_symbol("_execute")?
         {
-            return Err("Owner ODC interface or policy binding differs".into());
+            return Err("Owner contract release or policy binding differs".into());
         }
         let grant = map_field(state, "grant")?.clone();
         if addr(map_field(&grant, "asset")?)? != c.asset {
@@ -183,7 +186,7 @@ impl OwnerAdmin<'_> {
         }
         Ok(Snapshot {
             owner,
-            policy_version: PolicyVersion(rpc::policy_version_field(state, state_version)?),
+            deployment_version: DeploymentVersion(rpc::deployment_version_field(state)?),
         })
     }
     fn transaction(
@@ -237,7 +240,7 @@ impl OwnerAdmin<'_> {
         snapshot: Snapshot,
         function: &str,
         args: Vec<ScVal>,
-        version: PolicyVersion,
+        version: DeploymentVersion,
         authorizers: Vec<String>,
     ) -> Result<PreparedOwnerOperation> {
         let expires = self.now.checked_add(300).ok_or("Expiry overflow")?;
@@ -326,7 +329,7 @@ impl OwnerAdmin<'_> {
             wallet: self.config.wallet.clone(),
             owner: snapshot.owner.address,
             function: function.into(),
-            policy_version: version.0,
+            deployment_version: version.0,
             transaction_hash: transaction_hash(&self.config.network, &tx)?,
             transaction_xdr: xdr(&TransactionEnvelope::Tx(TransactionV1Envelope {
                 tx,
@@ -343,24 +346,19 @@ impl DeployPolicy for OwnerAdmin<'_> {
     type Error = String;
     fn deploy_policy(
         &mut self,
-        version: PolicyVersion,
+        version: DeploymentVersion,
         artifact: PolicyDeployment,
     ) -> Result<PreparedOwnerOperation> {
         let s = self.snapshot()?;
-        if !version.follows(s.policy_version) {
+        if !version.follows(s.deployment_version) {
             return Err("Policy deployment must target the next version".into());
         }
         let mut authorizers = vec![s.owner.address.clone()];
         if artifact.owner != s.owner.address {
             authorizers.push(artifact.owner.clone());
         }
-        self.prepare(
-            s,
-            "deploy_policy",
-            vec![artifact.value(version)?],
-            version,
-            authorizers,
-        )
+        let arguments = artifact.value(version)?;
+        self.prepare(s, "deploy_policy", vec![arguments], version, authorizers)
     }
 }
 impl SetPause for OwnerAdmin<'_> {
@@ -369,11 +367,11 @@ impl SetPause for OwnerAdmin<'_> {
     fn set_pause(
         &mut self,
         paused: bool,
-        version: PolicyVersion,
+        version: DeploymentVersion,
     ) -> Result<PreparedOwnerOperation> {
         let s = self.snapshot()?;
-        if !version.follows(s.policy_version) {
-            return Err("Pause must target the next policy version".into());
+        if !version.follows(s.deployment_version) {
+            return Err("Pause must target the next deployment version".into());
         }
         let authorizers = vec![s.owner.address.clone()];
         self.prepare(
@@ -420,7 +418,7 @@ impl RecoverFunds for OwnerAdmin<'_> {
             return Err("Selected token has no recoverable balance".into());
         }
         let owner = s.owner.address.clone();
-        let version = s.policy_version;
+        let version = s.deployment_version;
         self.prepare(
             s,
             "recover",

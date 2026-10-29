@@ -13,9 +13,6 @@ use stellar_xdr::*;
 pub mod admin;
 pub mod rpc;
 pub type Result<T> = std::result::Result<T, String>;
-fn legacy_interface() -> u32 {
-    1
-}
 
 pub const PROFILE: &str = "allowit-stellar-wallet-v1";
 pub const ARGUMENT_SCHEMA: &[u8] = b"allowit.stellar.sep41_transfer.v1:ScValMap(amount:i128,from:Address,to:Address,token:Address)";
@@ -269,12 +266,14 @@ impl AccountState {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrustedState {
-    #[serde(default = "legacy_interface")]
-    pub contract_interface_version: u32,
+    /// Executable release metadata. Legacy code has no advertised release version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_version: Option<u32>,
     pub source: AccountState,
     pub nonce: u64,
+    /// Current ordered owner configuration. Historical spellings identify this same counter.
     #[serde(alias = "revision")]
-    pub policy_version: u64,
+    pub deployment_version: u64,
     pub spent_daily: i128,
     pub spent_total: i128,
     pub spent_day: u64,
@@ -554,6 +553,7 @@ fn odc_request(
     state: &TrustedState,
     t: &Transfer,
     expires: u64,
+    legacy_revision: bool,
 ) -> Result<ScVal> {
     let args = transfer_args(c, t)?.to_xdr(limits()).map_err(err)?;
     let invocation = value_map(vec![
@@ -570,16 +570,22 @@ fn odc_request(
         ("operation_id", value_bytes(&r.operation.nonce)?),
         ("nonce", ScVal::U64(state.nonce)),
         (
-            match state.contract_interface_version {
-                1 => "revision",
-                2 => "policy_version",
-                _ => return Err("Unsupported ODC interface version".into()),
+            if legacy_revision {
+                "revision"
+            } else {
+                "deployment_version"
             },
-            ScVal::U64(state.policy_version),
+            ScVal::U64(state.deployment_version),
         ),
         ("expires_at", ScVal::U64(expires)),
         ("invocation", invocation),
     ])
+}
+#[derive(Clone, Copy)]
+enum PacketUse {
+    Current,
+    Retained,
+    RetainedRevision,
 }
 fn build(
     c: &WalletConfig,
@@ -588,8 +594,19 @@ fn build(
     now: u64,
     expires: u64,
     retained_native_lower_bound: bool,
-    admit_policy: bool,
+    packet: PacketUse,
 ) -> Result<Transaction> {
+    let admit_policy = matches!(packet, PacketUse::Current);
+    let legacy_revision = matches!(packet, PacketUse::RetainedRevision);
+    if c.route == WalletRoute::Odc {
+        if legacy_revision {
+            if admit_policy || state.contract_version.is_some() {
+                return Err("Legacy ODC packets are read-only".into());
+            }
+        } else if state.contract_version != Some(1) {
+            return Err("Unsupported policy contract version".into());
+        }
+    }
     let t = transfer_from_request(c, r)?;
     if admit_policy {
         verify_policy(c, r, state, now)?;
@@ -639,7 +656,7 @@ fn build(
                 host_function: HostFunction::InvokeContract(InvokeContractArgs {
                     contract_address: address(&c.wallet)?,
                     function_name: ScSymbol(b"execute".to_vec().try_into().map_err(err)?),
-                    args: vec![odc_request(c, r, state, &t, expires)?]
+                    args: vec![odc_request(c, r, state, &t, expires, legacy_revision)?]
                         .try_into()
                         .map_err(err)?,
                 }),
@@ -649,7 +666,7 @@ fn build(
                         function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
                             contract_address: address(&c.wallet)?,
                             function_name: ScSymbol(b"execute".to_vec().try_into().map_err(err)?),
-                            args: vec![odc_request(c, r, state, &t, expires)?]
+                            args: vec![odc_request(c, r, state, &t, expires, legacy_revision)?]
                                 .try_into()
                                 .map_err(err)?,
                         }),
@@ -710,7 +727,7 @@ pub fn prepare(
     now: u64,
     expires_at: u64,
 ) -> Result<PreparedOperation> {
-    prepare_with_bounds(c, r, state, now, expires_at, false, true)
+    prepare_with_bounds(c, r, state, now, expires_at, false, PacketUse::Current)
 }
 fn prepare_with_bounds(
     c: &WalletConfig,
@@ -719,7 +736,7 @@ fn prepare_with_bounds(
     now: u64,
     expires_at: u64,
     retained_native_lower_bound: bool,
-    admit_policy: bool,
+    packet: PacketUse,
 ) -> Result<PreparedOperation> {
     let tx = build(
         c,
@@ -728,7 +745,7 @@ fn prepare_with_bounds(
         now,
         expires_at,
         retained_native_lower_bound,
-        admit_policy,
+        packet,
     )?;
     Ok(PreparedOperation {
         version: 1,
@@ -748,6 +765,9 @@ fn prepare_with_bounds(
 }
 /// Rebuild every authorization field before signing. Caller-supplied prepared metadata is not trusted.
 pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
+    if p.config.route == WalletRoute::Odc && p.state.contract_version != Some(1) {
+        return Err("Legacy or unsupported ODC packets cannot authorize execution".into());
+    }
     if p.version != 1 || p.created_at > now || now >= p.expires_at {
         return Err("Prepared operation is stale".into());
     }
@@ -777,7 +797,11 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
         p.created_at,
         p.expires_at,
         retained_native_lower_bound,
-        false,
+        if retained_revision_packet(p)? {
+            PacketUse::RetainedRevision
+        } else {
+            PacketUse::Retained
+        },
     )?;
     if let Some(data) = &p.simulation_data {
         expected = attach_simulation(&expected, data)?;
@@ -786,6 +810,45 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
         return Err("Prepared operation changed".into());
     }
     Ok(())
+}
+// Canonical main emitted revision packets before contract release metadata existed.
+// This private decoder permits only original-byte status/recovery verification.
+fn retained_revision_packet(p: &PreparedOperation) -> Result<bool> {
+    if p.config.route != WalletRoute::Odc {
+        return Ok(false);
+    }
+    let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+        return Err("Invalid retained envelope".into());
+    };
+    let Some(Operation {
+        body: OperationBody::InvokeHostFunction(op),
+        ..
+    }) = env.tx.operations.first()
+    else {
+        return Err("Invalid retained ODC operation".into());
+    };
+    let HostFunction::InvokeContract(call) = &op.host_function else {
+        return Err("Invalid retained ODC call".into());
+    };
+    let Some(ScVal::Map(Some(fields))) = call.args.first() else {
+        return Err("Invalid retained ODC request".into());
+    };
+    let keys: Vec<_> = fields
+        .iter()
+        .filter_map(|f| match &f.key {
+            ScVal::Symbol(k) => Some(k.0.as_slice()),
+            _ => None,
+        })
+        .collect();
+    match (
+        p.state.contract_version,
+        keys.contains(&b"revision".as_slice()),
+        keys.contains(&b"deployment_version".as_slice()),
+    ) {
+        (None, true, false) => Ok(true),
+        (Some(1), false, true) => Ok(false),
+        _ => Err("Unsupported retained ODC contract format".into()),
+    }
 }
 fn native_lower_bound(p: &PreparedOperation) -> Result<u64> {
     let TransactionEnvelope::Tx(envelope) = read(&p.transaction_xdr)? else {
