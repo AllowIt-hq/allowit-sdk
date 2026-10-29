@@ -201,5 +201,12 @@ class GitLicenseTests(unittest.TestCase):
             self.validate()
 
 
+    def test_manifest_notice_blob_metadata_cannot_drift(self):
+        self.entry['manifest']['gitBlob'] = 'd' * 40
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'manifest blob'):
+            self.validate()
+
+
 if __name__ == '__main__':
     unittest.main()

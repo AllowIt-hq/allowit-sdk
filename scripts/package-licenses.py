@@ -47,7 +47,8 @@ def validate():
         manifest = checked_git_input(entry['manifest'], repository, revision)
         blob = hashlib.sha1(b'blob ' + str(len(manifest)).encode() + b'\0' + manifest).hexdigest()
         if (entry['manifest']['originalPath'] != entry['manifestPath']
-                or entry['manifestGitBlob'] != blob):
+                or entry['manifestGitBlob'] != blob
+                or entry['manifest'].get('gitBlob', blob) != blob):
             raise ValueError('Git package manifest blob differs from its pinned provenance')
         package = tomllib.loads(manifest.decode())['package']
         declared = entry['declaredLicense']
