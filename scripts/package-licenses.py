@@ -41,19 +41,30 @@ def validate():
         source = f'git+{repository}?rev={revision}#{revision}'
         if (not re.fullmatch(r'[0-9a-f]{40}', revision)
                 or not re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git', repository)
-                or entry['cargoSource'] != source):
+                or entry['source'] != source):
             raise ValueError('Git license coverage requires an exact canonical repository and revision')
-        package = tomllib.loads(checked_git_input(entry['manifest'], repository, revision).decode())['package']
+        manifest = checked_git_input(entry['manifest'], repository, revision)
+        blob = hashlib.sha1(b'blob ' + str(len(manifest)).encode() + b'\0' + manifest).hexdigest()
+        if (entry['manifest']['originalPath'] != entry['manifestPath']
+                or entry['manifestGitBlob'] != blob):
+            raise ValueError('Git package manifest blob differs from its pinned provenance')
+        package = tomllib.loads(manifest.decode())['package']
+        declared = entry['declaredLicense']
         if (package['name'] != entry['name'] or package['version'] != entry['version']
-                or package.get('license') != 'MIT' or entry['declaredLicense'] != 'MIT'
-                or entry['selectedLicense'] != 'MIT'):
-            raise ValueError('Pinned Git package identity or MIT license differs from its manifest')
+                or package.get('license') != declared
+                or declared not in ('MIT', 'LicenseRef-Proprietary')
+                or (declared == 'MIT' and entry.get('selectedLicense') != 'MIT')
+                or (declared == 'LicenseRef-Proprietary' and 'selectedLicense' in entry)):
+            raise ValueError('Pinned Git package identity or license differs from its manifest')
         identity = (entry['name'], entry['version'], source)
         if identity in git_packages:
             raise ValueError('Duplicate Git package license identity')
         git_packages.add(identity)
         for notice in entry['files']:
-            checked_git_input(notice, repository, revision)
+            raw = checked_git_input(notice, repository, revision)
+            blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+            if notice.get('gitBlob') != blob:
+                raise ValueError('Git license blob identity differs from retained text')
     tracked = subprocess.check_output(
         ['git', 'ls-files', '--', '*Cargo.lock'], cwd=ROOT, text=True
     ).splitlines()

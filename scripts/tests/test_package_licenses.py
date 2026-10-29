@@ -28,11 +28,14 @@ class GitLicenseTests(unittest.TestCase):
             path.write_bytes(data)
             return {'path': str(path.relative_to(self.root)), 'sha256': hashlib.sha256(data).hexdigest(),
                     'originalPath': name,
-                    'source': f'{self.repository.removesuffix(".git")}/blob/{self.revision}/{name}'}
+                    'source': f'{self.repository.removesuffix(".git")}/blob/{self.revision}/{name}',
+                    'gitBlob': hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()}
         self.entry = {'name': 'vendor', 'version': '0.1.0', 'repository': self.repository,
-                      'revision': self.revision, 'cargoSource': self.source, 'declaredLicense': 'MIT',
+                      'revision': self.revision, 'source': self.source, 'declaredLicense': 'MIT',
                       'selectedLicense': 'MIT', 'manifest': retained('vendor.toml', manifest),
                       'files': [retained('LICENSE', license_text)]}
+        self.entry['manifestPath'] = 'vendor.toml'
+        self.entry['manifestGitBlob'] = self.entry['manifest']['gitBlob']
         self.catalog = {'packages': [], 'toolchains': [], 'gitPackages': [self.entry]}
         self.write_catalog()
         self.write_lock(self.source)
@@ -65,8 +68,10 @@ class GitLicenseTests(unittest.TestCase):
         path = self.root / self.entry['manifest']['path']
         path.write_text(path.read_text().replace('MIT', 'Apache-2.0'))
         self.entry['manifest']['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+        data = path.read_bytes()
+        self.entry['manifestGitBlob'] = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
         self.write_catalog()
-        with self.assertRaisesRegex(ValueError, 'MIT license differs'):
+        with self.assertRaisesRegex(ValueError, 'license differs'):
             self.validate()
 
     def test_input_source_must_match_the_exact_pinned_repository_path(self):
@@ -76,14 +81,84 @@ class GitLicenseTests(unittest.TestCase):
             self.validate()
 
     def test_source_revision_mismatch_and_path_escape_fail(self):
-        self.entry['cargoSource'] = self.source.replace(self.revision, 'c' * 40)
+        self.entry['source'] = self.source.replace(self.revision, 'c' * 40)
         self.write_catalog()
         with self.assertRaisesRegex(ValueError, 'exact canonical'):
             self.validate()
-        self.entry['cargoSource'] = self.source
+        self.entry['source'] = self.source
         self.entry['manifest']['path'] = '../outside.toml'
         self.write_catalog()
         with self.assertRaisesRegex(ValueError, 'escapes'):
+            self.validate()
+
+
+    def test_wrong_git_package_identity_fails(self):
+        lock = self.root / 'Cargo.lock'
+        lock.write_text(lock.read_text().replace('name="vendor"', 'name="another-package"'))
+        with self.assertRaisesRegex(ValueError, 'explicit license coverage'):
+            self.validate()
+
+    def test_changed_or_unknown_registry_identity_fails(self):
+        self.catalog['packages'] = [{'name': 'registry', 'version': '1.0.0',
+                                     'crateSha256': 'c' * 64, 'files': self.entry['files']}]
+        self.write_catalog()
+        lock = self.root / 'Cargo.lock'
+        original = lock.read_text()
+        registry = '\n[[package]]\nname="registry"\nversion="1.0.0"\nsource="registry+https://github.com/rust-lang/crates.io-index"\nchecksum="' + 'c' * 64 + '"\n'
+        lock.write_text(original + registry)
+        self.assertEqual(self.validate(), 2)
+        for changed in [registry.replace('c' * 64, 'd' * 64), registry.replace('version="1.0.0"', 'version="2.0.0"')]:
+            lock.write_text(original + changed)
+            with self.assertRaisesRegex(ValueError, 'does not cover'):
+                self.validate()
+
+    def test_manifest_and_notice_blob_provenance_fail_closed(self):
+        self.entry['manifestGitBlob'] = 'd' * 40
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'manifest blob'):
+            self.validate()
+        self.entry['manifestGitBlob'] = self.entry['manifest']['gitBlob']
+        self.entry['files'][0]['gitBlob'] = 'd' * 40
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'license blob'):
+            self.validate()
+
+    def test_manifest_source_path_cannot_be_rebound(self):
+        self.entry['manifestPath'] = 'other/Cargo.toml'
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'manifest blob'):
+            self.validate()
+
+    def test_missing_manifest_empty_notice_and_duplicate_identity_fail(self):
+        manifest = self.entry.pop('manifest')
+        self.write_catalog()
+        with self.assertRaises(KeyError):
+            self.validate()
+        self.entry['manifest'] = manifest
+        files = self.entry['files']
+        self.entry['files'] = []
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'Empty license'):
+            self.validate()
+        self.entry['files'] = files
+        self.catalog['gitPackages'].append(self.entry)
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'Duplicate'):
+            self.validate()
+
+    def test_proprietary_manifest_is_preserved_without_a_license_grant(self):
+        path = self.root / self.entry['manifest']['path']
+        raw = path.read_bytes().replace(b'MIT', b'LicenseRef-Proprietary')
+        path.write_bytes(raw)
+        self.entry['manifest']['sha256'] = hashlib.sha256(raw).hexdigest()
+        self.entry['manifestGitBlob'] = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+        self.entry['declaredLicense'] = 'LicenseRef-Proprietary'
+        self.entry.pop('selectedLicense')
+        self.write_catalog()
+        self.assertEqual(self.validate(), 1)
+        self.entry['selectedLicense'] = 'MIT'
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'license differs'):
             self.validate()
 
 

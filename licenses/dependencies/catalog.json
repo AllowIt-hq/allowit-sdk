@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "scope": "Conservative union of registry dependencies in retained Cargo.lock history and explicit exact Git dependency packages; includes build, test and target-only packages, not a claim that every package is linked into each binary.",
+  "scope": "Conservative union of registry and exact-revision Git dependencies in retained Cargo.lock history; includes build, test and target-only packages, not a claim that every package is linked into each binary.",
   "packages": [
     {
       "name": "aead",
@@ -9317,6 +9317,12 @@
       ],
       "files": [
         {
+          "path": "licenses/dependencies/texts/377c2e7c53250cc5905c0b0532d35973392af16ffb9596a41d99d202cf3617c9.txt",
+          "sha256": "377c2e7c53250cc5905c0b0532d35973392af16ffb9596a41d99d202cf3617c9",
+          "source": "https://static.crates.io/crates/rustix/rustix-1.1.6.crate",
+          "originalPath": "COPYRIGHT"
+        },
+        {
           "path": "licenses/dependencies/texts/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
           "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
           "source": "https://static.crates.io/crates/rustix/rustix-1.1.6.crate",
@@ -15797,6 +15803,32 @@
       ]
     },
     {
+      "name": "toml_datetime",
+      "version": "1.1.2+spec-1.1.0",
+      "crateSha256": "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053",
+      "crateUrl": "https://static.crates.io/crates/toml_datetime/toml_datetime-1.1.2+spec-1.1.0.crate",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "declaredLicenseFile": null,
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe",
+          "source": "https://static.crates.io/crates/toml_datetime/toml_datetime-1.1.2+spec-1.1.0.crate",
+          "originalPath": "LICENSE-APACHE"
+        },
+        {
+          "path": "licenses/dependencies/texts/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6",
+          "source": "https://static.crates.io/crates/toml_datetime/toml_datetime-1.1.2+spec-1.1.0.crate",
+          "originalPath": "LICENSE-MIT"
+        }
+      ]
+    },
+    {
       "name": "toml_edit",
       "version": "0.25.15+spec-1.1.0",
       "crateSha256": "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614",
@@ -15823,6 +15855,32 @@
       ]
     },
     {
+      "name": "toml_edit",
+      "version": "0.25.17+spec-1.1.0",
+      "crateSha256": "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c",
+      "crateUrl": "https://static.crates.io/crates/toml_edit/toml_edit-0.25.17+spec-1.1.0.crate",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "declaredLicenseFile": null,
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe",
+          "source": "https://static.crates.io/crates/toml_edit/toml_edit-0.25.17+spec-1.1.0.crate",
+          "originalPath": "LICENSE-APACHE"
+        },
+        {
+          "path": "licenses/dependencies/texts/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6",
+          "source": "https://static.crates.io/crates/toml_edit/toml_edit-0.25.17+spec-1.1.0.crate",
+          "originalPath": "LICENSE-MIT"
+        }
+      ]
+    },
+    {
       "name": "toml_parser",
       "version": "1.1.3+spec-1.1.0",
       "crateSha256": "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56",
@@ -15844,6 +15902,32 @@
           "path": "licenses/dependencies/texts/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
           "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6",
           "source": "https://static.crates.io/crates/toml_parser/toml_parser-1.1.3+spec-1.1.0.crate",
+          "originalPath": "LICENSE-MIT"
+        }
+      ]
+    },
+    {
+      "name": "toml_parser",
+      "version": "1.1.5+spec-1.1.0",
+      "crateSha256": "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c",
+      "crateUrl": "https://static.crates.io/crates/toml_parser/toml_parser-1.1.5+spec-1.1.0.crate",
+      "declaredLicense": "MIT OR Apache-2.0",
+      "declaredLicenseFile": null,
+      "selectedLicense": null,
+      "noticeBasis": [
+        "checksum-verified published crate"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe",
+          "source": "https://static.crates.io/crates/toml_parser/toml_parser-1.1.5+spec-1.1.0.crate",
+          "originalPath": "LICENSE-APACHE"
+        },
+        {
+          "path": "licenses/dependencies/texts/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6",
+          "source": "https://static.crates.io/crates/toml_parser/toml_parser-1.1.5+spec-1.1.0.crate",
           "originalPath": "LICENSE-MIT"
         }
       ]
@@ -16128,6 +16212,12 @@
         "checksum-verified published crate"
       ],
       "files": [
+        {
+          "path": "licenses/dependencies/texts/23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d.txt",
+          "sha256": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d",
+          "source": "https://static.crates.io/crates/unicode-normalization/unicode-normalization-0.1.26.crate",
+          "originalPath": "COPYRIGHT"
+        },
         {
           "path": "licenses/dependencies/texts/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
           "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
@@ -18045,13 +18135,23 @@
     {
       "name": "allowit-client-core",
       "version": "0.1.0",
-      "cargoSource": "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=d9a22d3c74667d41303f147ee4ba2e442cea3767#d9a22d3c74667d41303f147ee4ba2e442cea3767",
+      "source": "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=d9a22d3c74667d41303f147ee4ba2e442cea3767#d9a22d3c74667d41303f147ee4ba2e442cea3767",
       "repository": "https://github.com/AllowIt-hq/allowit-sdk.git",
       "revision": "d9a22d3c74667d41303f147ee4ba2e442cea3767",
+      "manifestPath": "client-core/Cargo.toml",
+      "manifestGitBlob": "dfc5270f39041bffcc3e371c40fd070fe85c733c",
       "declaredLicense": "MIT",
-      "selectedLicense": "MIT",
       "noticeBasis": [
-        "exact pinned Git commit and package manifest"
+        "exact canonical Git revision and package manifest"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734.txt",
+          "sha256": "750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734",
+          "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/d9a22d3c74667d41303f147ee4ba2e442cea3767/LICENSE",
+          "originalPath": "LICENSE",
+          "gitBlob": "930ef20616aa7c9853dcc28ddd4ad22c448c1f67"
+        }
       ],
       "manifest": {
         "path": "licenses/dependencies/git/allowit-client-core-d9a22d3c74667d41303f147ee4ba2e442cea3767.toml",
@@ -18059,25 +18159,86 @@
         "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/d9a22d3c74667d41303f147ee4ba2e442cea3767/client-core/Cargo.toml",
         "originalPath": "client-core/Cargo.toml"
       },
+      "selectedLicense": "MIT"
+    },
+    {
+      "name": "allowit-native",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=ba4d14c0afca5f7fbab363b991c0bf30be02d630#ba4d14c0afca5f7fbab363b991c0bf30be02d630",
+      "repository": "https://github.com/AllowIt-hq/allowit-sdk.git",
+      "revision": "ba4d14c0afca5f7fbab363b991c0bf30be02d630",
+      "manifestPath": "native-rust/Cargo.toml",
+      "manifestGitBlob": "fd37ab056ae6a63f63955f2ccf36ff9fd93cfc9a",
+      "declaredLicense": "MIT",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest"
+      ],
       "files": [
         {
           "path": "licenses/dependencies/texts/750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734.txt",
           "sha256": "750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734",
-          "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/d9a22d3c74667d41303f147ee4ba2e442cea3767/LICENSE",
-          "originalPath": "LICENSE"
+          "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/ba4d14c0afca5f7fbab363b991c0bf30be02d630/LICENSE",
+          "originalPath": "LICENSE",
+          "gitBlob": "930ef20616aa7c9853dcc28ddd4ad22c448c1f67"
         }
-      ]
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/git/allowit-native-ba4d14c0afca5f7fbab363b991c0bf30be02d630.toml",
+        "sha256": "b6e263926f2c5c08b55d0ee16cbcb1420eaf633e60258648cce543f4df329de9",
+        "originalPath": "native-rust/Cargo.toml",
+        "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/ba4d14c0afca5f7fbab363b991c0bf30be02d630/native-rust/Cargo.toml"
+      },
+      "selectedLicense": "MIT"
+    },
+    {
+      "name": "allowit-paysh-interface",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=ba4d14c0afca5f7fbab363b991c0bf30be02d630#ba4d14c0afca5f7fbab363b991c0bf30be02d630",
+      "repository": "https://github.com/AllowIt-hq/allowit-sdk.git",
+      "revision": "ba4d14c0afca5f7fbab363b991c0bf30be02d630",
+      "manifestPath": "crates/paysh-interface/Cargo.toml",
+      "manifestGitBlob": "0c957f1aa8f09c40aff06ce8a7f331f1b941f189",
+      "declaredLicense": "MIT",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734.txt",
+          "sha256": "750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734",
+          "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/ba4d14c0afca5f7fbab363b991c0bf30be02d630/LICENSE",
+          "originalPath": "LICENSE",
+          "gitBlob": "930ef20616aa7c9853dcc28ddd4ad22c448c1f67"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/git/allowit-paysh-interface-ba4d14c0afca5f7fbab363b991c0bf30be02d630.toml",
+        "sha256": "6925312d6a60759ff14dc542b5f58ba05d33c48582217f9be9d226c780400d36",
+        "originalPath": "crates/paysh-interface/Cargo.toml",
+        "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/ba4d14c0afca5f7fbab363b991c0bf30be02d630/crates/paysh-interface/Cargo.toml"
+      },
+      "selectedLicense": "MIT"
     },
     {
       "name": "allowit-service-core",
       "version": "0.1.0",
-      "cargoSource": "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=94ac70d6850e68e52935a1e78cbff85cd808e3d7#94ac70d6850e68e52935a1e78cbff85cd808e3d7",
+      "source": "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=94ac70d6850e68e52935a1e78cbff85cd808e3d7#94ac70d6850e68e52935a1e78cbff85cd808e3d7",
       "repository": "https://github.com/AllowIt-hq/allowit-sdk.git",
       "revision": "94ac70d6850e68e52935a1e78cbff85cd808e3d7",
+      "manifestPath": "services/core/Cargo.toml",
+      "manifestGitBlob": "6e1792cc2ffb71087858b63fc5cca476200025a7",
       "declaredLicense": "MIT",
-      "selectedLicense": "MIT",
       "noticeBasis": [
-        "exact pinned Git commit and package manifest"
+        "exact canonical Git revision and package manifest"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734.txt",
+          "sha256": "750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734",
+          "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/94ac70d6850e68e52935a1e78cbff85cd808e3d7/LICENSE",
+          "originalPath": "LICENSE",
+          "gitBlob": "930ef20616aa7c9853dcc28ddd4ad22c448c1f67"
+        }
       ],
       "manifest": {
         "path": "licenses/dependencies/git/allowit-service-core-94ac70d6850e68e52935a1e78cbff85cd808e3d7.toml",
@@ -18085,25 +18246,297 @@
         "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/94ac70d6850e68e52935a1e78cbff85cd808e3d7/services/core/Cargo.toml",
         "originalPath": "services/core/Cargo.toml"
       },
+      "selectedLicense": "MIT"
+    },
+    {
+      "name": "allowit-service-transport",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-sdk.git?rev=e5ef23456c993afc68a75fd864ab6e23da44ccb7#e5ef23456c993afc68a75fd864ab6e23da44ccb7",
+      "repository": "https://github.com/AllowIt-hq/allowit-sdk.git",
+      "revision": "e5ef23456c993afc68a75fd864ab6e23da44ccb7",
+      "manifestPath": "services/transport/Cargo.toml",
+      "manifestGitBlob": "9b3786391ad8d5ce5ce2ee41df1cb92cfea709d5",
+      "declaredLicense": "MIT",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest"
+      ],
       "files": [
         {
           "path": "licenses/dependencies/texts/750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734.txt",
           "sha256": "750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734",
-          "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/94ac70d6850e68e52935a1e78cbff85cd808e3d7/LICENSE",
-          "originalPath": "LICENSE"
+          "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/e5ef23456c993afc68a75fd864ab6e23da44ccb7/LICENSE",
+          "originalPath": "LICENSE",
+          "gitBlob": "930ef20616aa7c9853dcc28ddd4ad22c448c1f67"
         }
-      ]
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/git/allowit-service-transport-e5ef23456c993afc68a75fd864ab6e23da44ccb7.toml",
+        "sha256": "52aab5be14572f646d8fdbe5a45763d29f00b39c7301f5b98cd405837432a669",
+        "originalPath": "services/transport/Cargo.toml",
+        "source": "https://github.com/AllowIt-hq/allowit-sdk/blob/e5ef23456c993afc68a75fd864ab6e23da44ccb7/services/transport/Cargo.toml"
+      },
+      "selectedLicense": "MIT"
+    },
+    {
+      "name": "allowit-solana-delegated-x402",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/delegated-x402/Cargo.toml",
+      "manifestGitBlob": "54fe2fbd28332e9374149a152a178058bea70159",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094.txt",
+          "sha256": "1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/delegated-x402/Cargo.toml",
+          "originalPath": "crates/delegated-x402/Cargo.toml",
+          "gitBlob": "54fe2fbd28332e9374149a152a178058bea70159"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094.txt",
+        "sha256": "1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/delegated-x402/Cargo.toml",
+        "originalPath": "crates/delegated-x402/Cargo.toml",
+        "gitBlob": "54fe2fbd28332e9374149a152a178058bea70159"
+      }
+    },
+    {
+      "name": "allowit-solana-delegated-x402",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/delegated-x402/Cargo.toml",
+      "manifestGitBlob": "54fe2fbd28332e9374149a152a178058bea70159",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094.txt",
+          "sha256": "1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/delegated-x402/Cargo.toml",
+          "originalPath": "crates/delegated-x402/Cargo.toml",
+          "gitBlob": "54fe2fbd28332e9374149a152a178058bea70159"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094.txt",
+        "sha256": "1e1bb8ca1fad2cdb86ec6652a6e1ae8917897d43febfcad5714308458d2d6094",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/delegated-x402/Cargo.toml",
+        "originalPath": "crates/delegated-x402/Cargo.toml",
+        "gitBlob": "54fe2fbd28332e9374149a152a178058bea70159"
+      }
+    },
+    {
+      "name": "allowit-solana-paysh-cooperating",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/paysh-cooperating/Cargo.toml",
+      "manifestGitBlob": "7b74418cfd7dda916ffd356682dc4c9670ac8ec8",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a.txt",
+          "sha256": "48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/paysh-cooperating/Cargo.toml",
+          "originalPath": "crates/paysh-cooperating/Cargo.toml",
+          "gitBlob": "7b74418cfd7dda916ffd356682dc4c9670ac8ec8"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a.txt",
+        "sha256": "48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/paysh-cooperating/Cargo.toml",
+        "originalPath": "crates/paysh-cooperating/Cargo.toml",
+        "gitBlob": "7b74418cfd7dda916ffd356682dc4c9670ac8ec8"
+      }
+    },
+    {
+      "name": "allowit-solana-paysh-cooperating",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/paysh-cooperating/Cargo.toml",
+      "manifestGitBlob": "7b74418cfd7dda916ffd356682dc4c9670ac8ec8",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a.txt",
+          "sha256": "48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/paysh-cooperating/Cargo.toml",
+          "originalPath": "crates/paysh-cooperating/Cargo.toml",
+          "gitBlob": "7b74418cfd7dda916ffd356682dc4c9670ac8ec8"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a.txt",
+        "sha256": "48eea1d792f980a584f851658cfe57d9a2e1c0a25ca7907ab6fccadb3428a30a",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/paysh-cooperating/Cargo.toml",
+        "originalPath": "crates/paysh-cooperating/Cargo.toml",
+        "gitBlob": "7b74418cfd7dda916ffd356682dc4c9670ac8ec8"
+      }
+    },
+    {
+      "name": "allowit-solana-service-rpc",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/service-rpc/Cargo.toml",
+      "manifestGitBlob": "c7bec804dfaeac84d8aad43e879f58b11d4e0f47",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e.txt",
+          "sha256": "0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/service-rpc/Cargo.toml",
+          "originalPath": "crates/service-rpc/Cargo.toml",
+          "gitBlob": "c7bec804dfaeac84d8aad43e879f58b11d4e0f47"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e.txt",
+        "sha256": "0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/service-rpc/Cargo.toml",
+        "originalPath": "crates/service-rpc/Cargo.toml",
+        "gitBlob": "c7bec804dfaeac84d8aad43e879f58b11d4e0f47"
+      }
+    },
+    {
+      "name": "allowit-solana-service-rpc",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/service-rpc/Cargo.toml",
+      "manifestGitBlob": "c7bec804dfaeac84d8aad43e879f58b11d4e0f47",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e.txt",
+          "sha256": "0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/service-rpc/Cargo.toml",
+          "originalPath": "crates/service-rpc/Cargo.toml",
+          "gitBlob": "c7bec804dfaeac84d8aad43e879f58b11d4e0f47"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e.txt",
+        "sha256": "0519fab293781fb89829c99920f08b08a87d908d9516fb24c05060dd85080f2e",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/service-rpc/Cargo.toml",
+        "originalPath": "crates/service-rpc/Cargo.toml",
+        "gitBlob": "c7bec804dfaeac84d8aad43e879f58b11d4e0f47"
+      }
+    },
+    {
+      "name": "allowit-solana-service-upstreams",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/service-upstreams/Cargo.toml",
+      "manifestGitBlob": "4ba8d0ab52884666903ba5d6e6a6a157b25a1299",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6.txt",
+          "sha256": "35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/service-upstreams/Cargo.toml",
+          "originalPath": "crates/service-upstreams/Cargo.toml",
+          "gitBlob": "4ba8d0ab52884666903ba5d6e6a6a157b25a1299"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6.txt",
+        "sha256": "35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/service-upstreams/Cargo.toml",
+        "originalPath": "crates/service-upstreams/Cargo.toml",
+        "gitBlob": "4ba8d0ab52884666903ba5d6e6a6a157b25a1299"
+      }
+    },
+    {
+      "name": "allowit-solana-service-upstreams",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/service-upstreams/Cargo.toml",
+      "manifestGitBlob": "4ba8d0ab52884666903ba5d6e6a6a157b25a1299",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6.txt",
+          "sha256": "35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/service-upstreams/Cargo.toml",
+          "originalPath": "crates/service-upstreams/Cargo.toml",
+          "gitBlob": "4ba8d0ab52884666903ba5d6e6a6a157b25a1299"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6.txt",
+        "sha256": "35012887270db9e85ee45d2101a5064c204cbc84c90f7ee5417f4604d0f7cec6",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/service-upstreams/Cargo.toml",
+        "originalPath": "crates/service-upstreams/Cargo.toml",
+        "gitBlob": "4ba8d0ab52884666903ba5d6e6a6a157b25a1299"
+      }
     },
     {
       "name": "allowit-solana-vendor",
       "version": "0.1.0",
-      "cargoSource": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=7ddb39c0c13746644dae4cfa59a3830d511bd2a5#7ddb39c0c13746644dae4cfa59a3830d511bd2a5",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=7ddb39c0c13746644dae4cfa59a3830d511bd2a5#7ddb39c0c13746644dae4cfa59a3830d511bd2a5",
       "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
       "revision": "7ddb39c0c13746644dae4cfa59a3830d511bd2a5",
+      "manifestPath": "crates/solana-vendor/Cargo.toml",
+      "manifestGitBlob": "a64e02d923f8f47ad557b3e1747b7545d0f39d71",
       "declaredLicense": "MIT",
-      "selectedLicense": "MIT",
       "noticeBasis": [
-        "exact pinned Git commit and package manifest"
+        "exact canonical Git revision and package manifest"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/79bb94a01f96327c9b3527d67c01e55627b5849a7368d212a610c79d9d25428e.txt",
+          "sha256": "79bb94a01f96327c9b3527d67c01e55627b5849a7368d212a610c79d9d25428e",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/7ddb39c0c13746644dae4cfa59a3830d511bd2a5/crates/solana-vendor/LICENSE",
+          "originalPath": "crates/solana-vendor/LICENSE",
+          "gitBlob": "3e836e6e66ee277959da6a2ce3691b1887b8c34c"
+        }
       ],
       "manifest": {
         "path": "licenses/dependencies/git/allowit-solana-vendor-7ddb39c0c13746644dae4cfa59a3830d511bd2a5.toml",
@@ -18111,25 +18544,28 @@
         "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/7ddb39c0c13746644dae4cfa59a3830d511bd2a5/crates/solana-vendor/Cargo.toml",
         "originalPath": "crates/solana-vendor/Cargo.toml"
       },
-      "files": [
-        {
-          "path": "licenses/dependencies/texts/79bb94a01f96327c9b3527d67c01e55627b5849a7368d212a610c79d9d25428e.txt",
-          "sha256": "79bb94a01f96327c9b3527d67c01e55627b5849a7368d212a610c79d9d25428e",
-          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/7ddb39c0c13746644dae4cfa59a3830d511bd2a5/crates/solana-vendor/LICENSE",
-          "originalPath": "crates/solana-vendor/LICENSE"
-        }
-      ]
+      "selectedLicense": "MIT"
     },
     {
       "name": "allowit-tempo",
       "version": "0.1.0",
-      "cargoSource": "git+https://github.com/AllowIt-hq/allowit-contracts-tempo.git?rev=fac59366570b86e4ea5cedd98216a713ce9851c8#fac59366570b86e4ea5cedd98216a713ce9851c8",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-tempo.git?rev=fac59366570b86e4ea5cedd98216a713ce9851c8#fac59366570b86e4ea5cedd98216a713ce9851c8",
       "repository": "https://github.com/AllowIt-hq/allowit-contracts-tempo.git",
       "revision": "fac59366570b86e4ea5cedd98216a713ce9851c8",
+      "manifestPath": "rust/Cargo.toml",
+      "manifestGitBlob": "79b4aa5a4babf9de6dcd690f60489325607dbb3d",
       "declaredLicense": "MIT",
-      "selectedLicense": "MIT",
       "noticeBasis": [
-        "exact pinned Git commit and package manifest"
+        "exact canonical Git revision and package manifest"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734.txt",
+          "sha256": "750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-tempo/blob/fac59366570b86e4ea5cedd98216a713ce9851c8/LICENSE",
+          "originalPath": "LICENSE",
+          "gitBlob": "930ef20616aa7c9853dcc28ddd4ad22c448c1f67"
+        }
       ],
       "manifest": {
         "path": "licenses/dependencies/git/allowit-tempo-fac59366570b86e4ea5cedd98216a713ce9851c8.toml",
@@ -18137,14 +18573,277 @@
         "source": "https://github.com/AllowIt-hq/allowit-contracts-tempo/blob/fac59366570b86e4ea5cedd98216a713ce9851c8/rust/Cargo.toml",
         "originalPath": "rust/Cargo.toml"
       },
+      "selectedLicense": "MIT"
+    },
+    {
+      "name": "allowit-tempo-services",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-tempo.git?rev=6a6c2bd27ca7919d9ad40fc896d65f82661f2567#6a6c2bd27ca7919d9ad40fc896d65f82661f2567",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-tempo.git",
+      "revision": "6a6c2bd27ca7919d9ad40fc896d65f82661f2567",
+      "manifestPath": "rust/services/Cargo.toml",
+      "manifestGitBlob": "8abc36bef71a75cba5c556bbc277447f4a8f7bbd",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
       "files": [
         {
-          "path": "licenses/dependencies/texts/750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734.txt",
-          "sha256": "750548edc096b7599f0aa6816b3a6dfb983d75ba81bc8c4925f968ef048a4734",
-          "source": "https://github.com/AllowIt-hq/allowit-contracts-tempo/blob/fac59366570b86e4ea5cedd98216a713ce9851c8/LICENSE",
-          "originalPath": "LICENSE"
+          "path": "licenses/dependencies/texts/9bb13fe691bc34d6c63a27697733c10999a886e257b9155083328b6ce00d0722.txt",
+          "sha256": "9bb13fe691bc34d6c63a27697733c10999a886e257b9155083328b6ce00d0722",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-tempo/blob/6a6c2bd27ca7919d9ad40fc896d65f82661f2567/rust/services/Cargo.toml",
+          "originalPath": "rust/services/Cargo.toml",
+          "gitBlob": "8abc36bef71a75cba5c556bbc277447f4a8f7bbd"
         }
-      ]
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/9bb13fe691bc34d6c63a27697733c10999a886e257b9155083328b6ce00d0722.txt",
+        "sha256": "9bb13fe691bc34d6c63a27697733c10999a886e257b9155083328b6ce00d0722",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-tempo/blob/6a6c2bd27ca7919d9ad40fc896d65f82661f2567/rust/services/Cargo.toml",
+        "originalPath": "rust/services/Cargo.toml",
+        "gitBlob": "8abc36bef71a75cba5c556bbc277447f4a8f7bbd"
+      }
+    },
+    {
+      "name": "allowit-vendor-google-air-quality",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/provider-google-air-quality/Cargo.toml",
+      "manifestGitBlob": "915afafb7e7ebe5481baa0e07d0187640975e434",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832.txt",
+          "sha256": "7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/provider-google-air-quality/Cargo.toml",
+          "originalPath": "crates/provider-google-air-quality/Cargo.toml",
+          "gitBlob": "915afafb7e7ebe5481baa0e07d0187640975e434"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832.txt",
+        "sha256": "7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/provider-google-air-quality/Cargo.toml",
+        "originalPath": "crates/provider-google-air-quality/Cargo.toml",
+        "gitBlob": "915afafb7e7ebe5481baa0e07d0187640975e434"
+      }
+    },
+    {
+      "name": "allowit-vendor-google-air-quality",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/provider-google-air-quality/Cargo.toml",
+      "manifestGitBlob": "915afafb7e7ebe5481baa0e07d0187640975e434",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832.txt",
+          "sha256": "7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/provider-google-air-quality/Cargo.toml",
+          "originalPath": "crates/provider-google-air-quality/Cargo.toml",
+          "gitBlob": "915afafb7e7ebe5481baa0e07d0187640975e434"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832.txt",
+        "sha256": "7690d987a5988e58f89cc5dbcbd83c94468c6f848f13f7dc5e20b8c2a2f2e832",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/provider-google-air-quality/Cargo.toml",
+        "originalPath": "crates/provider-google-air-quality/Cargo.toml",
+        "gitBlob": "915afafb7e7ebe5481baa0e07d0187640975e434"
+      }
+    },
+    {
+      "name": "allowit-vendor-open-meteo",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/provider-open-meteo/Cargo.toml",
+      "manifestGitBlob": "1a656668a844d2c86d4c7642855cb950392afabf",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468.txt",
+          "sha256": "19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/provider-open-meteo/Cargo.toml",
+          "originalPath": "crates/provider-open-meteo/Cargo.toml",
+          "gitBlob": "1a656668a844d2c86d4c7642855cb950392afabf"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468.txt",
+        "sha256": "19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/provider-open-meteo/Cargo.toml",
+        "originalPath": "crates/provider-open-meteo/Cargo.toml",
+        "gitBlob": "1a656668a844d2c86d4c7642855cb950392afabf"
+      }
+    },
+    {
+      "name": "allowit-vendor-open-meteo",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/provider-open-meteo/Cargo.toml",
+      "manifestGitBlob": "1a656668a844d2c86d4c7642855cb950392afabf",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468.txt",
+          "sha256": "19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/provider-open-meteo/Cargo.toml",
+          "originalPath": "crates/provider-open-meteo/Cargo.toml",
+          "gitBlob": "1a656668a844d2c86d4c7642855cb950392afabf"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468.txt",
+        "sha256": "19c3553f0d97080b2cfc1365f980e732a8e3f4be9483b03098298b66b16f5468",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/provider-open-meteo/Cargo.toml",
+        "originalPath": "crates/provider-open-meteo/Cargo.toml",
+        "gitBlob": "1a656668a844d2c86d4c7642855cb950392afabf"
+      }
+    },
+    {
+      "name": "allowit-vendor-paysh-catalog",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/paysh-catalog/Cargo.toml",
+      "manifestGitBlob": "593c915bae64c054313f8d7579be1b8ba21543f5",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed.txt",
+          "sha256": "05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/paysh-catalog/Cargo.toml",
+          "originalPath": "crates/paysh-catalog/Cargo.toml",
+          "gitBlob": "593c915bae64c054313f8d7579be1b8ba21543f5"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed.txt",
+        "sha256": "05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/paysh-catalog/Cargo.toml",
+        "originalPath": "crates/paysh-catalog/Cargo.toml",
+        "gitBlob": "593c915bae64c054313f8d7579be1b8ba21543f5"
+      }
+    },
+    {
+      "name": "allowit-vendor-paysh-catalog",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/paysh-catalog/Cargo.toml",
+      "manifestGitBlob": "593c915bae64c054313f8d7579be1b8ba21543f5",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed.txt",
+          "sha256": "05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/paysh-catalog/Cargo.toml",
+          "originalPath": "crates/paysh-catalog/Cargo.toml",
+          "gitBlob": "593c915bae64c054313f8d7579be1b8ba21543f5"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed.txt",
+        "sha256": "05768dfc95210e54f9c67f660149ef28559f4eb6fc9040453b27bc750866c2ed",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/paysh-catalog/Cargo.toml",
+        "originalPath": "crates/paysh-catalog/Cargo.toml",
+        "gitBlob": "593c915bae64c054313f8d7579be1b8ba21543f5"
+      }
+    },
+    {
+      "name": "allowit-vendor-paysh-stock",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "9fe2b240b787b406347730db5f2e56a4ff87931a",
+      "manifestPath": "crates/paysh-stock/Cargo.toml",
+      "manifestGitBlob": "125632e08a39d2e8ff956948c829d5823e277a01",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01.txt",
+          "sha256": "ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/paysh-stock/Cargo.toml",
+          "originalPath": "crates/paysh-stock/Cargo.toml",
+          "gitBlob": "125632e08a39d2e8ff956948c829d5823e277a01"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01.txt",
+        "sha256": "ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/9fe2b240b787b406347730db5f2e56a4ff87931a/crates/paysh-stock/Cargo.toml",
+        "originalPath": "crates/paysh-stock/Cargo.toml",
+        "gitBlob": "125632e08a39d2e8ff956948c829d5823e277a01"
+      }
+    },
+    {
+      "name": "allowit-vendor-paysh-stock",
+      "version": "0.1.0",
+      "source": "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "repository": "https://github.com/AllowIt-hq/allowit-contracts-solana.git",
+      "revision": "d9b60122a20220931075f09c7f7dc91bf1583b0d",
+      "manifestPath": "crates/paysh-stock/Cargo.toml",
+      "manifestGitBlob": "125632e08a39d2e8ff956948c829d5823e277a01",
+      "declaredLicense": "LicenseRef-Proprietary",
+      "noticeBasis": [
+        "exact canonical Git revision and package manifest",
+        "preserved proprietary declaration; no license grant inferred"
+      ],
+      "files": [
+        {
+          "path": "licenses/dependencies/texts/ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01.txt",
+          "sha256": "ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01",
+          "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/paysh-stock/Cargo.toml",
+          "originalPath": "crates/paysh-stock/Cargo.toml",
+          "gitBlob": "125632e08a39d2e8ff956948c829d5823e277a01"
+        }
+      ],
+      "manifest": {
+        "path": "licenses/dependencies/texts/ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01.txt",
+        "sha256": "ce56ce9ef26d0ae26ab6ef592c8301457537f02ff0c2a21814d765eba0277b01",
+        "source": "https://github.com/AllowIt-hq/allowit-contracts-solana/blob/d9b60122a20220931075f09c7f7dc91bf1583b0d/crates/paysh-stock/Cargo.toml",
+        "originalPath": "crates/paysh-stock/Cargo.toml",
+        "gitBlob": "125632e08a39d2e8ff956948c829d5823e277a01"
+      }
     }
   ]
 }
