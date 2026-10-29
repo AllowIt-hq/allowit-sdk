@@ -143,7 +143,7 @@ fn write_new(_: &Path, _: &[u8]) -> Result<()> {
         "Private wallet generation requires a supported POSIX filesystem",
     ))
 }
-/// Inspect a native signer file without returning its secret.
+/// Read a private native signer into a zeroizing buffer under its storage lock.
 fn read_signer(path: &Path) -> Result<Zeroizing<String>> {
     let (_lock, _) = storage(path)?;
     #[cfg(unix)]

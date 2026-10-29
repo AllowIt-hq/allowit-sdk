@@ -32,6 +32,7 @@ allowit wallet approve --network stellar:testnet --policy-file public-policy.jso
 ```
 
 `configure` prepares three native signer-setting operations for a fresh funded master-key account.
+The account needs enough native balance for two additional signer reserves and the transaction fee.
 The owner keeps administration authority. The agent and configured engine jointly authorize low- and
 medium-threshold operations. The browser checks the configured engine identity and current account
 before Freighter signs. It saves the exact signed XDR before submission. Recovery checks its original
@@ -40,6 +41,8 @@ Repeating a setup request after its signing deadline returns the original link a
 It never prepares replacement bytes under that request ID. Use a new request ID for an unsigned setup.
 
 `approve` requires a policy already stored under the owner and a service-configured native installation.
+The private owner-workspace preparation workflow supplies the policy JSON. Save the matching policy
+object from `micro/policies` or `micro/generate`, not the response envelope, bare Rust source or executor bundle.
 It binds the complete source, revision and public wallet binding. The browser compares those terms to
 the stored policy before the existing owner message-signing flow. This approval moves no funds.
 Native multisig checks signature thresholds; the engine enforces the approved policy off chain.
@@ -60,6 +63,7 @@ For an existing Stellar policy, `policy deploy --network stellar:testnet` forwar
 continuation. Set `ALLOWIT_STELLAR_POLICY_FILE`, `ALLOWIT_OWNER` and `ALLOWIT_REQUEST_ID`. Omit the
 Solana funding amount. Both Stellar continuations print a public browser URL and exit 10.
 A printed URL is a pending signing intent, not a finalized transaction.
+Owner setup and approval journals belong to the current working directory. Keep that directory for recovery.
 
 The backend's public executor configuration must match the CLI-generated agent public key before deployment.
 A mismatched server executor, authority, token or deployment fails before signing. The CLI does not install another key silently.

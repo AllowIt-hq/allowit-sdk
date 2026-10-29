@@ -69,7 +69,10 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
         || !crate::request::request_id_valid(&v.request_id)
         || v.policy_id.is_empty()
         || v.policy_id.len() > 128
-        || v.policy_id.chars().any(char::is_control)
+        || !v
+            .policy_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
         || v.revision == 0
         || v.source.len() > 32_768
         || v.source_hash != hash(v.source.as_bytes())
@@ -99,6 +102,14 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
         ));
     }
     allowit_stellar_wallet::address(&b.asset).map_err(Error::config)?;
+    let asset =
+        allowit_stellar_wallet::asset_from_identity(&b.asset_symbol, b.asset_issuer.as_deref())
+            .map_err(Error::config)?;
+    if b.asset != allowit_stellar_wallet::sac_address(&v.network, &asset).map_err(Error::config)? {
+        return Err(Error::config(
+            "The Stellar SAC differs from its asset code, issuer or network",
+        ));
+    }
     for h in [&b.policy_instance, &b.module_digest] {
         allowit_stellar_wallet::unhex::<32>(h).map_err(Error::config)?;
         if !h
@@ -159,6 +170,13 @@ pub fn approval_for_policy(
         ));
     }
     let raw = &policy["runtime"]["instanceBinding"];
+    let optional = |name| match &raw[name] {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(value) => Ok(Some(value.clone())),
+        _ => Err(Error::config(
+            "The Stellar binding contains an invalid optional identity",
+        )),
+    };
     let binding = PolicyBinding {
         wallet: raw["wallet"].as_str().unwrap_or("").into(),
         route: raw["route"].as_str().unwrap_or("").into(),
@@ -166,12 +184,12 @@ pub fn approval_for_policy(
         module_digest: raw["moduleDigest"].as_str().unwrap_or("").into(),
         asset: text("mint")?,
         asset_symbol: text("token")?,
-        asset_issuer: raw["assetIssuer"].as_str().map(str::to_owned),
+        asset_issuer: optional("assetIssuer")?,
         max_fee_stroops: raw["maxFeeStroops"]
             .as_u64()
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(0),
-        deployment_id: raw["deploymentId"].as_str().map(str::to_owned),
+        deployment_id: optional("deploymentId")?,
     };
     if raw["asset"] != binding.asset || raw["assetSymbol"] != binding.asset_symbol {
         return Err(Error::config(
@@ -295,6 +313,22 @@ mod tests {
         intent.owner = allowit_stellar_wallet::account_for_seed(&[9; 32]);
         intent.intent_digest = intent_digest(&intent).unwrap();
         validate(&intent).unwrap();
+        let mut issued = intent.clone();
+        issued.binding.asset_symbol = "USDC".into();
+        issued.binding.asset_issuer = Some(allowit_stellar_wallet::account_for_seed(&[8; 32]));
+        issued.intent_digest = intent_digest(&issued).unwrap();
+        assert!(validate(&issued).is_err());
+        issued.binding.asset = allowit_stellar_wallet::sac_address(
+            &issued.network,
+            &allowit_stellar_wallet::asset_from_identity(
+                "USDC",
+                issued.binding.asset_issuer.as_deref(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        issued.intent_digest = intent_digest(&issued).unwrap();
+        validate(&issued).unwrap();
         for symbol in ["XLM\n", "USDC\u{202e}", "TOO_LONG_ASSET"] {
             let mut altered = intent.clone();
             altered.binding.asset_symbol = symbol.into();
@@ -302,6 +336,16 @@ mod tests {
             assert!(validate(&altered).is_err());
         }
         intent.ir_hash = "AB".repeat(32);
+        intent.intent_digest = intent_digest(&intent).unwrap();
+        assert!(validate(&intent).is_err());
+        let mut policy = f["policy"].clone();
+        for field in ["assetIssuer", "deploymentId"] {
+            policy["runtime"]["instanceBinding"][field] = serde_json::json!(false);
+            assert!(approval_for_policy(&policy, &intent.owner, &intent.request_id).is_err());
+            policy = f["policy"].clone();
+        }
+        intent = serde_json::from_value(f["intent"].clone()).unwrap();
+        intent.policy_id = "policy\u{202e}".into();
         intent.intent_digest = intent_digest(&intent).unwrap();
         assert!(validate(&intent).is_err());
     }
