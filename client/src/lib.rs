@@ -47,9 +47,13 @@ pub fn run(args: Vec<String>) -> i32 {
             e.code
         }
     };
-    let stdout = if args.first().is_some_and(|a| a == "policy")
-        && serde_json::from_str::<Value>(&stdout).is_ok()
-    {
+    let stdout = safe_json_output(stdout);
+    let _ = std::io::stdout().write_all(redact(stdout).as_bytes());
+    let _ = std::io::stderr().write_all(redact(stderr).as_bytes());
+    code
+}
+fn safe_json_output(stdout: String) -> String {
+    if serde_json::from_str::<Value>(&stdout).is_ok() {
         // Escape display controls within native JSON without changing the
         // parsed policy prompt, identity, or skill content.
         stdout
@@ -67,10 +71,7 @@ pub fn run(args: Vec<String>) -> i32 {
             .collect()
     } else {
         stdout
-    };
-    let _ = std::io::stdout().write_all(redact(stdout).as_bytes());
-    let _ = std::io::stderr().write_all(redact(stderr).as_bytes());
-    code
+    }
 }
 /// Removes the harness token and the PaySH capability from any output.
 fn redact(s: String) -> String {
@@ -421,4 +422,19 @@ fn status(
         *stdout += &output::print_result(&r, &res, "");
     }
     Ok(res.exit)
+}
+
+#[cfg(test)]
+mod display_tests {
+    #[test]
+    fn json_display_controls_are_escaped_independently_of_command_prefix() {
+        let original = serde_json::json!({"prompt":"source\u{202e} text\u{0085}"});
+        let encoded = super::safe_json_output(original.to_string());
+        assert!(!encoded.contains('\u{202e}'));
+        assert!(!encoded.contains('\u{0085}'));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&encoded).unwrap(),
+            original
+        );
+    }
 }

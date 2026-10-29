@@ -232,6 +232,20 @@ pub(crate) fn tempo_action(
         stderr,
     )
 }
+fn import_path(args: &[String]) -> Result<&str> {
+    let mut literal = false;
+    for value in &args[1..] {
+        if !literal && value == "--" {
+            literal = true;
+            continue;
+        }
+        if !literal && value == "--json" {
+            continue;
+        }
+        return Ok(value);
+    }
+    Err(Error::usage("Tempo import requires bundle path"))
+}
 pub(crate) fn tempo_command(
     args: &[String],
     stdout: &mut String,
@@ -246,9 +260,7 @@ pub(crate) fn tempo_command(
         }
         let configured = crate::config::env_value("ALLOWIT_TEMPO_BUNDLE");
         let path = if args.first().is_some_and(|s| s == "import") {
-            args.get(1)
-                .ok_or_else(|| Error::usage("Tempo import requires bundle path"))?
-                .as_str()
+            import_path(args)?
         } else if configured.is_empty() {
             ".allowit-tempo/executor.json"
         } else {
@@ -317,5 +329,21 @@ mod request_boundary_tests {
             assert_eq!(error.code, 2);
             assert!(stdout.is_empty() && stderr.is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod import_tests {
+    #[test]
+    fn import_path_preserves_vendor_option_positions() {
+        for args in [
+            vec!["import", "--json", "bundle.json"],
+            vec!["import", "bundle.json", "--json"],
+        ] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert_eq!(super::import_path(&args).unwrap(), "bundle.json");
+        }
+        let args = vec!["import".into(), "--".into(), "--json".into()];
+        assert_eq!(super::import_path(&args).unwrap(), "--json");
     }
 }
