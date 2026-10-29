@@ -70,6 +70,7 @@ class GitLicenseTests(unittest.TestCase):
         self.entry['manifest']['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
         data = path.read_bytes()
         self.entry['manifestGitBlob'] = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+        self.entry['manifest']['gitBlob'] = self.entry['manifestGitBlob']
         self.write_catalog()
         with self.assertRaisesRegex(ValueError, 'license differs'):
             self.validate()
