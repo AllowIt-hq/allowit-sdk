@@ -30,6 +30,8 @@ struct Handoff<'a> {
     policy: &'a Policy,
     deployment: &'a Deployment,
     wallet: Wallet,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_preparation_of: Option<&'a str>,
     intent_digest: String,
 }
 fn hash(bytes: &[u8]) -> String {
@@ -46,6 +48,25 @@ pub fn signing_url(
     policy: &Policy,
     config: &Config,
 ) -> Result<String> {
+    signing_url_with_retry(origin, request_id, owner, amount, policy, config, None)
+}
+/// Explicit replacement of an authoritatively expired unsigned preparation.
+pub fn signing_url_with_retry(
+    origin: &str,
+    request_id: &str,
+    owner: Key,
+    amount: &str,
+    policy: &Policy,
+    config: &Config,
+    retry_preparation_of: Option<&str>,
+) -> Result<String> {
+    if let Some(prior) = retry_preparation_of
+        && (prior == request_id || !crate::request::request_id_valid(prior))
+    {
+        return Err(Error::usage(
+            "Retry requires a distinct valid prior preparation ID",
+        ));
+    }
     if policy.network != "solana:devnet" {
         return Err(Error::unsupported(
             "Browser policy deployment supports the pinned Solana Devnet release only",
@@ -91,20 +112,21 @@ pub fn signing_url(
         .map_err(|_| Error::config("Cannot encode deployment"))?;
     let public_wallet = serde_json_canonicalizer::to_vec(&wallet)
         .map_err(|_| Error::config("Cannot encode public wallet"))?;
-    let digest = hash(
-        &serde_json::to_vec(&serde_json::json!([
-            "allowit-deploy-v1",
-            request_id,
-            network,
-            owner.to_string(),
-            amount,
-            policy.id,
-            hash(policy.rust.as_bytes()),
-            hash(&binding),
-            hash(&public_wallet)
-        ]))
-        .unwrap(),
-    );
+    let mut terms = serde_json::json!([
+        "allowit-deploy-v1",
+        request_id,
+        network,
+        owner.to_string(),
+        amount,
+        policy.id,
+        hash(policy.rust.as_bytes()),
+        hash(&binding),
+        hash(&public_wallet)
+    ]);
+    if let Some(prior) = retry_preparation_of {
+        terms.as_array_mut().unwrap().push(serde_json::json!(prior));
+    }
+    let digest = hash(&serde_json::to_vec(&terms).unwrap());
     let handoff = Handoff {
         version: 1,
         profile: "allowit-deploy-v1",
@@ -115,6 +137,7 @@ pub fn signing_url(
         policy,
         deployment,
         wallet,
+        retry_preparation_of,
         intent_digest: digest,
     };
     let bytes =
@@ -152,7 +175,7 @@ pub fn intent_digest_from_url(url: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn fixture() -> (Policy, Config) {
+    pub(super) fn fixture() -> (Policy, Config) {
         let policy =
             Policy::generate("solana:devnet", "Spend up to 5 test tokens per day").unwrap();
         let config = Config {
@@ -244,6 +267,62 @@ mod tests {
                 "1",
                 &policy,
                 &config
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    #[test]
+    fn retry_identity_is_optional_bound_and_never_reuses_current_id() {
+        let (p, c) = super::tests::fixture();
+        let old = signing_url(
+            "https://app.allowit.xyz",
+            "deployment-test-1",
+            Key([1; 32]),
+            "1",
+            &p,
+            &c,
+        )
+        .unwrap();
+        let new = signing_url_with_retry(
+            "https://app.allowit.xyz",
+            "deployment-test-1",
+            Key([1; 32]),
+            "1",
+            &p,
+            &c,
+            Some("deployment-test-0"),
+        )
+        .unwrap();
+        assert_ne!(
+            intent_digest_from_url(&old).unwrap(),
+            intent_digest_from_url(&new).unwrap()
+        );
+        assert!(
+            signing_url_with_retry(
+                "https://app.allowit.xyz",
+                "deployment-test-1",
+                Key([1; 32]),
+                "1",
+                &p,
+                &c,
+                Some("deployment-test-1")
+            )
+            .is_err()
+        );
+        assert!(
+            signing_url_with_retry(
+                "https://app.allowit.xyz",
+                "deployment-test-1",
+                Key([1; 32]),
+                "1",
+                &p,
+                &c,
+                Some("bad")
             )
             .is_err()
         );

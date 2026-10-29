@@ -278,13 +278,19 @@ pub(crate) fn run(
                 "Set ALLOWIT_REQUEST_ID for this deployment intent",
             ));
         }
-        let url = crate::handoff::signing_url(
+        let retry_preparation = env_value("ALLOWIT_RETRY_PREPARATION_OF");
+        let url = crate::handoff::signing_url_with_retry(
             &env_value("ALLOWIT_URL"),
             &request_id,
             owner,
             &pos[0],
             &policy,
             &local.config,
+            if retry_preparation.is_empty() {
+                None
+            } else {
+                Some(retry_preparation.as_str())
+            },
         )?;
         let fingerprint = crate::handoff::intent_digest_from_url(&url)?;
         let journal = FileJournal::new(local.directory.join("journal"));

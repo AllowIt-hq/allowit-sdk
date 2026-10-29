@@ -30,3 +30,7 @@ A mismatched server executor, authority, token or deployment fails before signin
 The owner's approval binds a vault to that agent and the server's separate authority. Existing transaction verification
 checks the requested effects before the local agent adds its signature.
 Tests check secret exclusion from network registration values and local custody. They are not a formal security proof.
+
+An expired unsigned browser setup needs a new `ALLOWIT_REQUEST_ID` and explicit
+`ALLOWIT_RETRY_PREPARATION_OF` naming the original preparation. The browser checks authoritative expiry
+and replacement permission. A signed uncertain transaction is never replaced through this option.
