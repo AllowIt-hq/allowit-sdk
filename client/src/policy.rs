@@ -79,7 +79,9 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
         }
         "deploy" | "fund" | "withdraw" => decimal("AMOUNT", &pos[0], true)?,
         "execute" => {
-            if !crate::routing::selected().is_some_and(|n|n.starts_with("tempo:")) && !solana_address(&pos[0]) {
+            if !crate::routing::selected().is_some_and(|n| n.starts_with("tempo:"))
+                && !solana_address(&pos[0])
+            {
                 return Err(Error::usage(format!(
                     "RECIPIENT {} is not a Solana token account address",
                     quoted(&pos[0])
@@ -106,7 +108,7 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
             if json {
                 args.push("--json".into());
             }
-            return allowit_tempo::run(&args, stdout, stderr);
+            return crate::routing::tempo_command(&args, stdout, stderr);
         }
         if !network.starts_with("solana:") {
             return Err(Error::unsupported(

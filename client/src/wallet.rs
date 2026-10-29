@@ -353,6 +353,21 @@ mod storage_tests {
             if n.starts_with("solana:") {
                 let signer = allowit_native::crypto::LocalSigner::load(&p).unwrap();
                 assert_eq!(signer.public_key().to_string(), public.address);
+                let signature = signer.sign(b"local-agent-proof");
+                allowit_native::crypto::verify(
+                    signer.public_key(),
+                    b"local-agent-proof",
+                    &signature,
+                )
+                .unwrap();
+                assert!(
+                    allowit_native::crypto::verify(
+                        signer.public_key(),
+                        b"different-intent",
+                        &signature
+                    )
+                    .is_err()
+                );
             }
             std::fs::remove_dir_all(p.parent().unwrap()).unwrap();
         }

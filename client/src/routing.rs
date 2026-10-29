@@ -183,6 +183,41 @@ pub(crate) fn tempo_action(
         stderr,
     )
 }
+pub(crate) fn tempo_command(
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> Result<i32> {
+    if let Some(selected) = selected() {
+        if args
+            .first()
+            .is_some_and(|s| matches!(s.as_str(), "help" | "-h" | "--help"))
+        {
+            return allowit_tempo::run(args, stdout, stderr);
+        }
+        let configured = crate::config::env_value("ALLOWIT_TEMPO_BUNDLE");
+        let path = if args.first().is_some_and(|s| s == "import") {
+            args.get(1)
+                .ok_or_else(|| Error::usage("Tempo import requires bundle path"))?
+                .as_str()
+        } else if configured.is_empty() {
+            ".allowit-tempo/executor.json"
+        } else {
+            &configured
+        };
+        let policy = allowit_tempo::describe(std::path::Path::new(path))?;
+        let network = policy["network"]
+            .as_str()
+            .ok_or_else(|| Error::config("Tempo policy lacks network"))?;
+        if normalize(network)? != selected {
+            return Err(Error::config(
+                "Selected network differs from the Tempo wallet deployment",
+            ));
+        }
+    }
+    allowit_tempo::run(args, stdout, stderr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,10 +1,8 @@
 name: Client SDK
 on:
-  pull_request:
-    paths: ['client/**', 'client-core/**', 'native-rust/**', 'stellar-rust/**', '.github/workflows/client.yml']
-  push:
-    branches: [main]
-    paths: ['client/**', 'client-core/**', 'native-rust/**', 'stellar-rust/**', '.github/workflows/client.yml']
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

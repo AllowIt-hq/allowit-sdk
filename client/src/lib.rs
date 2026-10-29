@@ -3,7 +3,6 @@ pub use allowit_stellar_wallet as stellar;
 mod args;
 mod client;
 mod config;
-pub mod deployment_handoff;
 pub mod handoff;
 pub mod routing;
 pub mod wallet;
@@ -32,7 +31,6 @@ use crate::{
     skill::{Network, Skill, text},
 };
 use allowit_solana_vendor::paysh;
-use allowit_tempo as tempo;
 use serde_json::{Value, json};
 use std::io::Write;
 pub const VERSION: &str = "0.3.0-dev";
@@ -112,8 +110,15 @@ fn execute_selected(args: &[String], stdout: &mut String, stderr: &mut String) -
         }
         "wallet" => wallet::run(&args[1..], stdout),
         "policy" => policy::run(&args[1..], stdout, stderr),
-        "paysh" => paysh::run(&args[1..], stdout, stderr),
-        "tempo" => tempo::run(&args[1..], stdout, stderr),
+        "paysh" => {
+            if routing::selected().is_some() {
+                return Err(Error::unsupported(
+                    "Legacy PaySH reconciliation uses its retained policy network; explicit network override is not supported",
+                ));
+            }
+            paysh::run(&args[1..], stdout, stderr)
+        }
+        "tempo" => routing::tempo_command(&args[1..], stdout, stderr),
         "show" | "eval" | "exec" | "status" => action(&args[0], &args[1..], stdout, stderr),
         _ => Err(Error::usage(format!(
             "unknown command {} (show, eval, exec, status, policy)",

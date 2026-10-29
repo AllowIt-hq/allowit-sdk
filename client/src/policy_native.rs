@@ -80,7 +80,7 @@ impl Local {
                 .map(|c| c.network.as_str())
                 .unwrap_or("solana:testnet"),
         );
-        let network=crate::routing::normalize(&network)?.to_owned();
+        let network = crate::routing::normalize(&network)?.to_owned();
         native(genesis(&network))?;
         let mint = if matches!(name, "generate" | "import") {
             context.as_ref().map(|c| c.mint)
