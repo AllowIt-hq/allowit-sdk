@@ -84,7 +84,7 @@ Vendor packages own native arguments, trusted state reads, authorization and tra
 Other configuration edits belong to the complete policy artifact and the same deployment flow.
 
 The Stellar `stellar::admin::OwnerAdmin` prepares unsigned owner-review transactions for the versioned
-ODC interface. Deployment and pause target exactly the active deployment version plus one. Recovery reads
+policy wallet interface. Deployment and pause target exactly the active deployment version plus one. Recovery reads
 the full selected token balance and current owner. It has no caller-supplied recipient, amount or nonce.
 This profile recovers only the installed asset through the existing owner recovery entrypoint.
 It does not implement arbitrary-token recovery or direct owner token authorization.
@@ -130,7 +130,7 @@ use allowit::v1::prelude::*;
 async fn _execute(request: &Context, grant: &Grant, state: &State) -> Result<Spent, PolicyError> {
     let daily = allowit::daily_cap(request, state)?;
     let after_daily = allowit::with_spent(state, daily)?;
-    let total = engine::total_cap(request, &after_daily)?;
+    let total = self::total_cap(request, &after_daily)?;
     let n = allowit::state_get(&total, "custom_count", 0u64)?;
     let final_spent = allowit::state_set(total, "custom_count", n + 1)?;
     Ok(final_spent)
@@ -144,16 +144,7 @@ returning an earlier map selects that earlier value. Denial, errors and failed t
 all changes. Policy maps cannot overwrite owner, asset, deployment version, execution nonce or replay
 records. Rule accounting keys remain policy data, so owner code can intentionally change them.
 
-The compiler chooses placement at authoring time. Generic `allowit::` checks use the selected strategy;
-`engine::` requests the shared contract, and `self::` requests an eligible bundled rule. Both use the
-same canonical implementation and updated-spent result. System authority cannot be moved local by a
-cheaper estimate. The placement manifest records the request, authority, decision and reason for each
-check. Auto compares compatible, owner-supplied deployment and expected execution costs in one
-normalized unit. Without compatible estimates or expected volume, it uses the stated responsibility
-default. There is no runtime fallback. The owner reviews the manifest with the exact module hash.
-A shared result that the policy adopts can replace the full spent map, including counters read by
-bundled checks. Local describes implementation placement; it does not isolate accounting from
-shared state writers. The manifest records this policy-wide trust boundary.
+The compiler recommends SimplePolicyEngine, CommonPolicyEngine or CustomPolicy from the whole source. Common uses an exact ordered subset of canonical checks. Custom uses local `allowit::` or `self::` mixins and preserves bespoke control flow. Shared-engine calls, cost selection and hybrid placement are rejected. The owner reviews the selected implementation, rule list, source identity and exact module hash.
 
 `stellar::rpc::prepare` reads the current native Grant and full spent map, then simulates the exact
 installed policy before new signing. It rejects archived, malformed and restoration-required
@@ -162,13 +153,13 @@ JSON supplies neither these observations nor engine decisions. Classic/native wa
 existing trusted accounting and local guard evaluation; a selected shared-engine call cannot run on
 that route.
 
-Successful ODC preflight creates an opaque in-memory binding to the exact prepared operation.
+The server signs its native authorization after initial preflight. A second enforce-mode simulation checks the signed scope and resources before the agent receives the packet. Successful policy wallet preflight creates an opaque in-memory binding to the exact prepared operation.
 `sign` rechecks that binding. Loading an unsigned intent from JSON requires fresh preflight under the
 same logical operation ID. Existing signed bytes retain verification, status lookup and retry without
 new signing approval. Preflight is an observation; execution applies the current native policy and
-engine behavior. The SDK never treats classic-route usage fields as ODC accounting.
+engine behavior. Common and Custom use native spent values. Simple requires durable service accounting and exact source evaluation before the server signs.
 
-For new ODC signing, the command-line client reads the local `ALLOWIT_STELLAR_RPC_URL` setting.
+For new policy wallet signing, the command-line client reads the local `ALLOWIT_STELLAR_RPC_URL` setting.
 It uses the Stellar vendor's `rpc::revalidate_prepared` against that RPC before signing the existing
 gateway intent. The URL comes from local configuration, not the gateway bundle. The RPC receives
 only public native observations and unsigned simulation bytes; it receives no token, seed or gateway

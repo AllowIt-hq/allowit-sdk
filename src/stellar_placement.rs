@@ -1,5 +1,5 @@
 //! Deterministic authoring-time placement for eligible owner-controlled rules.
-use crate::{CompileError, REGISTRY_VERSION, STELLAR_SOURCE_PROFILE};
+use crate::CompileError;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,208 +129,57 @@ pub(crate) fn plan(
     requested: RulePlacement,
     options: &StellarCompileOptions,
 ) -> Result<CheckPlacement, CompileError> {
-    let (selected, reason) = match requested {
-        RulePlacement::Shared => (RulePlacement::Shared, "Explicit shared placement"),
-        RulePlacement::Local if authority == RuleAuthority::System => {
-            return Err(invalid(
-                "System authority checks cannot be bundled locally.",
-            ));
-        }
-        RulePlacement::Local => (
-            RulePlacement::Local,
-            "Explicit eligible owner-rule placement",
-        ),
-        RulePlacement::Auto if authority == RuleAuthority::System => (
-            RulePlacement::Shared,
-            "System authority requires shared placement",
-        ),
-        RulePlacement::Auto => {
-            let requested = options.default_placement;
-            if requested != RulePlacement::Auto {
-                return plan(rule_id, authority, requested, options).map(|mut p| {
-                    p.requested = RulePlacement::Auto;
-                    p.reason = "Authoring option selected the eligible owner-rule placement".into();
-                    p
-                });
-            }
-            let fallback = (
-                RulePlacement::Local,
-                "Missing compatible cost estimates; owner authority default",
-            );
-            match (options.expected_transactions, options.cost_context.as_ref()) {
-                (Some(volume), Some(context)) => {
-                    let estimates = options
-                        .cost_estimates
-                        .iter()
-                        .filter(|e| e.rule_id == rule_id)
-                        .collect::<Vec<_>>();
-                    if estimates.len() > 1 {
-                        return Err(invalid("A rule must have at most one cost estimate."));
-                    }
-                    if let Some(estimate) = estimates.first() {
-                        if estimate.context != *context
-                            || context.network.is_empty()
-                            || context.cost_unit.is_empty()
-                            || context.rules_digest == [0; 32]
-                            || context.source_profile != STELLAR_SOURCE_PROFILE
-                            || context.registry_version != REGISTRY_VERSION
-                        {
-                            (
-                                RulePlacement::Local,
-                                "Incompatible cost context; owner authority default",
-                            )
-                        } else {
-                            let local = volume
-                                .checked_mul(estimate.local_per_call_cost)
-                                .and_then(|v| v.checked_add(estimate.local_deployment_cost))
-                                .ok_or_else(|| invalid("Projected local cost exceeds u64."))?;
-                            let shared = volume
-                                .checked_mul(estimate.shared_per_call_cost)
-                                .and_then(|v| v.checked_add(estimate.shared_deployment_cost))
-                                .ok_or_else(|| invalid("Projected shared cost exceeds u64."))?;
-                            if local < shared {
-                                (RulePlacement::Local, "Lower supplied projected cost")
-                            } else if shared < local {
-                                (RulePlacement::Shared, "Lower supplied projected cost")
-                            } else {
-                                (
-                                    RulePlacement::Local,
-                                    "Supplied projected costs tie; owner authority default",
-                                )
-                            }
-                        }
-                    } else {
-                        fallback
-                    }
-                }
-                _ => fallback,
-            }
-        }
-    };
+    if authority == RuleAuthority::System
+        || requested == RulePlacement::Shared
+        || options.default_placement == RulePlacement::Shared
+        || options.expected_transactions.is_some()
+        || options.cost_context.is_some()
+        || !options.cost_estimates.is_empty()
+    {
+        return Err(invalid(
+            "Hybrid and cost-based rule placement is deferred. Use a fixed policy engine or local CustomPolicy mixins.",
+        ));
+    }
     Ok(CheckPlacement {
         rule_id: rule_id.into(),
         authority,
         requested,
-        selected,
-        reason: reason.into(),
+        selected: RulePlacement::Local,
+        reason: "Owner-controlled policy implementation uses local rule mixins".into(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn context() -> CostContext {
-        CostContext {
-            network: "stellar:testnet".into(),
-            cost_unit: "synthetic_comparable_units".into(),
-            rules_digest: [5; 32],
-            source_profile: STELLAR_SOURCE_PROFILE.into(),
-            registry_version: REGISTRY_VERSION.into(),
-        }
-    }
-    fn options(volume: Option<u64>) -> StellarCompileOptions {
-        let context = context();
-        StellarCompileOptions {
-            default_placement: RulePlacement::Auto,
-            expected_transactions: volume,
-            cost_context: Some(context.clone()),
-            cost_estimates: vec![RuleCostEstimate {
-                rule_id: "daily_cap".into(),
-                context,
-                local_deployment_cost: 100,
-                shared_deployment_cost: 0,
-                local_per_call_cost: 1,
-                shared_per_call_cost: 10,
-            }],
-        }
-    }
     #[test]
-    fn auto_uses_only_compatible_supplied_comparable_costs() {
+    fn only_local_rules_are_available() {
         assert_eq!(
             plan(
                 "daily_cap",
                 RuleAuthority::OwnerPure,
                 RulePlacement::Auto,
-                &options(Some(1))
-            )
-            .unwrap()
-            .selected,
-            RulePlacement::Shared
-        );
-        assert_eq!(
-            plan(
-                "daily_cap",
-                RuleAuthority::OwnerPure,
-                RulePlacement::Auto,
-                &options(Some(100))
+                &StellarCompileOptions::default()
             )
             .unwrap()
             .selected,
             RulePlacement::Local
         );
-        let missing = plan(
-            "daily_cap",
-            RuleAuthority::OwnerPure,
-            RulePlacement::Auto,
-            &options(None),
-        )
-        .unwrap();
-        assert_eq!(missing.selected, RulePlacement::Local);
-        assert!(missing.reason.contains("default"));
-        let mut incompatible = options(Some(1));
-        incompatible.cost_estimates[0].context.cost_unit = "cpu_counts_not_comparable".into();
-        let result = plan(
-            "daily_cap",
-            RuleAuthority::OwnerPure,
-            RulePlacement::Auto,
-            &incompatible,
-        )
-        .unwrap();
-        assert_eq!(result.selected, RulePlacement::Local);
-        assert!(result.reason.contains("Incompatible"));
-    }
-    #[test]
-    fn authority_and_explicit_placement_override_cost() {
-        let opts = options(Some(100));
-        assert_eq!(
+        assert!(
             plan(
                 "daily_cap",
                 RuleAuthority::OwnerPure,
                 RulePlacement::Shared,
-                &opts
-            )
-            .unwrap()
-            .selected,
-            RulePlacement::Shared
-        );
-        assert_eq!(
-            plan("system", RuleAuthority::System, RulePlacement::Auto, &opts)
-                .unwrap()
-                .selected,
-            RulePlacement::Shared
-        );
-        assert!(plan("system", RuleAuthority::System, RulePlacement::Local, &opts).is_err());
-    }
-    #[test]
-    fn malformed_projection_and_ambiguous_estimates_reject() {
-        let mut opts = options(Some(u64::MAX));
-        assert!(
-            plan(
-                "daily_cap",
-                RuleAuthority::OwnerPure,
-                RulePlacement::Auto,
-                &opts
+                &StellarCompileOptions::default()
             )
             .is_err()
         );
-        opts.expected_transactions = Some(2);
-        opts.cost_estimates.push(opts.cost_estimates[0].clone());
         assert!(
             plan(
                 "daily_cap",
-                RuleAuthority::OwnerPure,
-                RulePlacement::Auto,
-                &opts
+                RuleAuthority::System,
+                RulePlacement::Local,
+                &StellarCompileOptions::default()
             )
             .is_err()
         );

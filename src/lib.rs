@@ -14,7 +14,14 @@ pub use policy_state::{
 #[cfg(feature = "compiler")]
 mod compiler;
 #[cfg(feature = "compiler")]
+mod policy_engines;
+#[cfg(feature = "compiler")]
 mod stellar_codegen;
+#[cfg(feature = "compiler")]
+pub use policy_engines::{
+    EngineRecommendation, PolicyEngine, StellarRail, StellarWalletCompilation,
+    compile_stellar_wallet, recommend_stellar_engines, select_stellar_engine,
+};
 #[cfg(feature = "compiler")]
 mod stellar_placement;
 #[cfg(feature = "compiler")]

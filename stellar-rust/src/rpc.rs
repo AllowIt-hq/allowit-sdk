@@ -121,7 +121,7 @@ pub fn get_account(rpc: &dyn Rpc, address: &str) -> Result<AccountState> {
     })
 }
 /// Prepare from authoritative current state and simulate the exact native policy execution.
-/// `accounting` is required only for the existing classic/native route. ODC property/validation
+/// `accounting` is required only for the existing classic/native route. policy wallet property/validation
 /// policies receive an ephemeral preflight binding for new signing. Nothing is submitted.
 pub fn prepare(
     rpc: &dyn Rpc,
@@ -155,22 +155,22 @@ pub(crate) fn reject_restoration(value: &Value) -> Result<()> {
     }
     Ok(())
 }
-/// Simulate an original unsigned ODC intent and bind successful native validation to it.
+/// Simulate an original unsigned policy wallet intent and bind successful native validation to it.
 /// Supplied resource XDR or JSON booleans alone never create a signing approval.
 pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperation> {
     validate_retained_prepared(p)?;
-    if p.config.route != WalletRoute::Odc {
-        return Err("Native contract simulation requires ODC custody".into());
+    if p.config.route != WalletRoute::PolicyWallet {
+        return Err("Native contract simulation requires policy wallet custody".into());
     }
     if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&p.config.network)? {
         return Err("Simulation network differs from installation".into());
     }
     let v = rpc.call(
         "simulateTransaction",
-        json!({"transaction":p.transaction_xdr,"authMode":"enforce"}),
+        json!({"transaction":p.transaction_xdr,"authMode":if authorization::server_signature(p,false)?==ScVal::Void {"record"} else {"enforce"}}),
     )?;
     if v.get("error").is_some_and(|value| !value.is_null()) {
-        return Err("ODC simulation rejected the exact policy operation".into());
+        return Err("policy wallet simulation rejected the exact policy operation".into());
     }
     reject_restoration(&v)?;
     let result = readonly_result(&v)?;
@@ -206,7 +206,24 @@ pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperatio
             )
         })
         .collect::<Result<Vec<SorobanAuthorizationEntry>>>()?;
-    if auth.as_slice() != op.auth.as_slice() {
+    let same = if authorization::server_signature(p, false)? == ScVal::Void {
+        auth.len() == op.auth.len()
+            && auth.iter().zip(op.auth.iter()).all(|(actual, expected)| {
+                actual.root_invocation == expected.root_invocation
+                    && match (&actual.credentials, &expected.credentials) {
+                        (SorobanCredentials::SourceAccount, SorobanCredentials::SourceAccount) => {
+                            true
+                        }
+                        (SorobanCredentials::Address(a), SorobanCredentials::Address(b)) => {
+                            a.address == b.address
+                        }
+                        _ => false,
+                    }
+            })
+    } else {
+        auth.as_slice() == op.auth.as_slice()
+    };
+    if !same {
         return Err("Native preflight authorization differs from the exact intent".into());
     }
     let encoded = v["transactionData"]
@@ -235,13 +252,16 @@ pub fn revalidate_prepared(
     now: u64,
 ) -> Result<PreparedOperation> {
     validate_retained_prepared(p)?;
-    if p.config.route != WalletRoute::Odc
+    if p.config.route != WalletRoute::PolicyWallet
         || p.state.contract_version != Some(1)
         || p.created_at > now
         || now >= p.expires_at
     {
-        return Err("Current unexpired ODC intent is required for native revalidation".into());
+        return Err(
+            "Current unexpired policy wallet intent is required for native revalidation".into(),
+        );
     }
+    authorization::server_signature(p, true)?;
     let mut current = trusted_state(rpc, &p.config, None)?;
     // Observation ledgers can advance without changing the transaction's authority or state.
     current.ledger = p.state.ledger;
@@ -515,6 +535,38 @@ pub(crate) fn current_contract_version(value: &ScVal) -> Result<u32> {
         _ => Err("Unsupported policy contract version".into()),
     }
 }
+
+pub(crate) fn verify_policy_engine(c: &WalletConfig, state: &ScVal, binding: &ScVal) -> Result<()> {
+    let kind = c
+        .policy_engine
+        .ok_or("Selected policy engine is required")?;
+    if map_field(binding, "engine_kind")? != &value_symbol(kind.symbol())?
+        || digest_field(map_field(state, "source_digest")?)? != c.source_hash
+        || addr(map_field(state, "server")?)? != c.server
+    {
+        return Err("Installed policy engine, source or service signer differs".into());
+    }
+    let selected = allowit_policy_sdk::select_stellar_engine(
+        &c.policy_source,
+        allowit_policy_sdk::StellarRail::PolicyWallet,
+        kind,
+        false,
+    )
+    .map_err(err)?;
+    let rules = ScVal::Vec(Some(
+        selected
+            .rules
+            .iter()
+            .map(|name| value_symbol(name))
+            .collect::<Result<Vec<_>>>()?
+            .try_into()
+            .map_err(err)?,
+    ));
+    if map_field(state, "rules")? != &rules {
+        return Err("Installed rules differ from complete compiled policy".into());
+    }
+    Ok(())
+}
 pub(crate) fn deployment_version_field(state: &ScVal) -> Result<u64> {
     if ["revision", "policy_version"]
         .iter()
@@ -609,25 +661,24 @@ pub(crate) fn readonly_result(value: &Value) -> Result<ScVal> {
     }
     read(results[0]["xdr"].as_str().ok_or("Missing binding XDR")?)
 }
-/// Read the selected ODC engine's executable release metadata without authorizing a call.
+/// Read an explicitly selected shared checker's executable release metadata without authorizing a call.
 /// `None` requires a host diagnostic that the selected engine has no `engine_version` export.
 /// Transport failures, unavailable diagnostics and malformed metadata are errors. This query
 /// does not attest engine health or code identity and is never required by owner operations.
-/// `rpc` must serve the configured network; `c.engine` selects the queried contract.
+/// `rpc` must serve the configured network; `checker` selects a contract distinct from the service signer.
 /// `source` supplies the native simulation account; this function does not load keys or sign.
-pub fn engine_version(
+pub fn checker_version(
     rpc: &dyn Rpc,
     c: &WalletConfig,
     source: &AccountState,
+    checker: &str,
 ) -> Result<Option<u32>> {
     validate_config(c)?;
-    if c.route != WalletRoute::Odc {
-        return Err("Engine metadata requires an ODC contract".into());
-    }
+    Contract::from_string(checker).map_err(err)?;
     if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&c.network)? {
         return Err("Stellar RPC network differs from installation".into());
     }
-    let value = readonly_simulation(rpc, c, source, &c.engine, "engine_version", vec![])?;
+    let value = readonly_simulation(rpc, c, source, checker, "engine_version", vec![])?;
     if let Some(error) = value.get("error") {
         if !error
             .as_str()
@@ -635,7 +686,7 @@ pub fn engine_version(
         {
             return Err("Engine version simulation failed".into());
         }
-        let ScAddress::Contract(engine) = address(&c.engine)? else {
+        let ScAddress::Contract(engine) = address(checker)? else {
             return Err("Engine is not a contract".into());
         };
         let events = value["events"]
@@ -672,7 +723,7 @@ pub fn engine_version(
         _ => Err("Invalid engine release version".into()),
     }
 }
-/// Fetch native authority and ODC state from the configured chain. Native usage must
+/// Fetch native authority and policy wallet state from the configured chain. Native usage must
 /// come from the authoritative durable coordinator, never an implicit zero counter.
 pub fn trusted_state(
     rpc: &dyn Rpc,
@@ -703,6 +754,9 @@ fn trusted_state_inner(
     require_customer_quorum: bool,
 ) -> Result<DiscoveredState> {
     validate_config(c)?;
+    if c.route == WalletRoute::Odc && require_customer_quorum {
+        return Err("Historical wallet discovery cannot authorize new execution".into());
+    }
     let network = rpc.call("getNetwork", json!({}))?;
     if network["passphrase"].as_str() != Some(passphrase(&c.network)?) {
         return Err("Stellar RPC network differs from installation".into());
@@ -737,7 +791,7 @@ fn trusted_state_inner(
                 source_hash: c.source_hash,
                 owner: c.owner.clone(),
                 agent: c.agent.clone(),
-                engine: c.engine.clone(),
+                server: c.server.clone(),
                 policy_instance: c.policy_instance,
             },
             paused: false,
@@ -751,50 +805,65 @@ fn trusted_state_inner(
     let entries = rpc.call("getLedgerEntries", json!({"keys":[xdr(&key)?]}))?;
     let list = entries["entries"]
         .as_array()
-        .ok_or("Missing ODC ledger entry")?;
+        .ok_or("Missing policy wallet ledger entry")?;
     if list.len() != 1 {
-        return Err("ODC instance not found".into());
+        return Err("policy wallet instance not found".into());
     }
     let entry: LedgerEntryData = read(list[0]["xdr"].as_str().ok_or("Missing instance XDR")?)?;
     let LedgerEntryData::ContractData(data) = entry else {
-        return Err("Unexpected ODC ledger entry".into());
+        return Err("Unexpected policy wallet ledger entry".into());
     };
     if data.contract != address(&c.wallet)?
         || data.key != ScVal::LedgerKeyContractInstance
         || data.durability != ContractDataDurability::Persistent
     {
-        return Err("ODC instance ledger key differs".into());
+        return Err("policy wallet instance ledger key differs".into());
     }
     let ScVal::ContractInstance(instance) = data.val else {
-        return Err("Missing ODC instance state".into());
+        return Err("Missing policy wallet instance state".into());
     };
     let ContractExecutable::Wasm(module) = instance.executable else {
-        return Err("ODC must use an owner-selected Wasm executable".into());
+        return Err("policy wallet must use an owner-selected Wasm executable".into());
     };
     if module.0 != c.module_digest {
-        return Err("ODC executable differs from installed code".into());
+        return Err("policy wallet executable differs from installed code".into());
     }
-    let storage = instance.storage.ok_or("Missing ODC storage")?;
+    let storage = instance.storage.ok_or("Missing policy wallet storage")?;
     let state = storage
         .iter()
         .find(|e| e.key == ScVal::U32(0))
         .map(|e| &e.val)
-        .ok_or("Missing ODC custody state")?;
-    let contract_version = current_contract_version(state)?;
+        .ok_or("Missing policy wallet custody state")?;
+    let historical = c.route == WalletRoute::Odc;
+    let contract_version = if historical {
+        if map_field(state, "version")? != &ScVal::U32(1) {
+            return Err("Unsupported historical wallet state".into());
+        }
+        1
+    } else {
+        current_contract_version(state)?
+    };
     let paused = match map_field(state, "paused")? {
         ScVal::Bool(value) => *value,
-        _ => return Err("Invalid ODC pause state".into()),
+        _ => return Err("Invalid policy wallet pause state".into()),
     };
     if require_customer_quorum && paused {
-        return Err("ODC automation is paused".into());
+        return Err("policy wallet automation is paused".into());
     }
     let current_agent = addr(map_field(state, "agent")?)?;
     let source = get_account(rpc, &current_agent)?;
     source.validate_structure()?;
     if require_customer_quorum && source.signer_weight(&c.agent)? == 0 {
-        return Err("Customer is not a current ODC agent account signer".into());
+        return Err("Customer is not a current policy wallet agent account signer".into());
     }
     let binding = readonly_call(rpc, c, &source, "policy_binding")?;
+    if !historical {
+        verify_policy_engine(c, state, &binding)?;
+    }
+    if !historical && require_customer_quorum {
+        let server = get_account(rpc, &c.server)?;
+        server.validate_signer_quorum(&[&c.server], server.medium_threshold)?;
+    }
     if digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
         || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
         || digest_field(map_field(&binding, "source_digest")?)? != c.source_hash
@@ -803,32 +872,64 @@ fn trusted_state_inner(
     {
         return Err("Compiled policy binding differs from installation".into());
     }
-    if current_contract_version(&binding)? != contract_version {
+    if !historical && current_contract_version(&binding)? != contract_version {
         return Err("Policy contract release differs from stored state".into());
     }
-    if addr(map_field(state, "asset")?)? != c.asset {
-        return Err("ODC asset differs from installation".into());
+    let asset = if historical {
+        map_field(map_field(state, "grant")?, "asset")?
+    } else {
+        map_field(state, "asset")?
+    };
+    if addr(asset)? != c.asset {
+        return Err("policy wallet asset differs from installation".into());
     }
-    let policy_state = PolicyStateSnapshot {
-        grant: NativeValues::from_value(map_field(state, "grant")?)?,
-        spent: properties::read_spent(rpc, c, &source)?,
+    let policy_state = if historical {
+        None
+    } else {
+        Some(PolicyStateSnapshot {
+            grant: NativeValues::from_value(map_field(state, "grant")?)?,
+            spent: properties::read_spent(rpc, c, &source)?,
+        })
     };
     let out = TrustedState {
-        contract_version: Some(contract_version),
-        policy_state: Some(policy_state),
+        contract_version: (!historical).then_some(contract_version),
+        policy_state,
         source,
         nonce: number(map_field(state, "nonce")?)?,
-        deployment_version: deployment_version_field(state)?,
-        spent_daily: 0,
-        spent_total: 0,
-        spent_day: 0,
-        calls: 0,
+        deployment_version: if historical {
+            number(map_field(state, "revision")?)?
+        } else {
+            deployment_version_field(state)?
+        },
+        spent_daily: if historical {
+            wide(map_field(state, "spent_daily")?)?
+        } else {
+            0
+        },
+        spent_total: if historical {
+            wide(map_field(state, "spent_total")?)?
+        } else {
+            0
+        },
+        spent_day: if historical {
+            number(map_field(state, "spent_day")?)?
+        } else {
+            0
+        },
+        calls: if historical {
+            number(map_field(state, "calls")?)?
+        } else {
+            0
+        },
         ledger,
         module_digest: module.0,
         source_hash: c.source_hash,
         owner: addr(map_field(state, "owner")?)?,
         agent: addr(map_field(state, "agent")?)?,
-        engine: addr(map_field(state, "engine")?)?,
+        server: addr(map_field(
+            state,
+            if historical { "engine" } else { "server" },
+        )?)?,
         policy_instance: c.policy_instance,
     };
     Ok(DiscoveredState { state: out, paused })

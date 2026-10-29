@@ -95,7 +95,7 @@ fn revalidate_with_rpc_url(
     }
     if value.is_empty() {
         return Err(Error::config(
-            "Set local ALLOWIT_STELLAR_RPC_URL before new ODC signing",
+            "Set local ALLOWIT_STELLAR_RPC_URL before new policy wallet signing",
         ));
     }
     let rpc = checked(sdk::rpc::HttpRpc::new(value))?;
@@ -115,8 +115,8 @@ fn journal_error(_: Error) -> Error {
 }
 fn same_policy_config(expected: &WalletConfig, actual: &WalletConfig) -> bool {
     let mut current = actual.clone();
-    // The engine signer is checked against the prepared live chain state, not frozen token metadata.
-    current.engine = expected.engine.clone();
+    // The server signer is checked against the prepared live chain state, not frozen token metadata.
+    current.server = expected.server.clone();
     &current == expected
 }
 fn same_retained_policy_config(expected: &WalletConfig, actual: &WalletConfig) -> bool {
@@ -153,11 +153,11 @@ fn read_public_bundle(path: &Path) -> Result<Bundle> {
     }
     validate_bundle(&bundle.policy_id, &bundle)?;
     if bundle.config.owner == bundle.config.agent
-        || bundle.config.owner == bundle.config.engine
-        || bundle.config.agent == bundle.config.engine
+        || bundle.config.owner == bundle.config.server
+        || bundle.config.agent == bundle.config.server
     {
         return Err(Error::config(
-            "The public Stellar wallet must use distinct owner, agent and engine identities",
+            "The public Stellar wallet must use distinct owner, agent and server identities",
         ));
     }
     Ok(bundle)
@@ -173,7 +173,7 @@ fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
     let mut value = json!({
         "policyId":bundle.policy_id,"profile":bundle.profile,"network":bundle.network,
         "wallet":bundle.wallet,"route":bundle.route,"owner":bundle.config.owner,
-        "agent":bundle.config.agent,"engine":bundle.config.engine,
+        "agent":bundle.config.agent,"server":bundle.config.server,
         "sourceHash":bundle.source_hash,"irHash":bundle.ir_hash,"moduleDigest":bundle.module_digest,
         "asset":bundle.config.asset,"assetSymbol":bundle.config.asset_symbol,"assetIssuer":bundle.config.asset_issuer,
         "maxFeeStroops":bundle.config.max_fee_stroops
@@ -612,8 +612,9 @@ mod public_bundle_tests {
             wallet: f["intent"]["owner"].as_str().unwrap().into(),
             owner: f["intent"]["owner"].as_str().unwrap().into(),
             agent: sdk::account_for_seed(&[2; 32]),
-            engine: sdk::account_for_seed(&[3; 32]),
+            server: sdk::account_for_seed(&[3; 32]),
             route: WalletRoute::Native,
+            policy_engine: None,
             asset: policy["mint"].as_str().unwrap().into(),
             asset_symbol: "XLM".into(),
             asset_issuer: None,
@@ -692,7 +693,7 @@ mod native_revalidation_tests {
     use std::{io::Write, net::TcpListener};
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../tests/fixtures/stellar-native-revalidation-rpc.json"
+            "../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
         ))
         .unwrap()
     }
@@ -774,7 +775,10 @@ mod native_revalidation_tests {
     }
     #[test]
     fn retained_signed_status_validation_does_not_need_local_rpc_or_new_approval() {
-        let data = fixture();
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/stellar-native-revalidation-rpc.json"
+        ))
+        .unwrap();
         let signed: SignedOperation = serde_json::from_value(data["signed"].clone()).unwrap();
         assert!(signed.prepared.native_preflight.is_none());
         let config = signed.prepared.config.clone();
