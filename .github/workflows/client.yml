@@ -1,0 +1,24 @@
+name: Client SDK
+on:
+  pull_request:
+    paths: ['client/**', 'client-core/**', 'native-rust/**', 'stellar-rust/**', '.github/workflows/client.yml']
+  push:
+    branches: [main]
+    paths: ['client/**', 'client-core/**', 'native-rust/**', 'stellar-rust/**', '.github/workflows/client.yml']
+permissions:
+  contents: read
+jobs:
+  client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client
+      - run: cargo fmt --manifest-path client/Cargo.toml --check
+      - run: cargo test --manifest-path client/Cargo.toml --locked
+      - run: cargo clippy --manifest-path client/Cargo.toml --locked --all-targets -- -D warnings

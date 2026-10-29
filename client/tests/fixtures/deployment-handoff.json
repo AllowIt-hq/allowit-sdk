@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "profile": "allowit-deploy-v1",
+  "requestId": "deployment-0001",
+  "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  "owner": "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB",
+  "amount": "5",
+  "policy": {
+    "version": 2,
+    "instance": "00000000-0000-4000-8000-000000000000",
+    "profile": "solana-native-v2",
+    "network": "solana:devnet",
+    "prompt": "Spend up to 5 test tokens per day",
+    "dailyLimit": "5",
+    "actionLimit": "5",
+    "payDiscovery": false,
+    "executionPolicyDigest": "e0ed33013748c504bf29df419463f7dc9eadfaeaedee52d48408f1b961cd1542",
+    "executionRequirementsDigest": "6fa1fe1cd6debd64f7a9f93660a341684169fea401e63a3a11464b66d9de611a",
+    "semanticRequired": false,
+    "sourceBundle": "793db01595fbcb15503914744e49b45f470e9ca1d2805aceadeac00a0d843fc7",
+    "id": "8736442681d2fddc6d39817ce01be26bc9074c9fe57705027c11b5e70f2e7ce3",
+    "policyArtifact": "cb55e2015dbc437cce58a53727c947cd1d8db75453623c5e53a4e4ea15b40dde",
+    "rust": "//! Native policy source, copied byte-for-byte into both chain builds.\n//! Amounts use six-decimal policy units. Only daily_limit is explicitly tunable.\nuse crate::policy_api::*;\n\npub fn execute(ctx: &Context) -> Result<u64, PolicyError> {\n    require_approval(ctx)?;\n    enforce_daily_limit(ctx)\n}\n"
+  },
+  "deployment": {
+    "network": "solana:devnet",
+    "sourceBundle": "793db01595fbcb15503914744e49b45f470e9ca1d2805aceadeac00a0d843fc7",
+    "policy": "11111111111111111111111111111111",
+    "policyData": "11111111111111111111111111111111",
+    "custody": "11111111111111111111111111111111"
+  },
+  "intentDigest": "5ed86a92604c5993feb2922c8f7cf761fd7888bfadc2716d72d0542529514279"
+}
