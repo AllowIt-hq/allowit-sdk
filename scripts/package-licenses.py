@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tomllib
@@ -25,7 +25,8 @@ def checked_file(entry):
 def checked_git_input(entry, repository, revision):
     original = entry['originalPath']
     if (not isinstance(original, str) or '\\' in original
-            or original.startswith('/') or '..' in Path(original).parts
+            or original.startswith('/') or '..' in PurePosixPath(original).parts
+            or PurePosixPath(original).as_posix() != original or '.' in original.split('/')
             or entry['source'] != f'{repository.removesuffix(".git")}/blob/{revision}/{original}'):
         raise ValueError('Git license input does not name its pinned source path')
     return checked_file(entry)
@@ -63,7 +64,8 @@ def validate():
             if any(any(notice.get(key) != entry['manifest'].get(key) for key in fields)
                    or notice.get('gitBlob') != entry['manifestGitBlob'] for notice in entry['files']):
                 raise ValueError('Proprietary package notices must preserve only its original manifest')
-        elif not any(notice['originalPath'] != entry['manifestPath'] for notice in entry['files']):
+        elif not any(notice['originalPath'] != entry['manifestPath']
+                     and notice.get('gitBlob') != entry['manifestGitBlob'] for notice in entry['files']):
             raise ValueError('MIT package requires an original license notice separate from its manifest')
         identity = (entry['name'], entry['version'], source)
         if identity in git_packages:

@@ -163,6 +163,10 @@ class GitLicenseTests(unittest.TestCase):
         self.write_catalog()
         with self.assertRaisesRegex(ValueError, 'Proprietary package notices'):
             self.validate()
+        self.entry['files'] = [dict(self.entry['manifest']), original_mit_notice[0]]
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'Proprietary package notices'):
+            self.validate()
         self.entry['files'] = [dict(self.entry['manifest'])]
         self.entry['selectedLicense'] = 'MIT'
         self.write_catalog()
@@ -172,6 +176,25 @@ class GitLicenseTests(unittest.TestCase):
 
     def test_mit_package_cannot_substitute_manifest_for_license_notice(self):
         self.entry['files'] = [dict(self.entry['manifest'])]
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'original license notice separate'):
+            self.validate()
+
+
+    def test_noncanonical_original_source_paths_fail(self):
+        for original in ['./vendor.toml', 'nested//vendor.toml', 'nested/./vendor.toml', 'vendor.toml/', '']:
+            self.entry['files'][0] = dict(self.entry['manifest'])
+            notice = self.entry['files'][0]
+            notice['originalPath'] = original
+            notice['source'] = f'{self.repository.removesuffix(".git")}/blob/{self.revision}/{original}'
+            self.write_catalog()
+            with self.assertRaises(ValueError):
+                self.validate()
+
+    def test_manifest_bytes_cannot_masquerade_as_a_license_notice(self):
+        self.entry['files'][0] = dict(self.entry['manifest'])
+        self.entry['files'][0]['originalPath'] = 'LICENSE'
+        self.entry['files'][0]['source'] = f'{self.repository.removesuffix(".git")}/blob/{self.revision}/LICENSE'
         self.write_catalog()
         with self.assertRaisesRegex(ValueError, 'original license notice separate'):
             self.validate()
