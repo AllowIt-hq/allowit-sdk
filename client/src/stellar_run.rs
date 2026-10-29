@@ -133,6 +133,14 @@ fn read_public_bundle(path: &Path) -> Result<Bundle> {
         ));
     }
     validate_bundle(&bundle.policy_id, &bundle)?;
+    if bundle.config.owner == bundle.config.agent
+        || bundle.config.owner == bundle.config.engine
+        || bundle.config.agent == bundle.config.engine
+    {
+        return Err(Error::config(
+            "The public Stellar wallet must use distinct owner, agent and engine identities",
+        ));
+    }
     Ok(bundle)
 }
 pub(crate) fn public_binding(path: &Path) -> Result<(String, String)> {
@@ -148,7 +156,7 @@ fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
         "wallet":bundle.wallet,"route":bundle.route,"owner":bundle.config.owner,
         "agent":bundle.config.agent,"engine":bundle.config.engine,
         "sourceHash":bundle.source_hash,"irHash":bundle.ir_hash,"moduleDigest":bundle.module_digest,
-        "asset":bundle.config.asset,"assetSymbol":bundle.config.asset_symbol,
+        "asset":bundle.config.asset,"assetSymbol":bundle.config.asset_symbol,"assetIssuer":bundle.config.asset_issuer,
         "maxFeeStroops":bundle.config.max_fee_stroops
     });
     if source {
@@ -609,6 +617,7 @@ mod public_bundle_tests {
         assert!(description.get("policy").is_none());
         assert!(description.get("signingSeed").is_none());
         assert_eq!(description["agent"], sdk::account_for_seed(&[2; 32]));
+        assert!(description["assetIssuer"].is_null());
         assert_eq!(
             public_description(&bundle, true)["policy"],
             value["config"]["policySource"]
@@ -616,6 +625,19 @@ mod public_bundle_tests {
         let mut wrong: Bundle = decode_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
         wrong.network = "stellar:mainnet".into();
         assert!(validate_bundle("existing-native-policy", &wrong).is_err());
+        let mut issued: Bundle = decode_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+        issued.config.asset_symbol = "XLM".into();
+        issued.config.asset_issuer = Some(sdk::account_for_seed(&[8; 32]));
+        issued.config.asset = sdk::sac_address(
+            &issued.config.network,
+            &sdk::asset_xdr(&issued.config).unwrap(),
+        )
+        .unwrap();
+        validate_bundle("existing-native-policy", &issued).unwrap();
+        assert_eq!(
+            public_description(&issued, false)["assetIssuer"],
+            sdk::account_for_seed(&[8; 32])
+        );
     }
     #[test]
     fn public_file_network_inference_refuses_private_fields_and_changed_identity() {
@@ -633,6 +655,10 @@ mod public_bundle_tests {
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(public_binding(&path).is_err());
         value.as_object_mut().unwrap().remove("signingSeed");
+        value["config"]["agent"] = value["config"]["owner"].clone();
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(public_binding(&path).is_err());
+        value = fixture();
         value["config"]["sourceHash"] = json!(vec![0; 32]);
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(public_binding(&path).is_err());
