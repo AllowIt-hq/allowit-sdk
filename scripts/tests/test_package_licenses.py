@@ -154,11 +154,26 @@ class GitLicenseTests(unittest.TestCase):
         self.entry['manifestGitBlob'] = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
         self.entry['declaredLicense'] = 'LicenseRef-Proprietary'
         self.entry.pop('selectedLicense')
+        original_mit_notice = self.entry['files']
+        self.entry['manifest']['gitBlob'] = self.entry['manifestGitBlob']
+        self.entry['files'] = [dict(self.entry['manifest'])]
         self.write_catalog()
         self.assertEqual(self.validate(), 1)
+        self.entry['files'] = original_mit_notice
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'Proprietary package notices'):
+            self.validate()
+        self.entry['files'] = [dict(self.entry['manifest'])]
         self.entry['selectedLicense'] = 'MIT'
         self.write_catalog()
         with self.assertRaisesRegex(ValueError, 'license differs'):
+            self.validate()
+
+
+    def test_mit_package_cannot_substitute_manifest_for_license_notice(self):
+        self.entry['files'] = [dict(self.entry['manifest'])]
+        self.write_catalog()
+        with self.assertRaisesRegex(ValueError, 'original license notice separate'):
             self.validate()
 
 

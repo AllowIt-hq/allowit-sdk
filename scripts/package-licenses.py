@@ -56,6 +56,15 @@ def validate():
                 or (declared == 'MIT' and entry.get('selectedLicense') != 'MIT')
                 or (declared == 'LicenseRef-Proprietary' and 'selectedLicense' in entry)):
             raise ValueError('Pinned Git package identity or license differs from its manifest')
+        if not entry['files']:
+            raise ValueError('Empty license entry')
+        if declared == 'LicenseRef-Proprietary':
+            fields = ('path', 'sha256', 'originalPath', 'source')
+            if any(any(notice.get(key) != entry['manifest'].get(key) for key in fields)
+                   or notice.get('gitBlob') != entry['manifestGitBlob'] for notice in entry['files']):
+                raise ValueError('Proprietary package notices must preserve only its original manifest')
+        elif not any(notice['originalPath'] != entry['manifestPath'] for notice in entry['files']):
+            raise ValueError('MIT package requires an original license notice separate from its manifest')
         identity = (entry['name'], entry['version'], source)
         if identity in git_packages:
             raise ValueError('Duplicate Git package license identity')
