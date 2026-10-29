@@ -182,13 +182,14 @@ class GitLicenseTests(unittest.TestCase):
 
 
     def test_noncanonical_original_source_paths_fail(self):
-        for original in ['./vendor.toml', 'nested//vendor.toml', 'nested/./vendor.toml', 'vendor.toml/', '']:
-            self.entry['files'][0] = dict(self.entry['manifest'])
+        original_notice = dict(self.entry['files'][0])
+        for original in ['./LICENSE', 'nested//LICENSE', 'nested/./LICENSE', 'LICENSE/', '']:
+            self.entry['files'][0] = dict(original_notice)
             notice = self.entry['files'][0]
             notice['originalPath'] = original
             notice['source'] = f'{self.repository.removesuffix(".git")}/blob/{self.revision}/{original}'
             self.write_catalog()
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, 'pinned source path'):
                 self.validate()
 
     def test_manifest_bytes_cannot_masquerade_as_a_license_notice(self):
