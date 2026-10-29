@@ -17,6 +17,7 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
         "generate" => &["PROMPT"],
         "import" => &["EXECUTOR_JSON"],
         "status" | "revoke" | "close" => &[],
+        "deploy" if crate::routing::selected().is_some_and(|n| n.starts_with("stellar:")) => &[],
         "deploy" | "fund" | "withdraw" => &["AMOUNT"],
         "execute" => &["RECIPIENT", "AMOUNT"],
         "tune" | "tune-action" => &["VALUE"],
@@ -77,9 +78,10 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
         "generate" if pos[0].trim().is_empty() => {
             return Err(Error::usage("PROMPT must not be empty"));
         }
+        "deploy" if crate::routing::selected().is_some_and(|n| n.starts_with("stellar:")) => {}
         "deploy" | "fund" | "withdraw" => decimal("AMOUNT", &pos[0], true)?,
         "execute" => {
-            if !crate::routing::selected().is_some_and(|n| n.starts_with("tempo:"))
+            if crate::routing::selected().is_none_or(|n| n.starts_with("solana:"))
                 && !solana_address(&pos[0])
             {
                 return Err(Error::usage(format!(
@@ -93,6 +95,32 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
         _ => {}
     }
     if let Some(network) = crate::routing::selected() {
+        if network.starts_with("stellar:") {
+            if name != "deploy" {
+                return Err(Error::unsupported(
+                    "Use wallet configure for native setup, wallet approve for an existing installed Stellar policy, or exec/status with its public executor bundle",
+                ));
+            }
+            let file = crate::config::env_value("ALLOWIT_STELLAR_POLICY_FILE");
+            let owner = crate::config::env_value("ALLOWIT_OWNER");
+            let request = crate::config::env_value("ALLOWIT_REQUEST_ID");
+            if file.is_empty() || owner.is_empty() || request.is_empty() {
+                return Err(Error::config(
+                    "Stellar deployment approves an existing installed policy and moves no funds. Set ALLOWIT_STELLAR_POLICY_FILE, ALLOWIT_OWNER and ALLOWIT_REQUEST_ID, or use wallet approve --policy-file PATH --owner G_ADDRESS --request-id ID",
+                ));
+            }
+            return crate::stellar_approval::run(
+                &[
+                    "--policy-file".into(),
+                    file,
+                    "--owner".into(),
+                    owner,
+                    "--request-id".into(),
+                    request,
+                ],
+                stdout,
+            );
+        }
         if network.starts_with("tempo:") {
             if !matches!(name, "execute" | "import") {
                 return Err(Error::unsupported(

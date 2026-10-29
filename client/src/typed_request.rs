@@ -55,20 +55,27 @@ pub(crate) fn operation_nonce(policy_id: &str, request_id: &str) -> [u8; 32] {
     hash.finalize().into()
 }
 
-fn decode_reader<T: DeserializeOwned>(reader: impl Read) -> Result<T> {
+fn decode_reader<T: DeserializeOwned>(mut reader: impl Read) -> Result<T> {
     // The stream cap also protects against a file that grows after the metadata check.
-    let mut bytes = Vec::with_capacity(4096);
-    reader
-        .take(MAX_REQUEST_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| Error::usage("Cannot read the request file."))?;
-    if bytes.len() > MAX_REQUEST_BYTES {
+    // A fixed buffer never reallocates a partially filled secret-bearing input.
+    let mut bytes = zeroize::Zeroizing::new(vec![0u8; MAX_REQUEST_BYTES + 1]);
+    let mut length = 0;
+    while length < bytes.len() {
+        match reader.read(&mut bytes[length..]) {
+            Ok(0) => break,
+            Ok(count) => length += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(Error::usage("Cannot read the request file.")),
+        }
+    }
+    if length > MAX_REQUEST_BYTES {
         return Err(Error::usage("The request file exceeds 65536 bytes."));
     }
-    structural_bounds(&bytes)?;
+    let input = &bytes[..length];
+    structural_bounds(input)?;
     // Do not collapse objects into Value. Canonical struct deserialization rejects duplicate fields.
     // Suppress deserializer details: they can contain private request field values.
-    let mut decoder = serde_json::Deserializer::from_slice(&bytes);
+    let mut decoder = serde_json::Deserializer::from_slice(input);
     let request = T::deserialize(&mut decoder)
         .map_err(|_| Error::usage("The request file does not match the typed request schema."))?;
     decoder

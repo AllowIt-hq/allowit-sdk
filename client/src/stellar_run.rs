@@ -36,7 +36,13 @@ struct Bundle {
     config: WalletConfig,
     endpoints: Endpoints,
     /// Customer secret. This field is decoded locally and never serialized or sent.
-    signing_seed: String,
+    #[serde(default, deserialize_with = "local_secret")]
+    signing_seed: Option<Zeroizing<String>>,
+}
+fn local_secret<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> std::result::Result<Option<Zeroizing<String>>, D::Error> {
+    String::deserialize(decoder).map(|value| Some(Zeroizing::new(value)))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -119,8 +125,101 @@ fn same_retained_policy_config(expected: &WalletConfig, actual: &WalletConfig) -
     original.agent = expected.agent.clone();
     same_policy_config(expected, &original)
 }
+fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
+    if bundle.version != 1
+        || bundle.profile != sdk::PROFILE
+        || bundle.policy_id != policy
+        || bundle.network != bundle.config.network
+        || bundle.wallet != bundle.config.wallet
+        || bundle.route != bundle.config.route
+        || checked(sdk::unhex::<32>(&bundle.source_hash))? != bundle.config.source_hash
+        || checked(sdk::unhex::<32>(&bundle.module_digest))? != bundle.config.module_digest
+        || sdk::unhex::<32>(&bundle.ir_hash).is_err()
+        || bundle.endpoints.execute != "/api/native/execute"
+        || bundle.endpoints.status != "/api/native/execute/status"
+    {
+        return Err(Error::config(
+            "The Stellar bundle does not match the installed policy profile",
+        ));
+    }
+    checked(sdk::validate_config(&bundle.config))
+}
+fn read_public_bundle(path: &Path) -> Result<Bundle> {
+    let mut bundle: Bundle = crate::typed_request::read_request_file(path)?;
+    if let Some(_private) = bundle.signing_seed.take() {
+        return Err(Error::config(
+            "The public Stellar bundle must not contain signing material",
+        ));
+    }
+    validate_bundle(&bundle.policy_id, &bundle)?;
+    if bundle.config.owner == bundle.config.agent
+        || bundle.config.owner == bundle.config.engine
+        || bundle.config.agent == bundle.config.engine
+    {
+        return Err(Error::config(
+            "The public Stellar wallet must use distinct owner, agent and engine identities",
+        ));
+    }
+    Ok(bundle)
+}
+pub(crate) fn public_binding(path: &Path) -> Result<(String, String)> {
+    let bundle = read_public_bundle(path)?;
+    Ok((
+        bundle.policy_id,
+        crate::routing::normalize(&bundle.network)?.into(),
+    ))
+}
+fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
+    let mut value = json!({
+        "policyId":bundle.policy_id,"profile":bundle.profile,"network":bundle.network,
+        "wallet":bundle.wallet,"route":bundle.route,"owner":bundle.config.owner,
+        "agent":bundle.config.agent,"engine":bundle.config.engine,
+        "sourceHash":bundle.source_hash,"irHash":bundle.ir_hash,"moduleDigest":bundle.module_digest,
+        "asset":bundle.config.asset,"assetSymbol":bundle.config.asset_symbol,"assetIssuer":bundle.config.asset_issuer,
+        "maxFeeStroops":bundle.config.max_fee_stroops
+    });
+    if source {
+        value["policy"] = json!(bundle.config.policy_source);
+    }
+    value
+}
+/// Inspect only validated public metadata. This operation never opens a signer or a transport.
+pub(crate) fn show(policy: &str, source: bool, stdout: &mut String) -> Result<i32> {
+    let path = env_value("ALLOWIT_STELLAR_BUNDLE");
+    if path.is_empty() {
+        return Err(Error::config(
+            "Set ALLOWIT_STELLAR_BUNDLE to inspect public wallet metadata",
+        ));
+    }
+    let bundle = read_public_bundle(Path::new(&path))?;
+    validate_bundle(policy, &bundle)?;
+    *stdout += &crate::output::json(&public_description(&bundle, source));
+    Ok(0)
+}
 impl Client {
     fn load(policy: &str) -> Result<Self> {
+        let public_path = env_value("ALLOWIT_STELLAR_BUNDLE");
+        if !public_path.is_empty() {
+            if !env_value("ALLOWIT_TOKEN").is_empty() {
+                return Err(Error::config(
+                    "Use either the public Stellar bundle with a local signer or the legacy token, not both",
+                ));
+            }
+            let bundle = read_public_bundle(Path::new(&public_path))?;
+            let path = env_value("ALLOWIT_STELLAR_SIGNER");
+            if path.is_empty() {
+                return Err(Error::config(
+                    "Set ALLOWIT_STELLAR_SIGNER to the local private signer file",
+                ));
+            }
+            let seed = crate::wallet::stellar_signing_seed(Path::new(&path))?;
+            if sdk::account_for_seed(&seed) != bundle.config.agent {
+                return Err(Error::config(
+                    "The local Stellar signer differs from the public bundle agent",
+                ));
+            }
+            return Self::from_bundle(policy, bundle, seed);
+        }
         let raw = Zeroizing::new(env_value("ALLOWIT_TOKEN"));
         let encoded = raw
             .strip_prefix("allowit-stellar-v1.")
@@ -138,27 +237,17 @@ impl Client {
                 .collect::<Vec<_>>(),
         );
         let mut bundle: Bundle = decode_bytes(&bytes)?;
-        let seed = Zeroizing::new(checked(sdk::decode_seed(&bundle.signing_seed))?);
-        use zeroize::Zeroize;
-        bundle.signing_seed.zeroize();
+        let private = bundle
+            .signing_seed
+            .take()
+            .ok_or_else(|| Error::config("The legacy Stellar token lacks its local signer"))?;
+        let seed = Zeroizing::new(checked(sdk::decode_seed(&private))?);
         // Signer membership is checked against current chain authority by the service.
         bundle.config.agent = sdk::account_for_seed(&seed);
-        if bundle.version != 1
-            || bundle.profile != sdk::PROFILE
-            || bundle.policy_id != policy
-            || bundle.network != bundle.config.network
-            || bundle.wallet != bundle.config.wallet
-            || bundle.route != bundle.config.route
-            || checked(sdk::unhex::<32>(&bundle.source_hash))? != bundle.config.source_hash
-            || checked(sdk::unhex::<32>(&bundle.module_digest))? != bundle.config.module_digest
-            || sdk::unhex::<32>(&bundle.ir_hash).is_err()
-            || bundle.endpoints.execute != "/api/native/execute"
-            || bundle.endpoints.status != "/api/native/execute/status"
-        {
-            return Err(Error::config(
-                "The Stellar bundle does not match the installed policy profile",
-            ));
-        }
+        Self::from_bundle(policy, bundle, seed)
+    }
+    fn from_bundle(policy: &str, bundle: Bundle, seed: Zeroizing<[u8; 32]>) -> Result<Self> {
+        validate_bundle(policy, &bundle)?;
         if let Some(network) = crate::routing::selected()
             && crate::routing::normalize(&bundle.network)? != network
         {
@@ -166,7 +255,6 @@ impl Client {
                 "Selected network differs from Stellar wallet binding",
             ));
         }
-        checked(sdk::validate_config(&bundle.config))?;
         let origin = parse_origin(&env_value("ALLOWIT_URL"))?;
         let builder = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -512,6 +600,93 @@ fn render(r: &Response, stdout: &mut String) -> Result<i32> {
 }
 
 #[cfg(test)]
+mod public_bundle_tests {
+    use super::*;
+    fn fixture() -> serde_json::Value {
+        let f: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap();
+        let policy = &f["policy"];
+        let config = WalletConfig {
+            network: "stellar:testnet".into(),
+            policy_instance: [7; 32],
+            wallet: f["intent"]["owner"].as_str().unwrap().into(),
+            owner: f["intent"]["owner"].as_str().unwrap().into(),
+            agent: sdk::account_for_seed(&[2; 32]),
+            engine: sdk::account_for_seed(&[3; 32]),
+            route: WalletRoute::Native,
+            asset: policy["mint"].as_str().unwrap().into(),
+            asset_symbol: "XLM".into(),
+            asset_issuer: None,
+            policy_source: policy["code"].as_str().unwrap().into(),
+            source_hash: sdk::unhex(policy["sourceHash"].as_str().unwrap()).unwrap(),
+            module_digest: [5; 32],
+            max_fee_stroops: 100,
+        };
+        json!({"version":1,"profile":sdk::PROFILE,"network":config.network,
+            "policyId":policy["id"],"sourceHash":policy["sourceHash"],"irHash":policy["irHash"],
+            "moduleDigest":sdk::hex(&config.module_digest),"wallet":config.wallet,
+            "route":"native","config":config,
+            "endpoints":{"execute":"/api/native/execute","status":"/api/native/execute/status"}})
+    }
+    #[test]
+    fn public_inspection_binds_roles_and_source_without_loading_a_signer() {
+        let value = fixture();
+        let bundle: Bundle = decode_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+        validate_bundle("existing-native-policy", &bundle).unwrap();
+        let description = public_description(&bundle, false);
+        assert!(description.get("policy").is_none());
+        assert!(description.get("signingSeed").is_none());
+        assert_eq!(description["agent"], sdk::account_for_seed(&[2; 32]));
+        assert!(description["assetIssuer"].is_null());
+        assert_eq!(
+            public_description(&bundle, true)["policy"],
+            value["config"]["policySource"]
+        );
+        let mut wrong: Bundle = decode_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+        wrong.network = "stellar:mainnet".into();
+        assert!(validate_bundle("existing-native-policy", &wrong).is_err());
+        let mut issued: Bundle = decode_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+        issued.config.asset_symbol = "XLM".into();
+        issued.config.asset_issuer = Some(sdk::account_for_seed(&[8; 32]));
+        issued.config.asset = sdk::sac_address(
+            &issued.config.network,
+            &sdk::asset_xdr(&issued.config).unwrap(),
+        )
+        .unwrap();
+        validate_bundle("existing-native-policy", &issued).unwrap();
+        assert_eq!(
+            public_description(&issued, false)["assetIssuer"],
+            sdk::account_for_seed(&[8; 32])
+        );
+    }
+    #[test]
+    fn public_file_network_inference_refuses_private_fields_and_changed_identity() {
+        let path = std::env::temp_dir().join(format!(
+            "allowit-stellar-public-{}.json",
+            std::process::id()
+        ));
+        let mut value = fixture();
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(
+            public_binding(&path).unwrap(),
+            ("existing-native-policy".into(), "stellar:testnet".into())
+        );
+        value["signingSeed"] = json!("must-stay-local");
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(public_binding(&path).is_err());
+        value.as_object_mut().unwrap().remove("signingSeed");
+        value["config"]["agent"] = value["config"]["owner"].clone();
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(public_binding(&path).is_err());
+        value = fixture();
+        value["config"]["sourceHash"] = json!(vec![0; 32]);
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(public_binding(&path).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
 mod native_revalidation_tests {
     use super::*;
     use std::{io::Write, net::TcpListener};
@@ -621,7 +796,7 @@ mod native_revalidation_tests {
                     execute: "/api/native/execute".into(),
                     status: "/api/native/execute/status".into(),
                 },
-                signing_seed: String::new(),
+                signing_seed: None,
             },
             seed: Zeroizing::new([2; 32]),
         };

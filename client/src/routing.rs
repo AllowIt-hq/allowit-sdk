@@ -69,12 +69,17 @@ pub(crate) fn extract(args: &[String]) -> Result<(Vec<String>, Option<String>)> 
         }
         i += 1;
     }
-    if rest.first().is_none_or(|s| {
-        matches!(
-            s.as_str(),
-            "help" | "-h" | "--help" | "version" | "--version"
-        )
-    }) {
+    if rest
+        .iter()
+        .take_while(|s| s.as_str() != "--")
+        .any(|s| matches!(s.as_str(), "-h" | "--help" | "-help"))
+        || rest.first().is_none_or(|s| {
+            matches!(
+                s.as_str(),
+                "help" | "-h" | "--help" | "version" | "--version"
+            )
+        })
+    {
         return Ok((rest, network));
     }
     if let Some(n) = &network {
@@ -96,6 +101,24 @@ pub(crate) fn extract(args: &[String]) -> Result<(Vec<String>, Option<String>)> 
                 .ok_or_else(|| Error::config("Tempo bundle lacks network"))?;
             network = Some(normalize(bound)?.to_owned());
         }
+    }
+    let deployment_command = rest.first().is_some_and(|name| {
+        matches!(
+            name.as_str(),
+            "show" | "eval" | "exec" | "status" | "policy"
+        )
+    }) && !rest
+        .get(1)
+        .is_some_and(|name| matches!(name.as_str(), "help" | "-h" | "--help" | "-help"));
+    let stellar = allowit_client_core::config::env_value("ALLOWIT_STELLAR_BUNDLE");
+    if deployment_command && !stellar.is_empty() {
+        let (_, bound) = crate::stellar_run::public_binding(std::path::Path::new(&stellar))?;
+        if network.as_ref().is_some_and(|selected| selected != &bound) {
+            return Err(Error::config(
+                "Selected network conflicts with the public Stellar wallet binding",
+            ));
+        }
+        network = Some(bound);
     }
     if network.is_none()
         && rest

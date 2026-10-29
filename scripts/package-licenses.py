@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tomllib
@@ -12,58 +12,90 @@ import tomllib
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def checked_file(entry):
+    path = ROOT / entry['path']
+    if not path.resolve().is_relative_to((ROOT / 'licenses').resolve()):
+        raise ValueError('License path escapes licenses directory')
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != entry['sha256']:
+        raise ValueError(f'License input hash mismatch: {entry["path"]}')
+    return data
+
+
+def checked_git_input(entry, repository, revision):
+    original = entry['originalPath']
+    if (not isinstance(original, str) or '\\' in original
+            or original.startswith('/') or '..' in PurePosixPath(original).parts
+            or PurePosixPath(original).as_posix() != original or '.' in original.split('/')
+            or entry['source'] != f'{repository.removesuffix(".git")}/blob/{revision}/{original}'):
+        raise ValueError('Git license input does not name its pinned source path')
+    return checked_file(entry)
+
+
 def validate():
     catalog = json.loads((ROOT / 'licenses/dependencies/catalog.json').read_text())
     packages = {(p['name'], p['version'], p['crateSha256']) for p in catalog['packages']}
-    git_entries = catalog.get('gitPackages', [])
     git_packages = set()
-    for entry in git_entries:
+    for entry in catalog.get('gitPackages', []):
         revision = entry['revision']
         repository = entry['repository']
-        if not re.fullmatch(r'[0-9a-f]{40}', revision) or not re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?', repository):
-            raise ValueError('Invalid exact Git license source')
-        expected = 'git+' + repository + '?rev=' + revision + '#' + revision
-        if entry['source'] != expected or not re.fullmatch(r'[0-9a-f]{40}', entry['manifestGitBlob']):
-            raise ValueError('Git license source does not match its exact revision')
-        identity = (entry['name'], entry['version'], entry['source'])
+        source = f'git+{repository}?rev={revision}#{revision}'
+        if (not re.fullmatch(r'[0-9a-f]{40}', revision)
+                or not re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git', repository)
+                or entry['source'] != source):
+            raise ValueError('Git license coverage requires an exact canonical repository and revision')
+        manifest = checked_git_input(entry['manifest'], repository, revision)
+        blob = hashlib.sha1(b'blob ' + str(len(manifest)).encode() + b'\0' + manifest).hexdigest()
+        if (entry['manifest']['originalPath'] != entry['manifestPath']
+                or entry['manifestGitBlob'] != blob
+                or entry['manifest'].get('gitBlob', blob) != blob):
+            raise ValueError('Git package manifest blob differs from its pinned provenance')
+        package = tomllib.loads(manifest.decode())['package']
+        declared = entry['declaredLicense']
+        if (package['name'] != entry['name'] or package['version'] != entry['version']
+                or package.get('license') != declared
+                or declared not in ('MIT', 'LicenseRef-Proprietary')
+                or (declared == 'MIT' and entry.get('selectedLicense') != 'MIT')
+                or (declared == 'LicenseRef-Proprietary' and 'selectedLicense' in entry)):
+            raise ValueError('Pinned Git package identity or license differs from its manifest')
+        if not entry['files']:
+            raise ValueError('Empty license entry')
+        if declared == 'LicenseRef-Proprietary':
+            fields = ('path', 'sha256', 'originalPath', 'source')
+            if any(any(notice.get(key) != entry['manifest'].get(key) for key in fields)
+                   or notice.get('gitBlob') != entry['manifestGitBlob'] for notice in entry['files']):
+                raise ValueError('Proprietary package notices must preserve only its original manifest')
+        elif not any(notice['originalPath'] != entry['manifestPath']
+                     and notice.get('gitBlob') != entry['manifestGitBlob'] for notice in entry['files']):
+            raise ValueError('MIT package requires an original license notice separate from its manifest')
+        identity = (entry['name'], entry['version'], source)
         if identity in git_packages:
-            raise ValueError('Duplicate Git license identity')
+            raise ValueError('Duplicate Git package license identity')
         git_packages.add(identity)
         for notice in entry['files']:
-            original = Path(notice['originalPath'])
-            if original.is_absolute() or '..' in original.parts:
-                raise ValueError('Git license original path escapes repository')
-            if notice['source'] != repository.removesuffix('.git') + '/blob/' + revision + '/' + original.as_posix():
-                raise ValueError('Git license notice source differs from its revision')
+            raw = checked_git_input(notice, repository, revision)
+            blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+            if notice.get('gitBlob') != blob:
+                raise ValueError('Git license blob identity differs from retained text')
     tracked = subprocess.check_output(
         ['git', 'ls-files', '--', '*Cargo.lock'], cwd=ROOT, text=True
     ).splitlines()
     for lock in tracked:
         for package in tomllib.loads((ROOT / lock).read_text()).get('package', []):
             source = package.get('source', '')
-            if source and not source.startswith('registry+'):
-                if (package['name'], package['version'], source) not in git_packages:
-                    raise ValueError(f'Non-registry dependency requires explicit exact license coverage: {lock}: {package["name"]}')
+            if source and not source.startswith('registry+') and (package['name'], package['version'], source) not in git_packages:
+                raise ValueError(f'Non-registry dependency requires explicit license coverage: {lock}: {package["name"]}')
             if source.startswith('registry+'):
                 identity = (package['name'], package['version'], package['checksum'])
                 if identity not in packages:
                     raise ValueError(f'License catalog does not cover {lock}: {identity[0]} {identity[1]}')
-    entries = catalog['packages'] + catalog['toolchains'] + git_entries
+    entries = catalog['packages'] + catalog.get('gitPackages', []) + catalog['toolchains']
     for entry in entries:
         if not entry['files']:
             raise ValueError('Empty license entry')
         for notice in entry['files']:
-            path = ROOT / notice['path']
-            if not path.resolve().is_relative_to((ROOT / 'licenses').resolve()):
-                raise ValueError('License path escapes licenses directory')
-            raw = path.read_bytes()
-            if hashlib.sha256(raw).hexdigest() != notice['sha256']:
-                raise ValueError(f'License text hash mismatch: {notice["path"]}')
-            if entry in git_entries:
-                blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
-                if notice.get('gitBlob') != blob:
-                    raise ValueError('Git license blob identity differs from retained text')
-    return len(packages)
+            checked_file(notice)
+    return len(packages) + len(git_packages)
 
 
 def main():
@@ -79,7 +111,7 @@ def main():
         for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
             shutil.copyfile(ROOT / name, destination / name)
         shutil.copytree(ROOT / 'licenses', destination / 'licenses', dirs_exist_ok=True)
-    print(f'License catalog verified: {count} registry package versions')
+    print(f'License catalog verified: {count} registry and Git package versions')
 
 
 if __name__ == '__main__':

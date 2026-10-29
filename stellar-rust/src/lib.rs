@@ -11,6 +11,7 @@ use stellar_strkey::{Contract, Strkey, ed25519};
 use stellar_xdr::*;
 
 pub mod admin;
+pub mod owner;
 pub mod properties;
 mod values;
 pub use values::NativeValues;
@@ -502,15 +503,17 @@ pub fn transfer_from_request(c: &WalletConfig, r: &ExecutionRequest) -> Result<T
     Ok(transfer)
 }
 pub fn asset_xdr(c: &WalletConfig) -> Result<Asset> {
-    if c.asset_symbol == "XLM" && c.asset_issuer.is_none() {
+    asset_from_identity(&c.asset_symbol, c.asset_issuer.as_deref())
+}
+/// Construct the exact classic asset before deriving its network-bound SAC address.
+pub fn asset_from_identity(symbol: &str, issuer: Option<&str>) -> Result<Asset> {
+    if symbol == "XLM" && issuer.is_none() {
         return Ok(Asset::Native);
     }
     let issuer = AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(account_key(
-        c.asset_issuer
-            .as_ref()
-            .ok_or("Issued asset needs exact issuer")?,
+        issuer.ok_or("Issued asset needs exact issuer")?,
     )?)));
-    let code = c.asset_symbol.as_bytes();
+    let code = symbol.as_bytes();
     if code.is_empty() || code.len() > 12 || !code.iter().all(|v| v.is_ascii_alphanumeric()) {
         return Err("Invalid issued asset code".into());
     }

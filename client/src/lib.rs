@@ -6,6 +6,8 @@ mod client;
 mod config;
 pub mod handoff;
 pub mod routing;
+pub mod stellar_approval;
+pub mod stellar_owner;
 pub mod wallet;
 pub use allowit_client_core::error;
 mod gateway;
@@ -156,9 +158,15 @@ fn action(command: &str, argv: &[String], stdout: &mut String, stderr: &mut Stri
         ));
     }
     if env_value("ALLOWIT_TOKEN").starts_with("allowit-stellar-v1.")
-        && matches!(command, "exec" | "status")
+        || !env_value("ALLOWIT_STELLAR_BUNDLE").is_empty()
     {
-        return stellar_run::run(command, &parsed, stdout, stderr);
+        return match command {
+            "exec" | "status" => stellar_run::run(command, &parsed, stdout, stderr),
+            "show" => stellar_run::show(policy, parsed.source, stdout),
+            _ => Err(Error::unsupported(
+                "Stellar evaluation requires its installed policy execution flow; use exec with a typed request file",
+            )),
+        };
     }
     if parsed.flags.0.contains_key("request-file") {
         return typed_run::exec(command, &parsed, stderr);

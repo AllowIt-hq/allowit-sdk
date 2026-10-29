@@ -15,6 +15,7 @@ Configuration (environment only):
   ALLOWIT_EXECUTOR           designated executor public key
   ALLOWIT_AUTHORITY          trusted server authority public key
   ALLOWIT_DEPLOYMENT_FILE    verified native deployment manifest
+  ALLOWIT_STELLAR_POLICY_FILE public existing owner-configured Native Stellar policy JSON
   ALLOWIT_OWNER              owner public key for deployment/execute/status
   ALLOWIT_OWNER_KEYPAIR      private owner key file for owner operations
   ALLOWIT_EXECUTOR_KEYPAIR   private executor key file for execution
@@ -29,6 +30,9 @@ Commands:
   allowit policy import EXECUTOR_JSON      import the browser policy bundle
   allowit policy deploy AMOUNT            print the browser owner-signing link
                                           for this exact vault deployment
+  allowit policy deploy --network stellar:testnet
+                                          approve an existing installed policy;
+                                          uses ALLOWIT_STELLAR_POLICY_FILE and moves no funds
   allowit policy fund AMOUNT              fund the policy; prints the
                                           transaction's explorer link
   allowit policy execute RECIPIENT AMOUNT pay AMOUNT to RECIPIENT, a Solana
