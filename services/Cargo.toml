@@ -10,9 +10,9 @@ publish = false
 [dependencies]
 allowit-service-core = { git = "https://github.com/AllowIt-hq/allowit-sdk.git", rev = "94ac70d6850e68e52935a1e78cbff85cd808e3d7" }
 allowit-service-transport = { git = "https://github.com/AllowIt-hq/allowit-sdk.git", rev = "e5ef23456c993afc68a75fd864ab6e23da44ccb7" }
-allowit-solana-service-upstreams = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "d9b60122a20220931075f09c7f7dc91bf1583b0d" }
-allowit-solana-service-rpc = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "d9b60122a20220931075f09c7f7dc91bf1583b0d" }
-allowit-solana-delegated-x402 = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "d9b60122a20220931075f09c7f7dc91bf1583b0d" }
-allowit-vendor-paysh-stock = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "d9b60122a20220931075f09c7f7dc91bf1583b0d" }
-allowit-solana-paysh-cooperating = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "d9b60122a20220931075f09c7f7dc91bf1583b0d" }
+allowit-solana-service-upstreams = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "9fe2b240b787b406347730db5f2e56a4ff87931a" }
+allowit-solana-service-rpc = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "9fe2b240b787b406347730db5f2e56a4ff87931a" }
+allowit-solana-delegated-x402 = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "9fe2b240b787b406347730db5f2e56a4ff87931a" }
+allowit-vendor-paysh-stock = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "9fe2b240b787b406347730db5f2e56a4ff87931a" }
+allowit-solana-paysh-cooperating = { git = "https://github.com/AllowIt-hq/allowit-contracts-solana.git", rev = "9fe2b240b787b406347730db5f2e56a4ff87931a" }
 allowit-tempo-services = { git = "https://github.com/AllowIt-hq/allowit-contracts-tempo.git", rev = "6a6c2bd27ca7919d9ad40fc896d65f82661f2567" }

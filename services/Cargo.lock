@@ -78,7 +78,7 @@ dependencies = [
 [[package]]
 name = "allowit-solana-delegated-x402"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-native",
  "allowit-service-core",
@@ -92,7 +92,7 @@ dependencies = [
 [[package]]
 name = "allowit-solana-paysh-cooperating"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-service-core",
  "reqwest",
@@ -102,7 +102,7 @@ dependencies = [
 [[package]]
 name = "allowit-solana-service-rpc"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-service-core",
  "allowit-service-transport",
@@ -112,7 +112,7 @@ dependencies = [
 [[package]]
 name = "allowit-solana-service-upstreams"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-service-core",
  "allowit-vendor-google-air-quality",
@@ -137,7 +137,7 @@ dependencies = [
 [[package]]
 name = "allowit-vendor-google-air-quality"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-service-core",
  "reqwest",
@@ -147,7 +147,7 @@ dependencies = [
 [[package]]
 name = "allowit-vendor-open-meteo"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-service-core",
  "reqwest",
@@ -157,7 +157,7 @@ dependencies = [
 [[package]]
 name = "allowit-vendor-paysh-catalog"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-service-core",
  "serde_json",
@@ -166,7 +166,7 @@ dependencies = [
 [[package]]
 name = "allowit-vendor-paysh-stock"
 version = "0.1.0"
-source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=d9b60122a20220931075f09c7f7dc91bf1583b0d#d9b60122a20220931075f09c7f7dc91bf1583b0d"
+source = "git+https://github.com/AllowIt-hq/allowit-contracts-solana.git?rev=9fe2b240b787b406347730db5f2e56a4ff87931a#9fe2b240b787b406347730db5f2e56a4ff87931a"
 dependencies = [
  "allowit-native",
  "allowit-service-core",
