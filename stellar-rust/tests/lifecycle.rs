@@ -144,9 +144,14 @@ fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, T
         }
     };
     let state = TrustedState {
+        contract_version: (route == WalletRoute::Odc).then_some(1),
+        policy_state: (route == WalletRoute::Odc).then_some(PolicyStateSnapshot {
+            grant: NativeValues::default(),
+            spent: NativeValues::default(),
+        }),
         source: account,
         nonce: 9,
-        revision: 4,
+        deployment_version: 4,
         spent_daily: 0,
         spent_total: 0,
         spent_day: 1,
@@ -236,13 +241,21 @@ fn stale_or_changed_payload_cannot_be_signed() {
     assert!(validate_signed(&signed, 86401).is_err());
 }
 #[test]
-fn same_authored_policy_gates_native_and_odc_without_rounding() {
+fn classic_caps_keep_exact_local_math_while_odc_requires_native_preflight() {
     for route in [WalletRoute::Native, WalletRoute::Odc] {
         let (mut c, mut r, mut s) = fixture(route, true);
         c.policy_source="use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { allowit::cap_per_transaction(ctx, \"2\", \"USDC\")?; Ok(()) }".into();
         c.source_hash = hash(&c.policy_source);
         s.source_hash = c.source_hash;
-        assert!(prepare(&c, &r, &s, 86401, 86700).is_ok());
+        if c.route == WalletRoute::Native {
+            assert!(prepare(&c, &r, &s, 86401, 86700).is_ok());
+        } else {
+            assert!(
+                prepare(&c, &r, &s, 86401, 86700)
+                    .unwrap_err()
+                    .contains("preflight")
+            );
+        }
         let ExecutionInput::Instructions(v) = &mut r.input else {
             panic!()
         };
@@ -563,7 +576,7 @@ fn native_state_uses_network_and_real_account_xdr_with_explicit_usage() {
     assert!(rpc::trusted_state(&rpc, &c, None).is_err());
     let accounting = rpc::NativeAccounting {
         nonce: 9,
-        revision: 4,
+        deployment_version: 4,
         spent_daily: 12,
         spent_total: 20,
         spent_day: 1,
@@ -805,7 +818,7 @@ fn changed_customer_signer_is_resolved_from_current_native_account() {
     };
     let accounting = rpc::NativeAccounting {
         nonce: state.nonce,
-        revision: state.revision,
+        deployment_version: state.deployment_version,
         spent_daily: state.spent_daily,
         spent_total: state.spent_total,
         spent_day: state.spent_day,
@@ -994,7 +1007,7 @@ fn rpc_decodes_known_additional_signer_types_without_an_offline_allowlist() {
     assert_eq!(rpc::get_account(&rpc, &c.wallet).unwrap(), state.source);
     let usage = rpc::NativeAccounting {
         nonce: 0,
-        revision: 0,
+        deployment_version: 0,
         spent_daily: 0,
         spent_total: 0,
         spent_day: 1,
@@ -1042,8 +1055,12 @@ impl rpc::Rpc for OdcAccountRpc {
                         params,
                     );
                 }
+                if matches!(&key,LedgerKey::ContractData(data) if data.key!=ScVal::LedgerKeyContractInstance)
+                {
+                    return Ok(json!({"latestLedger":120,"entries":[]}));
+                }
                 let state = sc_map(vec![
-                    ("version", ScVal::U32(1)),
+                    ("contract_version", ScVal::U32(1)),
                     ("paused", ScVal::Bool(self.paused)),
                     (
                         "owner",
@@ -1054,16 +1071,36 @@ impl rpc::Rpc for OdcAccountRpc {
                         "engine",
                         ScVal::Address(address(&Contract([34; 32]).to_string())?),
                     ),
+                    ("asset", ScVal::Address(address(&c.asset)?)),
                     (
                         "grant",
-                        sc_map(vec![("asset", ScVal::Address(address(&c.asset)?))]),
+                        ScVal::Map(Some(
+                            vec![
+                                ScMapEntry {
+                                    key: ScVal::String(ScString(
+                                        b"daily_limit".to_vec().try_into().unwrap(),
+                                    )),
+                                    val: ScVal::U64(1_000_000_000),
+                                },
+                                ScMapEntry {
+                                    key: ScVal::String(ScString(
+                                        b"max_calls".to_vec().try_into().unwrap(),
+                                    )),
+                                    val: ScVal::U64(10),
+                                },
+                                ScMapEntry {
+                                    key: ScVal::String(ScString(
+                                        b"total_limit".to_vec().try_into().unwrap(),
+                                    )),
+                                    val: ScVal::U64(1_000_000_000),
+                                },
+                            ]
+                            .try_into()
+                            .unwrap(),
+                        )),
                     ),
                     ("nonce", ScVal::U64(4)),
-                    ("revision", ScVal::U64(2)),
-                    ("spent_daily", ScVal::I128(Int128Parts { hi: 0, lo: 10 })),
-                    ("spent_total", ScVal::I128(Int128Parts { hi: 0, lo: 10 })),
-                    ("spent_day", ScVal::U64(1)),
-                    ("calls", ScVal::U64(1)),
+                    ("deployment_version", ScVal::U64(2)),
                 ]);
                 let entry = LedgerEntryData::ContractData(ContractDataEntry {
                     ext: ExtensionPoint::V0,
@@ -1096,8 +1133,20 @@ impl rpc::Rpc for OdcAccountRpc {
                     tx.tx.source_account,
                     MuxedAccount::Ed25519(Uint256(account_key(&self.source.address)?))
                 );
+                let OperationBody::InvokeHostFunction(op) = &tx.tx.operations[0].body else {
+                    panic!()
+                };
+                let HostFunction::InvokeContract(call) = &op.host_function else {
+                    panic!()
+                };
+                if call.function_name.0.as_slice() == b"policy_spent" {
+                    return Ok(
+                        json!({"results":[{"xdr":ScVal::Void.to_xdr_base64(Limits::none()).unwrap()}]}),
+                    );
+                }
                 let bytes = |b: [u8; 32]| ScVal::Bytes(ScBytes(b.to_vec().try_into().unwrap()));
                 let binding = sc_map(vec![
+                    ("contract_version", ScVal::U32(1)),
                     ("policy_instance", bytes(c.policy_instance)),
                     ("module_digest", bytes(c.module_digest)),
                     ("source_digest", bytes(c.source_hash)),
@@ -1295,4 +1344,909 @@ fn retained_packet_validation_does_not_recompile_source_or_grant_execution() {
     let mut changed = signed;
     changed.transaction_hash[0] ^= 1;
     assert!(validate_retained_signed(&changed).is_err());
+}
+
+struct AdminRpc {
+    base: OdcAccountRpc,
+    state_contract_version: u32,
+    binding_contract_version: Option<stellar_xdr::ScVal>,
+    calls: Mutex<Vec<(String, Vec<stellar_xdr::ScVal>)>>,
+    balance: i128,
+    wrong_owner: bool,
+    bad_auth: bool,
+}
+fn replace_field(value: &mut stellar_xdr::ScVal, name: &str, new: stellar_xdr::ScVal) {
+    let stellar_xdr::ScVal::Map(Some(map)) = value else {
+        panic!()
+    };
+    let mut fields = map.to_vec();
+    fields.retain(
+        |e| !matches!(&e.key,stellar_xdr::ScVal::Symbol(s) if s.0.as_slice()==name.as_bytes()),
+    );
+    fields.push(stellar_xdr::ScMapEntry {
+        key: stellar_xdr::ScVal::Symbol(stellar_xdr::ScSymbol(
+            name.as_bytes().to_vec().try_into().unwrap(),
+        )),
+        val: new,
+    });
+    fields.sort_by(|a, b| a.key.cmp(&b.key));
+    *map = fields.try_into().unwrap();
+}
+impl rpc::Rpc for AdminRpc {
+    fn call(&self, method: &str, params: Value) -> Result<Value> {
+        use stellar_xdr::*;
+        if method == "getLedgerEntries" {
+            let key =
+                LedgerKey::from_xdr_base64(params["keys"][0].as_str().unwrap(), Limits::none())
+                    .unwrap();
+            if matches!(&key,LedgerKey::ContractData(data) if data.key!=ScVal::LedgerKeyContractInstance)
+            {
+                return self.base.call(method, params);
+            }
+            if matches!(key, LedgerKey::Account(_)) {
+                let account = AccountState {
+                    address: self.base.config.owner.clone(),
+                    sequence: 40,
+                    master_weight: 1,
+                    low_threshold: 1,
+                    medium_threshold: 1,
+                    high_threshold: 1,
+                    signers: vec![],
+                };
+                // Trusted delegated discovery reads the agent; owner administration reads owner.
+                let LedgerKey::Account(a) = &key else {
+                    unreachable!()
+                };
+                if a.account_id
+                    != AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(account_key(
+                        &account.address,
+                    )?)))
+                {
+                    return self.base.call(method, params);
+                }
+                return AccountRpc {
+                    config: self.base.config.clone(),
+                    account,
+                    wrong_network: false,
+                }
+                .call(method, params);
+            }
+            let mut response = self.base.call(method, params)?;
+            let mut entry = LedgerEntryData::from_xdr_base64(
+                response["entries"][0]["xdr"].as_str().unwrap(),
+                Limits::none(),
+            )
+            .unwrap();
+            let LedgerEntryData::ContractData(ref mut data) = entry else {
+                panic!()
+            };
+            let ScVal::ContractInstance(ref mut instance) = data.val else {
+                panic!()
+            };
+            let mut storage = instance.storage.clone().unwrap().to_vec();
+            let state = &mut storage[0].val;
+            replace_field(
+                state,
+                "contract_version",
+                ScVal::U32(self.state_contract_version),
+            );
+            replace_field(
+                state,
+                "owner",
+                ScVal::Address(address(if self.wrong_owner {
+                    &self.base.source.address
+                } else {
+                    &self.base.config.owner
+                })?),
+            );
+            instance.storage = Some(storage.try_into().unwrap());
+            response["entries"][0]["xdr"] = json!(entry.to_xdr_base64(Limits::none()).unwrap());
+            return Ok(response);
+        }
+        if method == "simulateTransaction" {
+            let TransactionEnvelope::Tx(envelope) = TransactionEnvelope::from_xdr_base64(
+                params["transaction"].as_str().unwrap(),
+                Limits::none(),
+            )
+            .unwrap() else {
+                panic!()
+            };
+            let OperationBody::InvokeHostFunction(op) = &envelope.tx.operations[0].body else {
+                panic!()
+            };
+            let HostFunction::InvokeContract(call) = &op.host_function else {
+                panic!()
+            };
+            let function = String::from_utf8(call.function_name.0.to_vec()).unwrap();
+            if function == "policy_spent" {
+                return self.base.call(method, params);
+            }
+            if function == "policy_binding" {
+                let bytes = |v: [u8; 32]| ScVal::Bytes(ScBytes(v.to_vec().try_into().unwrap()));
+                let c = &self.base.config;
+                let mut fields = vec![
+                    ("policy_instance", bytes(c.policy_instance)),
+                    ("module_digest", bytes(c.module_digest)),
+                    ("source_digest", bytes(c.source_hash)),
+                    ("argument_schema_digest", bytes(hash(ARGUMENT_SCHEMA))),
+                    (
+                        "entrypoint",
+                        ScVal::Symbol(ScSymbol(b"_execute".to_vec().try_into().unwrap())),
+                    ),
+                ];
+                if let Some(version) = &self.binding_contract_version {
+                    fields.push(("contract_version", version.clone()));
+                }
+                return Ok(
+                    json!({"results":[{"xdr":sc_map(fields).to_xdr_base64(Limits::none()).unwrap()}]}),
+                );
+            }
+            self.calls
+                .lock()
+                .unwrap()
+                .push((function.clone(), call.args.to_vec()));
+            if function == "balance" {
+                return Ok(
+                    json!({"results":[{"xdr":ScVal::I128(Int128Parts{hi:(self.balance>>64) as i64,lo:self.balance as u64}).to_xdr_base64(Limits::none()).unwrap()}]}),
+                );
+            }
+            let mut auth = op.auth.to_vec();
+            if function == "deploy_policy" {
+                let ScVal::Map(Some(fields)) = &call.args[0] else {
+                    panic!()
+                };
+                let owner = fields
+                    .iter()
+                    .find(|e| {
+                        e.key == ScVal::Symbol(ScSymbol(b"owner".to_vec().try_into().unwrap()))
+                    })
+                    .unwrap();
+                let ScVal::Address(next_owner) = &owner.val else {
+                    panic!()
+                };
+                if address_text(next_owner)? != self.base.config.owner {
+                    let mut extra = auth[0].clone();
+                    extra.credentials = SorobanCredentials::Address(SorobanAddressCredentials {
+                        address: next_owner.clone(),
+                        nonce: 7,
+                        signature_expiration_ledger: 200,
+                        signature: ScVal::Void,
+                    });
+                    auth.push(extra);
+                }
+            }
+            if self.bad_auth {
+                auth[0].root_invocation.sub_invocations =
+                    vec![auth[0].root_invocation.clone()].try_into().unwrap();
+            }
+            return Ok(
+                json!({"minResourceFee":"1000","transactionData":SorobanTransactionData{resource_fee:1000,..Default::default()}.to_xdr_base64(Limits::none()).unwrap(),"results":[{"xdr":ScVal::Void.to_xdr_base64(Limits::none()).unwrap(),"auth":auth.iter().map(|a|a.to_xdr_base64(Limits::none()).unwrap()).collect::<Vec<_>>()}]}),
+            );
+        }
+        self.base.call(method, params)
+    }
+}
+fn admin_fixture(
+    state_contract_version: u32,
+    binding_contract_version: Option<stellar_xdr::ScVal>,
+) -> AdminRpc {
+    let (config, _, state) = fixture(WalletRoute::Odc, false);
+    AdminRpc {
+        base: OdcAccountRpc {
+            config,
+            source: state.source,
+            paused: true,
+        },
+        state_contract_version,
+        binding_contract_version,
+        calls: Mutex::new(vec![]),
+        balance: 1234567,
+        wrong_owner: false,
+        bad_auth: false,
+    }
+}
+#[test]
+fn owner_admin_delegates_full_balance_and_versions_without_agent_or_engine_calls() {
+    use allowit_policy_sdk::admin::{Admin, DeploymentVersion};
+    use allowit_stellar_wallet::admin::OwnerAdmin;
+    let rpc = admin_fixture(1, Some(stellar_xdr::ScVal::U32(1)));
+    let c = &rpc.base.config;
+    let mut facade = Admin::new(OwnerAdmin {
+        rpc: &rpc,
+        config: c,
+        now: 86401,
+    });
+    let recovered = facade.recover_funds(&c.asset).unwrap();
+    assert_eq!(recovered.function, "recover");
+    assert_eq!(recovered.deployment_version, 2);
+    let calls = rpc.calls.lock().unwrap();
+    let (_, args) = calls.last().unwrap();
+    assert_eq!(args.len(), 2);
+    assert_eq!(
+        args[0],
+        stellar_xdr::ScVal::Address(address(&c.owner).unwrap())
+    );
+    assert_eq!(
+        args[1],
+        stellar_xdr::ScVal::I128(stellar_xdr::Int128Parts { hi: 0, lo: 1234567 })
+    );
+    drop(calls);
+    assert!(facade.recover_funds(&c.wallet).is_err());
+    assert!(facade.set_pause(false, DeploymentVersion(2)).is_err());
+    assert!(facade.set_pause(false, DeploymentVersion(4)).is_err());
+    let paused = facade.set_pause(false, DeploymentVersion(3)).unwrap();
+    assert_eq!(paused.function, "set_pause");
+    assert_eq!(paused.deployment_version, 3);
+    let TransactionEnvelope::Tx(envelope) =
+        TransactionEnvelope::from_xdr_base64(&paused.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    assert!(envelope.signatures.is_empty());
+    assert_eq!(envelope.tx.fee, 1100);
+    assert_eq!(paused.required_authorizers, vec![c.owner.clone()]);
+}
+#[test]
+fn owner_admin_fails_closed_on_release_owner_mismatch_auth_and_empty_balance() {
+    use allowit_policy_sdk::admin::{Admin, DeploymentVersion};
+    use allowit_stellar_wallet::admin::OwnerAdmin;
+    for case in ["release", "owner", "auth", "balance"] {
+        let mut rpc = admin_fixture(1, Some(stellar_xdr::ScVal::U32(1)));
+        match case {
+            "release" => {
+                rpc.state_contract_version = 0;
+                rpc.binding_contract_version = None
+            }
+            "owner" => rpc.wrong_owner = true,
+            "auth" => rpc.bad_auth = true,
+            "balance" => rpc.balance = 0,
+            _ => unreachable!(),
+        }
+        let mut admin = Admin::new(OwnerAdmin {
+            rpc: &rpc,
+            config: &rpc.base.config,
+            now: 86401,
+        });
+        assert!(
+            admin.recover_funds(&rpc.base.config.asset).is_err(),
+            "{case}"
+        );
+        if case != "balance" {
+            assert!(
+                admin.set_pause(true, DeploymentVersion(3)).is_err(),
+                "{case}"
+            );
+        }
+    }
+}
+#[test]
+fn contract_release_and_persisted_counter_names_are_exact() {
+    use stellar_xdr::ScVal;
+    for (state, binding, works) in [
+        (1, Some(ScVal::U32(1)), true),
+        (0, Some(ScVal::U32(1)), false),
+        (2, Some(ScVal::U32(1)), false),
+        (1, None, false),
+        (1, Some(ScVal::U32(2)), false),
+        (1, Some(ScVal::Bool(true)), false),
+    ] {
+        let rpc = admin_fixture(state, binding);
+        let observed = rpc::trusted_state_for_discovery(&rpc, &rpc.base.config, None);
+        assert_eq!(observed.is_ok(), works);
+        if let Ok(observed) = observed {
+            assert_eq!(observed.state.deployment_version, 2);
+            assert_eq!(observed.state.contract_version, Some(1));
+        }
+    }
+    let (_, _, mut old) = fixture(WalletRoute::Odc, false);
+    old.contract_version = None;
+    let mut legacy = serde_json::to_value(&old).unwrap();
+    let version = legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("deploymentVersion")
+        .unwrap();
+    legacy["revision"] = version;
+    assert_eq!(
+        serde_json::from_value::<TrustedState>(legacy.clone()).unwrap(),
+        old
+    );
+    legacy["deploymentVersion"] = json!(4);
+    assert!(serde_json::from_value::<TrustedState>(legacy).is_err());
+    for unshipped in [
+        "interfaceVersion",
+        "contractInterfaceVersion",
+        "policyVersion",
+        "policyDeploymentVersion",
+    ] {
+        let mut invalid = serde_json::to_value(&old).unwrap();
+        invalid[unshipped] = json!(1);
+        assert!(serde_json::from_value::<TrustedState>(invalid).is_err());
+    }
+}
+
+#[test]
+fn full_policy_deployment_uses_one_versioned_owner_flow_and_owner_handoff_authorization() {
+    use allowit_policy_sdk::admin::{Admin, DeploymentVersion};
+    use allowit_stellar_wallet::admin::{Grant, OwnerAdmin, PolicyDeployment};
+    for enabled in [false, true] {
+        let rpc = admin_fixture(1, Some(stellar_xdr::ScVal::U32(1)));
+        let c = &rpc.base.config;
+        let next_owner = account_for_seed(&[51; 32]);
+        let artifact = PolicyDeployment {
+            owner: next_owner.clone(),
+            agent: c.agent.clone(),
+            engine: c.engine.clone(),
+            grant: Grant(std::collections::BTreeMap::from([(
+                "daily_cap".into(),
+                stellar_xdr::ScVal::U64(20),
+            )])),
+            x402_enabled: enabled,
+            wasm_hash: Some([8; 32]),
+        };
+        let mut admin = Admin::new(OwnerAdmin {
+            rpc: &rpc,
+            config: c,
+            now: 86401,
+        });
+        assert!(
+            admin
+                .deploy_policy(DeploymentVersion(2), artifact.clone())
+                .is_err()
+        );
+        assert!(
+            admin
+                .deploy_policy(DeploymentVersion(4), artifact.clone())
+                .is_err()
+        );
+        let prepared = admin.deploy_policy(DeploymentVersion(3), artifact).unwrap();
+        assert_eq!(
+            prepared.required_authorizers,
+            vec![c.owner.clone(), next_owner]
+        );
+        let calls = rpc.calls.lock().unwrap();
+        let (name, args) = calls.last().unwrap();
+        assert_eq!(name, "deploy_policy");
+        assert_eq!(args.len(), 1);
+        let stellar_xdr::ScVal::Map(Some(fields)) = &args[0] else {
+            panic!()
+        };
+        assert_eq!(fields.len(), 7);
+        assert!(fields.iter().any(|e|matches!(&e.key,stellar_xdr::ScVal::Symbol(k) if k.0.as_slice()==b"deployment_version") && e.val==stellar_xdr::ScVal::U64(3)));
+        assert!(fields.iter().any(
+            |e| matches!(&e.key,stellar_xdr::ScVal::Symbol(k) if k.0.as_slice()==b"x402_enabled")
+                && e.val == stellar_xdr::ScVal::Bool(enabled)
+        ));
+        assert!(!fields.iter().any(|e| matches!(&e.key,stellar_xdr::ScVal::Symbol(k) if [b"x402_signer".as_slice(),b"policy_version".as_slice()].contains(&k.0.as_slice()))));
+    }
+}
+#[test]
+fn canonical_main_revision_packet_is_status_only_and_preserves_signed_bytes() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use stellar_xdr::*;
+    let (c, r, state) = fixture(WalletRoute::Odc, false);
+    let mut p = attach_simulation(
+        &prepare(&c, &r, &state, 86401, 86700).unwrap(),
+        &SorobanTransactionData::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap(),
+    )
+    .unwrap();
+    let TransactionEnvelope::Tx(mut env) =
+        TransactionEnvelope::from_xdr_base64(&p.transaction_xdr, Limits::none()).unwrap()
+    else {
+        panic!()
+    };
+    let mut ops = env.tx.operations.to_vec();
+    let OperationBody::InvokeHostFunction(op) = &mut ops[0].body else {
+        panic!()
+    };
+    let HostFunction::InvokeContract(call) = &mut op.host_function else {
+        panic!()
+    };
+    let mut args = call.args.to_vec();
+    let ScVal::Map(Some(fields)) = &mut args[0] else {
+        panic!()
+    };
+    let mut entries = fields.to_vec();
+    for f in &mut entries {
+        if matches!(&f.key,ScVal::Symbol(k) if k.0.as_slice()==b"deployment_version") {
+            f.key = ScVal::Symbol(ScSymbol(b"revision".to_vec().try_into().unwrap()));
+        }
+    }
+    entries.sort_by(|a, b| a.key.cmp(&b.key));
+    *fields = entries.try_into().unwrap();
+    call.args = args.try_into().unwrap();
+    let mut auth = op.auth.to_vec();
+    auth[0].root_invocation.function = SorobanAuthorizedFunction::ContractFn(call.clone());
+    op.auth = auth.try_into().unwrap();
+    env.tx.operations = ops.try_into().unwrap();
+    p.state.contract_version = None;
+    p.transaction_hash = hash(
+        TransactionSignaturePayload {
+            network_id: Hash(network_id(&c.network).unwrap()),
+            tagged_transaction: TransactionSignaturePayloadTaggedTransaction::Tx(env.tx.clone()),
+        }
+        .to_xdr(Limits::none())
+        .unwrap(),
+    );
+    p.transaction_xdr = TransactionEnvelope::Tx(env.clone())
+        .to_xdr_base64(Limits::none())
+        .unwrap();
+    let key = SigningKey::from_bytes(&[2; 32]);
+    env.signatures = vec![DecoratedSignature {
+        hint: SignatureHint(account_key(&c.agent).unwrap()[28..].try_into().unwrap()),
+        signature: stellar_xdr::Signature(
+            key.sign(&p.transaction_hash)
+                .to_bytes()
+                .to_vec()
+                .try_into()
+                .unwrap(),
+        ),
+    }]
+    .try_into()
+    .unwrap();
+    let signed = SignedOperation {
+        transaction_hash: p.transaction_hash,
+        prepared: p,
+        transaction_xdr: TransactionEnvelope::Tx(env)
+            .to_xdr_base64(Limits::none())
+            .unwrap(),
+    };
+    validate_retained_signed(&signed).unwrap();
+    assert!(validate_signed(&signed, 86401).is_err());
+    assert!(prepare(&c, &r, &signed.prepared.state, 86401, 86700).is_err());
+    assert!(sign(&signed.prepared, &[2; 32], 86401).is_err());
+    let rpc = FakeRpc {
+        calls: Mutex::new(vec![]),
+        signed: signed.clone(),
+        fail_send: false,
+    };
+    let receipt = rpc::receipt_by_hash(&rpc, &c.network, &signed.transaction_hash)
+        .unwrap()
+        .unwrap();
+    rpc::validate_receipt(&receipt, &c.network, &signed.transaction_hash).unwrap();
+    let mut changed = signed;
+    changed.prepared.state.contract_version = Some(1);
+    assert!(validate_retained_signed(&changed).is_err());
+}
+
+#[test]
+fn enabled_x402_rejects_contract_agents() {
+    use allowit_policy_sdk::admin::{Admin, DeploymentVersion};
+    use allowit_stellar_wallet::admin::{Grant, OwnerAdmin, PolicyDeployment};
+    let rpc = admin_fixture(1, Some(stellar_xdr::ScVal::U32(1)));
+    let c = &rpc.base.config;
+    let mut admin = Admin::new(OwnerAdmin {
+        rpc: &rpc,
+        config: c,
+        now: 86401,
+    });
+    let artifact = PolicyDeployment {
+        owner: c.owner.clone(),
+        agent: c.wallet.clone(),
+        engine: c.engine.clone(),
+        grant: Grant(std::collections::BTreeMap::from([(
+            "daily_cap".into(),
+            stellar_xdr::ScVal::U64(2),
+        )])),
+        x402_enabled: true,
+        wasm_hash: None,
+    };
+    assert!(admin.deploy_policy(DeploymentVersion(3), artifact).is_err());
+    assert!(rpc.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn explicit_engine_release_query_distinguishes_legacy_absence_from_failures() {
+    use stellar_xdr::*;
+    struct MetadataRpc {
+        response: serde_json::Value,
+        network: &'static str,
+    }
+    impl rpc::Rpc for MetadataRpc {
+        fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+            if method == "getNetwork" {
+                return Ok(json!({"passphrase": self.network}));
+            }
+            assert_eq!(method, "simulateTransaction");
+            let TransactionEnvelope::Tx(env) = TransactionEnvelope::from_xdr_base64(
+                params["transaction"].as_str().unwrap(),
+                Limits::none(),
+            )
+            .unwrap() else {
+                panic!()
+            };
+            let OperationBody::InvokeHostFunction(op) = &env.tx.operations[0].body else {
+                panic!()
+            };
+            let HostFunction::InvokeContract(call) = &op.host_function else {
+                panic!()
+            };
+            assert_eq!(
+                call.contract_address,
+                address(&Contract([3; 32]).to_string()).unwrap()
+            );
+            assert_eq!(call.function_name.0.as_slice(), b"engine_version");
+            assert!(call.args.is_empty() && op.auth.is_empty() && env.signatures.is_empty());
+            Ok(self.response.clone())
+        }
+    }
+    let (c, _, state) = fixture(WalletRoute::Odc, false);
+    let invoke = |response| {
+        rpc::engine_version(
+            &MetadataRpc {
+                response,
+                network: "Test SDF Network ; September 2015",
+            },
+            &c,
+            &state.source,
+        )
+    };
+    for (value, expected) in [
+        (ScVal::U32(1), Ok(Some(1))),
+        (ScVal::U32(7), Ok(Some(7))),
+        (ScVal::U32(0), Err(())),
+        (ScVal::U64(1), Err(())),
+        (ScVal::Bool(true), Err(())),
+    ] {
+        assert_eq!(
+            invoke(json!({"results":[{"xdr":value.to_xdr_base64(Limits::none()).unwrap()}]}))
+                .map_err(|_| ()),
+            expected
+        );
+    }
+    let event = DiagnosticEvent {
+        in_successful_contract_call: false,
+        event: ContractEvent {
+            ext: ExtensionPoint::V0,
+            contract_id: Some(ContractId(Hash([3; 32]))),
+            type_: ContractEventType::Diagnostic,
+            body: ContractEventBody::V0(ContractEventV0 {
+                topics: vec![
+                    ScVal::Symbol(ScSymbol(b"error".to_vec().try_into().unwrap())),
+                    ScVal::Error(ScError::WasmVm(ScErrorCode::MissingValue)),
+                ]
+                .try_into()
+                .unwrap(),
+                data: ScVal::Vec(Some(
+                    vec![
+                        ScVal::String(ScString(
+                            b"trying to invoke non-existent contract function"
+                                .to_vec()
+                                .try_into()
+                                .unwrap(),
+                        )),
+                        ScVal::Symbol(ScSymbol(b"engine_version".to_vec().try_into().unwrap())),
+                    ]
+                    .try_into()
+                    .unwrap(),
+                )),
+            }),
+        },
+    };
+    let missing = |event: &DiagnosticEvent| json!({"error":"HostError: Error(WasmVm, MissingValue)","events":[event.to_xdr_base64(Limits::none()).unwrap()]});
+    assert_eq!(invoke(missing(&event)).unwrap(), None);
+    let mut wrong_contract = event.clone();
+    wrong_contract.event.contract_id = Some(ContractId(Hash([9; 32])));
+    assert!(invoke(missing(&wrong_contract)).is_err());
+    let mut wrong_function = event.clone();
+    let ContractEventBody::V0(body) = &mut wrong_function.event.body;
+    body.data = ScVal::Void;
+    assert!(invoke(missing(&wrong_function)).is_err());
+    for response in [
+        json!({"error":"HostError: Error(WasmVm, MissingValue)"}),
+        json!({"error":"network unavailable"}),
+        json!({"error":"HostError: Error(WasmVm, MissingValue)","events":["bad-xdr"]}),
+        json!({"results":[]}),
+    ] {
+        assert!(invoke(response).is_err());
+    }
+    assert!(
+        rpc::engine_version(
+            &MetadataRpc {
+                response: json!({}),
+                network: "wrong network"
+            },
+            &c,
+            &state.source
+        )
+        .is_err()
+    );
+}
+
+struct PreflightRpc {
+    base: OdcAccountRpc,
+    request: ExecutionRequest,
+    failure: &'static str,
+}
+impl rpc::Rpc for PreflightRpc {
+    fn call(&self, method: &str, params: Value) -> Result<Value> {
+        use stellar_xdr::*;
+        if method != "simulateTransaction" {
+            return self.base.call(method, params);
+        }
+        let TransactionEnvelope::Tx(env) = TransactionEnvelope::from_xdr_base64(
+            params["transaction"].as_str().unwrap(),
+            Limits::none(),
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let OperationBody::InvokeHostFunction(op) = &env.tx.operations[0].body else {
+            panic!()
+        };
+        let HostFunction::InvokeContract(call) = &op.host_function else {
+            panic!()
+        };
+        if call.function_name.0.as_slice() != b"execute" {
+            return self.base.call(method, params);
+        }
+        assert_eq!(params["authMode"], "enforce");
+        assert!(env.signatures.is_empty());
+        if self.failure == "deny" {
+            return Ok(json!({"error":"native policy denied"}));
+        }
+        let c = &self.base.config;
+        let transfer = transfer_from_request(c, &self.request)?;
+        let receipt = sc_map(vec![
+            (
+                "operation_id",
+                ScVal::Bytes(ScBytes(
+                    self.request.operation.nonce.to_vec().try_into().unwrap(),
+                )),
+            ),
+            ("token", ScVal::Address(address(&c.asset)?)),
+            ("from", ScVal::Address(address(&c.wallet)?)),
+            ("to", ScVal::Address(address(&transfer.recipient)?)),
+            (
+                "amount",
+                ScVal::I128(Int128Parts {
+                    hi: 0,
+                    lo: if self.failure == "receipt" {
+                        1
+                    } else {
+                        transfer.amount as u64
+                    },
+                }),
+            ),
+            ("nonce", ScVal::U64(4)),
+            ("deployment_version", ScVal::U64(2)),
+        ]);
+        let mut auth = op.auth.to_vec();
+        if self.failure == "auth" {
+            auth[0].root_invocation.sub_invocations =
+                vec![auth[0].root_invocation.clone()].try_into().unwrap();
+        }
+        let mut value = json!({"minResourceFee":"1000","transactionData":SorobanTransactionData{resource_fee:1000,..Default::default()}.to_xdr_base64(Limits::none()).unwrap(),"results":[{"xdr":receipt.to_xdr_base64(Limits::none()).unwrap(),"auth":auth.iter().map(|a|a.to_xdr_base64(Limits::none()).unwrap()).collect::<Vec<_>>()}]});
+        if self.failure == "restore" {
+            value["restorePreamble"] = json!({"transactionData":"restore"});
+        }
+        if self.failure == "fee" {
+            value["minResourceFee"] = json!("1001");
+        }
+        if self.failure == "instructions" {
+            value["transactionData"] = json!(
+                SorobanTransactionData {
+                    resource_fee: 1000,
+                    resources: SorobanResources {
+                        instructions: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+                .to_xdr_base64(Limits::none())
+                .unwrap()
+            );
+        }
+        Ok(value)
+    }
+}
+fn preflight_fixture() -> PreflightRpc {
+    let (mut c, r, s) = fixture(WalletRoute::Odc, true);
+    c.policy_source = include_str!("../../tests/fixtures/stellar-state-policy.rs").into();
+    c.source_hash = hash(&c.policy_source);
+    PreflightRpc {
+        base: OdcAccountRpc {
+            config: c,
+            source: s.source,
+            paused: false,
+        },
+        request: r,
+        failure: "",
+    }
+}
+#[test]
+fn native_preflight_binds_new_signing_and_json_cannot_restore_it() {
+    let rpc = preflight_fixture();
+    let c = &rpc.base.config;
+    let p = rpc::prepare(&rpc, c, &rpc.request, None, 86401, 86700).unwrap();
+    assert!(p.native_preflight.is_some());
+    let proof = sign(&p, &[2; 32], 86401).unwrap();
+    let signed = authorize(&p, &[proof], 86401).unwrap();
+    let saved = serde_json::to_string(&signed).unwrap();
+    let restored: SignedOperation = serde_json::from_str(&saved).unwrap();
+    assert!(restored.prepared.native_preflight.is_none());
+    assert_eq!(restored, signed);
+    validate_retained_signed(&restored).unwrap();
+    validate_signed(&restored, 86401).unwrap();
+    assert!(
+        sign(&restored.prepared, &[2; 32], 86401)
+            .unwrap_err()
+            .contains("preflight")
+    );
+    for change in ["amount", "expiry", "source", "spent"] {
+        let mut changed = p.clone();
+        match change {
+            "amount" => changed.request.effect_bounds[0].max_debit = 1u64.into(),
+            "expiry" => changed.expires_at -= 1,
+            "source" => changed.config.policy_source.push(' '),
+            "spent" => {
+                changed
+                    .state
+                    .policy_state
+                    .as_mut()
+                    .unwrap()
+                    .spent
+                    .0
+                    .insert("counter".into(), stellar_xdr::ScVal::U64(1));
+            }
+            _ => unreachable!(),
+        };
+        assert!(sign(&changed, &[2; 32], 86401).is_err(), "{change}");
+    }
+}
+#[test]
+fn local_revalidation_preserves_existing_unsigned_identity_and_checks_current_authority() {
+    let rpc = preflight_fixture();
+    let prepared = rpc::prepare(&rpc, &rpc.base.config, &rpc.request, None, 86401, 86700).unwrap();
+    let original: PreparedOperation =
+        serde_json::from_str(&serde_json::to_string(&prepared).unwrap()).unwrap();
+    assert!(original.native_preflight.is_none());
+    let validated = rpc::revalidate_prepared(&rpc, &original, 86402).unwrap();
+    assert_eq!(validated, original);
+    assert_eq!(validated.transaction_xdr, original.transaction_xdr);
+    assert_eq!(validated.transaction_hash, original.transaction_hash);
+    assert!(validated.native_preflight.is_some());
+    sign(&validated, &[2; 32], 86402).unwrap();
+    let repeated = stellar_xdr::LedgerKey::Account(stellar_xdr::LedgerKeyAccount {
+        account_id: stellar_xdr::AccountId(stellar_xdr::PublicKey::PublicKeyTypeEd25519(
+            stellar_xdr::Uint256([2; 32]),
+        )),
+    });
+    let mut resources = SorobanTransactionData {
+        resource_fee: 1000,
+        ..Default::default()
+    };
+    resources.resources.footprint.read_only = vec![repeated.clone()].try_into().unwrap();
+    resources.resources.footprint.read_write = vec![repeated].try_into().unwrap();
+    let overlap =
+        attach_simulation(&original, &resources.to_xdr_base64(Limits::none()).unwrap()).unwrap();
+    assert!(rpc::revalidate_prepared(&rpc, &overlap, 86402).is_err());
+    assert!(rpc::revalidate_prepared(&rpc, &original, 86700).is_err());
+    let mut changed = original.clone();
+    changed.expires_at -= 1;
+    assert!(rpc::revalidate_prepared(&rpc, &changed, 86402).is_err());
+    let mut changed = original.clone();
+    changed.request.operation.nonce[0] ^= 1;
+    assert!(rpc::revalidate_prepared(&rpc, &changed, 86402).is_err());
+    let mut changed_rpc = preflight_fixture();
+    changed_rpc.base.source.sequence += 1;
+    assert!(rpc::revalidate_prepared(&changed_rpc, &original, 86402).is_err());
+    for failure in ["deny", "auth", "receipt", "fee", "restore", "instructions"] {
+        let mut changed_rpc = preflight_fixture();
+        changed_rpc.failure = failure;
+        assert!(
+            rpc::revalidate_prepared(&changed_rpc, &original, 86402).is_err(),
+            "{failure}"
+        );
+    }
+}
+#[test]
+fn native_failure_or_wrong_auth_receipt_fee_and_restore_never_approve() {
+    for failure in ["deny", "auth", "receipt", "fee", "restore"] {
+        let mut rpc = preflight_fixture();
+        rpc.failure = failure;
+        assert!(
+            rpc::prepare(&rpc, &rpc.base.config, &rpc.request, None, 86401, 86700).is_err(),
+            "{failure}"
+        );
+    }
+}
+#[test]
+fn odc_cannot_authorize_from_forged_classic_zero_usage() {
+    let rpc = preflight_fixture();
+    let c = &rpc.base.config;
+    let mut state = rpc::trusted_state(&rpc, c, None).unwrap();
+    state.spent_daily = 0;
+    state.spent_total = 0;
+    state.spent_day = 1;
+    state.calls = 0;
+    assert!(
+        prepare(c, &rpc.request, &state, 86401, 86700)
+            .unwrap_err()
+            .contains("preflight")
+    );
+    let mut denied = rpc;
+    denied.failure = "deny";
+    assert!(
+        rpc::prepare(
+            &denied,
+            &denied.base.config,
+            &denied.request,
+            None,
+            86401,
+            86700
+        )
+        .is_err()
+    );
+}
+
+// Captured by the exact pre-task canonical main9682 library and its pinned dependencies.
+// The immutable records are permanently expired and are never regenerated by this test.
+#[test]
+fn exact_pre_task_records_preserve_request_bytes_hashes_signatures_and_status_recovery() {
+    for (encoded, original_request) in [
+        (
+            include_str!("fixtures/canonical-main-9682-native-signed.json"),
+            include_bytes!("fixtures/canonical-main-9682-native-request.json").as_slice(),
+        ),
+        (
+            include_str!("fixtures/canonical-main-9682-odc-signed.json"),
+            include_bytes!("fixtures/canonical-main-9682-odc-request.json").as_slice(),
+        ),
+    ] {
+        let signed: SignedOperation = serde_json::from_str(encoded).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&signed.prepared.request).unwrap(),
+            original_request
+        );
+        assert_eq!(hash(original_request), signed.prepared.request_hash);
+        assert_eq!(signed.prepared.expires_at, 86700); // Permanently expired fixture, not a live capability.
+        validate_retained_signed(&signed).unwrap();
+        let original: Value = serde_json::from_str(encoded).unwrap();
+        assert_eq!(
+            signed.transaction_xdr,
+            original["transactionXdr"].as_str().unwrap()
+        );
+        assert_eq!(
+            signed.prepared.transaction_xdr,
+            original["prepared"]["transactionXdr"].as_str().unwrap()
+        );
+        let rpc = FakeRpc {
+            calls: Mutex::new(vec![]),
+            signed: signed.clone(),
+            fail_send: false,
+        };
+        let mut store = Store {
+            value: Some((signed.clone(), OperationStatus::Submitted)),
+        };
+        assert_eq!(
+            rpc::recover(&rpc, &mut store, signed.prepared.request.operation.nonce).unwrap(),
+            OperationStatus::Confirmed
+        );
+        assert_eq!(*rpc.calls.lock().unwrap(), vec!["getTransaction"]);
+    }
+    let program: allowit_policy_sdk::Program =
+        serde_json::from_str(include_str!("fixtures/canonical-main-9682-ir.json")).unwrap();
+    let metadata: Value =
+        serde_json::from_str(include_str!("fixtures/canonical-main-9682-metadata.json")).unwrap();
+    allowit_policy_sdk::validate_program(&program).unwrap();
+    assert_eq!(
+        allowit_policy_sdk::canonical_ir_hash(&program).unwrap(),
+        metadata["ir_hash"].as_str().unwrap()
+    );
+}
+
+#[test]
+fn classic_route_clearly_rejects_stateful_engine_calls_without_fake_validation() {
+    let (mut c, r, mut state) = fixture(WalletRoute::Native, true);
+    c.policy_source = include_str!("../../tests/fixtures/stellar-state-policy.rs").into();
+    c.source_hash = hash(&c.policy_source);
+    state.source_hash = c.source_hash;
+    assert!(
+        prepare(&c, &r, &state, 86401, 86700)
+            .unwrap_err()
+            .contains("cannot enforce")
+    );
 }

@@ -421,7 +421,7 @@ fn old_ir_cannot_smuggle_new_semantics() {
     ir.version = "1.0.0".into();
     assert!(allowit_sdk::validate_program(&ir).is_err());
     let registry = allowit_sdk::process_value(serde_json::json!({"operation":"registry"}));
-    assert_eq!(registry["registry_version"], "1.6.0");
+    assert_eq!(registry["registry_version"], "1.7.0");
     assert_eq!(registry["type_declarations"][0], "ExecutionRequest");
 }
 

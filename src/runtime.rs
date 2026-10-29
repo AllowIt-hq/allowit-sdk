@@ -19,6 +19,9 @@ enum Value {
     Boolean(bool),
     Unit,
     Context,
+    Grant,
+    State(BTreeMap<String, crate::PolicyScalar>),
+    Spent(BTreeMap<String, crate::PolicyScalar>),
     Interval(ConfidenceInterval),
     Strings(Vec<String>),
     #[cfg(feature = "typed-workflow")]
@@ -36,6 +39,7 @@ struct Evaluator<'a> {
     profile: Profile,
     binding: String,
     steps: usize,
+    returned_spent: Option<BTreeMap<String, crate::PolicyScalar>>,
     #[cfg(feature = "typed-workflow")]
     system_operations: Vec<crate::ServiceCallPlan>,
     #[cfg(feature = "typed-workflow")]
@@ -70,13 +74,18 @@ impl Evaluator<'_> {
                         Statement::Expression {
                             value, semicolon, ..
                         } => {
-                            self.expr(value, env)?;
+                            let result = self.expr(value, env)?;
                             if !semicolon {
+                                if let Value::Spent(map) = result {
+                                    self.returned_spent = Some(map);
+                                }
                                 return Ok(true);
                             }
                         }
                         Statement::Return { value, .. } => {
-                            self.expr(value, env)?;
+                            if let Value::Spent(map) = self.expr(value, env)? {
+                                self.returned_spent = Some(map);
+                            }
                             return Ok(true);
                         }
                         #[cfg(feature = "typed-workflow")]
@@ -702,6 +711,105 @@ impl Evaluator<'_> {
                         });
                         Value::Boolean(true)
                     }
+                    name if name.starts_with("engine::")
+                        || name.starts_with("self::")
+                        || [
+                            "daily_cap",
+                            "transaction_cap",
+                            "total_cap",
+                            "call_cap",
+                            "recipient",
+                            "expiry",
+                            "token",
+                        ]
+                        .contains(&name) =>
+                    {
+                        return Err(failure(
+                            "NATIVE_ENGINE_REQUIRED",
+                            "Run the exact native policy transaction through the shared onchain engine.",
+                        ));
+                    }
+                    "__native_return" | "native_ok" => values[0].clone(),
+                    "native_fail" => {
+                        return Err(failure(
+                            "POLICY_REJECTED",
+                            match &values[0] {
+                                Value::String(v) => v.clone(),
+                                _ => return Err(invalid()),
+                            },
+                        ));
+                    }
+                    "spent" => {
+                        if self.context.policy_state.is_none() {
+                            return Err(failure(
+                                "POLICY_STATE_REQUIRED",
+                                "Trusted native spent values are required.",
+                            ));
+                        }
+                        let Value::State(map) = &values[0] else {
+                            return Err(invalid());
+                        };
+                        Value::Spent(map.clone())
+                    }
+                    "with_spent" => {
+                        let (Value::State(_), Value::Spent(map)) = (&values[0], &values[1]) else {
+                            return Err(invalid());
+                        };
+                        Value::State(map.clone())
+                    }
+                    "state_get" | "grant_get" | "state_set" | "state_remove" => {
+                        let Value::String(key) = &values[1] else {
+                            return Err(invalid());
+                        };
+                        let mut map = if name == "grant_get" {
+                            self.context
+                                .policy_state
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    failure(
+                                        "POLICY_STATE_REQUIRED",
+                                        "Trusted native Grant is required.",
+                                    )
+                                })?
+                                .grant
+                                .clone()
+                        } else {
+                            let Value::Spent(map) = &values[0] else {
+                                return Err(invalid());
+                            };
+                            map.clone()
+                        };
+                        if name == "state_remove" {
+                            map.remove(key);
+                            Value::Spent(map)
+                        } else {
+                            let scalar = match &values[2] {
+                                Value::Integer(v) => crate::PolicyScalar::U64(*v),
+                                Value::Boolean(v) => crate::PolicyScalar::Bool(*v),
+                                Value::String(v) => crate::PolicyScalar::String(v.clone()),
+                                _ => return Err(invalid()),
+                            };
+                            if name == "state_set" {
+                                map.insert(key.clone(), scalar);
+                                Value::Spent(map)
+                            } else {
+                                let actual =
+                                    map.get(key).cloned().unwrap_or_else(|| scalar.clone());
+                                if actual.kind() != scalar.kind() {
+                                    return Err(failure(
+                                        "POLICY_STATE_TYPE",
+                                        "The named value has another scalar type.",
+                                    ));
+                                }
+                                match actual {
+                                    crate::PolicyScalar::U64(v) => Value::Integer(v),
+                                    crate::PolicyScalar::Bool(v) => Value::Boolean(v),
+                                    crate::PolicyScalar::String(v) => Value::String(v),
+                                    crate::PolicyScalar::Unsupported => return Err(invalid()),
+                                }
+                            }
+                        }
+                    }
                     "Ok" => Value::Unit,
                     "fail" => return Err(failure("POLICY_REJECTED", string(&values, 0)?)),
                     #[cfg(not(feature = "oracle-ledger"))]
@@ -1185,6 +1293,40 @@ fn run_inner(
     native_service_funding: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
+    let before = ctx
+        .policy_state
+        .as_ref()
+        .map(|s| s.properties.borrow().clone());
+    let result = run_inner_scoped(
+        ir,
+        profile,
+        ctx,
+        binding,
+        private_service_localnet,
+        native_payment_asset,
+        native_service_funding,
+        #[cfg(feature = "compiler")]
+        trace,
+    );
+    if result.outcome != "pass"
+        && let (Some(state), Some(before)) = (&ctx.policy_state, before)
+    {
+        *state.properties.borrow_mut() = before;
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_inner_scoped(
+    ir: &Program,
+    profile: Profile,
+    ctx: &Context,
+    binding: String,
+    private_service_localnet: bool,
+    native_payment_asset: Option<&crate::ServicePaymentAsset>,
+    native_service_funding: bool,
+    #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
+) -> Decision {
     if let Err(error) = validate_program(ir) {
         return Decision::fail("INVALID_POLICY", error.message);
     }
@@ -1301,6 +1443,7 @@ fn run_inner(
         profile,
         binding,
         steps: 0,
+        returned_spent: None,
         #[cfg(feature = "typed-workflow")]
         budget_guards: Vec::new(),
         #[cfg(feature = "typed-workflow")]
@@ -1314,6 +1457,16 @@ fn run_inner(
     };
     let mut env = BTreeMap::new();
     env.insert("ctx".to_string(), Value::Context);
+    env.insert("__allowit_grant".to_string(), Value::Grant);
+    env.insert(
+        "__allowit_state".to_string(),
+        Value::State(
+            ctx.policy_state
+                .as_ref()
+                .map(|s| s.properties.borrow().clone())
+                .unwrap_or_default(),
+        ),
+    );
     // Configuration is enforced before control flow, so even an early return cannot bypass the cap.
     for statement in &ir.statements {
         if let Statement::Expression {
@@ -1334,6 +1487,15 @@ fn run_inner(
     }
     match evaluator.block(&ir.statements, &mut env) {
         Ok(true) => {
+            if let Some(map) = &evaluator.returned_spent {
+                let Some(state) = &ctx.policy_state else {
+                    return Decision::fail(
+                        "POLICY_STATE_REQUIRED",
+                        "Trusted native spent values are required.",
+                    );
+                };
+                *state.properties.borrow_mut() = map.clone();
+            }
             #[cfg(feature = "typed-workflow")]
             {
                 if crate::typed_workflow::required(ir) && evaluator.workflow_outputs.len() != 1 {
@@ -1512,13 +1674,12 @@ fn validate_artifact(
 ) -> Result<CompiledPolicy, alloc::boxed::Box<Decision>> {
     if policy.language != crate::LANGUAGE
         || !crate::supported_registry_version(&policy.registry_version)
+        || !crate::validation::registry_program_compatible(&policy.registry_version, &policy.ir)
         || (crate::validation::service_call_required(&policy.ir)
             && matches!(
                 policy.registry_version.as_str(),
                 "1.0.0" | "1.1.0" | "1.2.0"
             ))
-        || (crate::typed_workflow::required(&policy.ir)
-            && policy.registry_version != crate::REGISTRY_VERSION)
         || digest(policy.source.as_bytes()) != policy.source_hash
         || canonical_ir_hash(&policy.ir).ok().as_ref() != Some(&policy.ir_hash)
     {

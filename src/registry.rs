@@ -31,6 +31,12 @@ pub fn registry() -> Vec<FunctionInfo> {
         ("context_u64", "Request value", "Reads a whole-number value supplied with the request, such as an expected return in basis points. Missing or non-whole values reject the request. Supplied facts need a trustworthy source.", "context_u64(ctx: &Context, key: &str) -> Result<u64, PolicyError>", "context"),
         ("require_user_input", "Ask for approval", "Pauses for your approval. Declining rejects the request.", "async require_user_input(ctx: &Context, prompt: &str) -> PolicyResult", "user_input"),
         ("owner_limit", "Owner-controlled limit", "Declares one named native limit and its initial integer units in new(). Owner authorization controls later native account updates.", "owner_limit(key: &'static str, initial_units: u64) -> OwnerLimit", "storage_declaration"),
+        ("spent", "Copy named spent values", "Returns the current named execution values without changing Grant.", "spent(state: &State) -> Result<Spent, PolicyError>", "native_state"),
+        ("with_spent", "Replace spent values", "Returns state with exactly the supplied spent map and the same Grant.", "with_spent(state: &State, spent: Spent) -> Result<State, PolicyError>", "native_state"),
+        ("state_get", "Read policy property", "Reads one named scalar from trusted native storage. Missing keys use the source default.", "state_get(spent: &Spent, name: &str, default: Scalar) -> Result<Scalar, PolicyError>", "native_state"),
+        ("grant_get", "Read owner value", "Reads one named scalar from the owner Grant without changing it.", "grant_get(grant: &Grant, name: &str, default: Scalar) -> Result<Scalar, PolicyError>", "native_state"),
+        ("state_set", "Write policy property", "Writes one named scalar through the native policy capability.", "state_set(spent: Spent, name: &str, value: Scalar) -> Result<Spent, PolicyError>", "native_state"),
+        ("state_remove", "Remove policy property", "Removes one named property through the native policy capability.", "state_remove(spent: Spent, name: &str) -> Result<Spent, PolicyError>", "native_state"),
         ("stored_limit", "Read native policy storage", "Reads a declared limit from verified current native account state. Missing trusted state prevents approval.", "stored_limit(ctx: &Context, limit: OwnerLimit) -> Result<u64, PolicyError>", "native_storage"),
         ("is_one_of", "List membership", "Checks whether the primitive string equals an entry in a bounded inline or constructor list.", "is_one_of(value: &str, allowed: &[&str]) -> Result<bool, PolicyError>", "pure"),
         ("fail", "Reject the request", "Stops evaluation and rejects the request with this explanation. No spending is authorized.", "fail(reason: &str) -> PolicyResult", "pure"),
@@ -52,6 +58,19 @@ pub fn registry() -> Vec<FunctionInfo> {
             _=>function.signature.replace(&function.name,&qualified.name)
         };
         result.push(qualified);
+    }
+    for method in [
+        "daily_cap",
+        "transaction_cap",
+        "total_cap",
+        "call_cap",
+        "recipient",
+        "expiry",
+        "token",
+    ] {
+        for prefix in ["", "allowit::", "engine::", "self::"] {
+            result.push(FunctionInfo{name:alloc::format!("{prefix}{method}"),title:"Selected policy rule".into(),description:"Returns updated spent from one selected rule. Placement is fixed during authoring.".into(),signature:alloc::format!("{prefix}{method}(request: &Context, state: &State) -> Result<Spent, PolicyError>"),effect:"native_rule".into(),typed_signature:None});
+        }
     }
     result.push(FunctionInfo {
         name: "allowit::service_call".into(), title: "Paid service call".into(),
@@ -114,7 +133,11 @@ pub(crate) fn canonical_function(name: &str) -> Option<String> {
     if function(name)?.effect == "native_effect" {
         return None;
     }
-    if name == "allowit::service_call" || crate::typed_workflow::signature(name).is_some() {
+    if name.starts_with("self::")
+        || name.starts_with("engine::")
+        || name == "allowit::service_call"
+        || crate::typed_workflow::signature(name).is_some()
+    {
         return Some(name.into());
     }
     Some(name.rsplit("::").next()?.into())

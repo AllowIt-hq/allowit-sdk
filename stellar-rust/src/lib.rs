@@ -10,8 +10,13 @@ use sha2::{Digest, Sha256};
 use stellar_strkey::{Contract, Strkey, ed25519};
 use stellar_xdr::*;
 
+pub mod admin;
+pub mod properties;
+mod values;
+pub use values::NativeValues;
 pub mod rpc;
 pub type Result<T> = std::result::Result<T, String>;
+
 pub const PROFILE: &str = "allowit-stellar-wallet-v1";
 pub const ARGUMENT_SCHEMA: &[u8] = b"allowit.stellar.sep41_transfer.v1:ScValMap(amount:i128,from:Address,to:Address,token:Address)";
 const MAX_BYTES: usize = 1_048_576;
@@ -261,12 +266,27 @@ impl AccountState {
         Ok(())
     }
 }
+/// Complete native policy inputs. Both maps preserve arbitrary ScVal values.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyStateSnapshot {
+    pub grant: NativeValues,
+    pub spent: NativeValues,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrustedState {
+    /// Executable release metadata. Legacy code has no advertised release version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_version: Option<u32>,
+    /// Full chain-observed ODC maps; classic usage fields below are not ODC accounting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_state: Option<PolicyStateSnapshot>,
     pub source: AccountState,
     pub nonce: u64,
-    pub revision: u64,
+    /// Current ordered owner configuration. Historical spellings identify this same counter.
+    #[serde(alias = "revision")]
+    pub deployment_version: u64,
     pub spent_daily: i128,
     pub spent_total: i128,
     pub spent_day: u64,
@@ -279,7 +299,13 @@ pub struct TrustedState {
     pub engine: String,
     pub policy_instance: [u8; 32],
 }
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// Ephemeral proof that the exact native operation passed trusted RPC preflight.
+/// It grants no authority against later chain changes and cannot be deserialized.
+#[derive(Clone, Debug)]
+pub struct NativePreflight {
+    binding: [u8; 32],
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PreparedOperation {
     pub version: u32,
@@ -292,7 +318,25 @@ pub struct PreparedOperation {
     pub simulation_data: Option<String>,
     pub created_at: u64,
     pub expires_at: u64,
+    #[serde(skip)]
+    pub native_preflight: Option<NativePreflight>,
 }
+// The ephemeral preflight is new-signing admission, not durable signed-record identity.
+impl PartialEq for PreparedOperation {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.config == other.config
+            && self.request == other.request
+            && self.state == other.state
+            && self.transaction_xdr == other.transaction_xdr
+            && self.transaction_hash == other.transaction_hash
+            && self.request_hash == other.request_hash
+            && self.simulation_data == other.simulation_data
+            && self.created_at == other.created_at
+            && self.expires_at == other.expires_at
+    }
+}
+impl Eq for PreparedOperation {}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DetachedSignature {
@@ -501,6 +545,17 @@ pub fn verify_policy(
 ) -> Result<()> {
     let t = transfer_from_request(c, r)?;
     let policy = allowit_policy_sdk::compile_stellar_policy(&c.policy_source).map_err(err)?;
+    if c.route == WalletRoute::Native
+        && (policy.uses_named_state() || !policy.explicit_engine_checks.is_empty())
+    {
+        return Err(
+            "Classic/native custody cannot enforce named-state or shared-engine policy calls"
+                .into(),
+        );
+    }
+    if c.route == WalletRoute::Odc && policy.requires_native_preflight() {
+        return Err("Native policy requires authoritative execution preflight".into());
+    }
     if policy.source_hash != c.source_hash
         || !policy.evaluate(&allowit_policy_sdk::StellarPolicyContext {
             asset: c.asset.clone(),
@@ -546,6 +601,7 @@ fn odc_request(
     state: &TrustedState,
     t: &Transfer,
     expires: u64,
+    legacy_revision: bool,
 ) -> Result<ScVal> {
     let args = transfer_args(c, t)?.to_xdr(limits()).map_err(err)?;
     let invocation = value_map(vec![
@@ -561,10 +617,24 @@ fn odc_request(
         ("policy_instance", value_bytes(&c.policy_instance)?),
         ("operation_id", value_bytes(&r.operation.nonce)?),
         ("nonce", ScVal::U64(state.nonce)),
-        ("revision", ScVal::U64(state.revision)),
+        (
+            if legacy_revision {
+                "revision"
+            } else {
+                "deployment_version"
+            },
+            ScVal::U64(state.deployment_version),
+        ),
         ("expires_at", ScVal::U64(expires)),
         ("invocation", invocation),
     ])
+}
+#[derive(Clone, Copy)]
+enum PacketUse {
+    Current,
+    Retained,
+    RetainedRevision,
+    NativePreflight,
 }
 fn build(
     c: &WalletConfig,
@@ -573,8 +643,19 @@ fn build(
     now: u64,
     expires: u64,
     retained_native_lower_bound: bool,
-    admit_policy: bool,
+    packet: PacketUse,
 ) -> Result<Transaction> {
+    let admit_policy = matches!(packet, PacketUse::Current);
+    let legacy_revision = matches!(packet, PacketUse::RetainedRevision);
+    if c.route == WalletRoute::Odc {
+        if legacy_revision {
+            if admit_policy || state.contract_version.is_some() {
+                return Err("Legacy ODC packets are read-only".into());
+            }
+        } else if state.contract_version != Some(1) {
+            return Err("Unsupported policy contract version".into());
+        }
+    }
     let t = transfer_from_request(c, r)?;
     if admit_policy {
         verify_policy(c, r, state, now)?;
@@ -624,7 +705,7 @@ fn build(
                 host_function: HostFunction::InvokeContract(InvokeContractArgs {
                     contract_address: address(&c.wallet)?,
                     function_name: ScSymbol(b"execute".to_vec().try_into().map_err(err)?),
-                    args: vec![odc_request(c, r, state, &t, expires)?]
+                    args: vec![odc_request(c, r, state, &t, expires, legacy_revision)?]
                         .try_into()
                         .map_err(err)?,
                 }),
@@ -634,7 +715,7 @@ fn build(
                         function: SorobanAuthorizedFunction::ContractFn(InvokeContractArgs {
                             contract_address: address(&c.wallet)?,
                             function_name: ScSymbol(b"execute".to_vec().try_into().map_err(err)?),
-                            args: vec![odc_request(c, r, state, &t, expires)?]
+                            args: vec![odc_request(c, r, state, &t, expires, legacy_revision)?]
                                 .try_into()
                                 .map_err(err)?,
                         }),
@@ -695,7 +776,7 @@ pub fn prepare(
     now: u64,
     expires_at: u64,
 ) -> Result<PreparedOperation> {
-    prepare_with_bounds(c, r, state, now, expires_at, false, true)
+    prepare_with_bounds(c, r, state, now, expires_at, false, PacketUse::Current)
 }
 fn prepare_with_bounds(
     c: &WalletConfig,
@@ -704,7 +785,7 @@ fn prepare_with_bounds(
     now: u64,
     expires_at: u64,
     retained_native_lower_bound: bool,
-    admit_policy: bool,
+    packet: PacketUse,
 ) -> Result<PreparedOperation> {
     let tx = build(
         c,
@@ -713,7 +794,7 @@ fn prepare_with_bounds(
         now,
         expires_at,
         retained_native_lower_bound,
-        admit_policy,
+        packet,
     )?;
     Ok(PreparedOperation {
         version: 1,
@@ -729,14 +810,74 @@ fn prepare_with_bounds(
         simulation_data: None,
         created_at: now,
         expires_at,
+        native_preflight: None,
     })
+}
+fn needs_native_preflight(c: &WalletConfig) -> Result<bool> {
+    Ok(c.route == WalletRoute::Odc
+        && allowit_policy_sdk::compile_stellar_policy(&c.policy_source)
+            .map_err(err)?
+            .requires_native_preflight())
+}
+fn preflight_binding(p: &PreparedOperation) -> Result<[u8; 32]> {
+    Ok(hash(serde_json::to_vec(p).map_err(err)?))
+}
+pub(crate) fn record_native_preflight(p: &mut PreparedOperation) -> Result<()> {
+    p.native_preflight = Some(NativePreflight {
+        binding: preflight_binding(p)?,
+    });
+    Ok(())
+}
+pub(crate) fn prepare_for_native_preflight(
+    c: &WalletConfig,
+    r: &ExecutionRequest,
+    state: &TrustedState,
+    now: u64,
+    expires_at: u64,
+) -> Result<PreparedOperation> {
+    let compiled = allowit_policy_sdk::compile_stellar_policy(&c.policy_source).map_err(err)?;
+    if c.source_hash != compiled.source_hash {
+        return Err("Compiled policy source identity differs".into());
+    }
+    if c.route != WalletRoute::Odc {
+        return prepare(c, r, state, now, expires_at);
+    }
+    if state.policy_state.is_none() {
+        return Err("Trusted native Grant and spent observations are required".into());
+    }
+    prepare_with_bounds(
+        c,
+        r,
+        state,
+        now,
+        expires_at,
+        false,
+        PacketUse::NativePreflight,
+    )
+}
+fn validate_signing_policy(p: &PreparedOperation, now: u64) -> Result<()> {
+    if needs_native_preflight(&p.config)? {
+        let marker = p
+            .native_preflight
+            .as_ref()
+            .ok_or("Native policy preflight is required before new signing")?;
+        if marker.binding != preflight_binding(p)? {
+            return Err("Native preflight no longer binds this exact operation".into());
+        }
+        Ok(())
+    } else {
+        verify_policy(&p.config, &p.request, &p.state, now)
+    }
 }
 /// Rebuild every authorization field before signing. Caller-supplied prepared metadata is not trusted.
 pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
+    if p.config.route == WalletRoute::Odc && p.state.contract_version != Some(1) {
+        return Err("Legacy or unsupported ODC packets cannot authorize execution".into());
+    }
     if p.version != 1 || p.created_at > now || now >= p.expires_at {
         return Err("Prepared operation is stale".into());
     }
-    verify_policy(&p.config, &p.request, &p.state, p.created_at)?;
+    validate_signing_policy(p, p.created_at)?;
     validate_retained_prepared(p)
 }
 /// Verify retained transport and effect identity for read-only history or recovery.
@@ -762,7 +903,11 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
         p.created_at,
         p.expires_at,
         retained_native_lower_bound,
-        false,
+        if retained_revision_packet(p)? {
+            PacketUse::RetainedRevision
+        } else {
+            PacketUse::Retained
+        },
     )?;
     if let Some(data) = &p.simulation_data {
         expected = attach_simulation(&expected, data)?;
@@ -771,6 +916,45 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
         return Err("Prepared operation changed".into());
     }
     Ok(())
+}
+// Canonical main emitted revision packets before contract release metadata existed.
+// This private decoder permits only original-byte status/recovery verification.
+fn retained_revision_packet(p: &PreparedOperation) -> Result<bool> {
+    if p.config.route != WalletRoute::Odc {
+        return Ok(false);
+    }
+    let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+        return Err("Invalid retained envelope".into());
+    };
+    let Some(Operation {
+        body: OperationBody::InvokeHostFunction(op),
+        ..
+    }) = env.tx.operations.first()
+    else {
+        return Err("Invalid retained ODC operation".into());
+    };
+    let HostFunction::InvokeContract(call) = &op.host_function else {
+        return Err("Invalid retained ODC call".into());
+    };
+    let Some(ScVal::Map(Some(fields))) = call.args.first() else {
+        return Err("Invalid retained ODC request".into());
+    };
+    let keys: Vec<_> = fields
+        .iter()
+        .filter_map(|f| match &f.key {
+            ScVal::Symbol(k) => Some(k.0.as_slice()),
+            _ => None,
+        })
+        .collect();
+    match (
+        p.state.contract_version,
+        keys.contains(&b"revision".as_slice()),
+        keys.contains(&b"deployment_version".as_slice()),
+    ) {
+        (None, true, false) => Ok(true),
+        (Some(1), false, true) => Ok(false),
+        _ => Err("Unsupported retained ODC contract format".into()),
+    }
 }
 fn native_lower_bound(p: &PreparedOperation) -> Result<u64> {
     let TransactionEnvelope::Tx(envelope) = read(&p.transaction_xdr)? else {
@@ -790,7 +974,7 @@ fn current_authorization_bounds(p: &PreparedOperation) -> Result<()> {
 pub fn sign(p: &PreparedOperation, seed: &[u8; 32], now: u64) -> Result<DetachedSignature> {
     validate_prepared(p, now)?;
     current_authorization_bounds(p)?;
-    verify_policy(&p.config, &p.request, &p.state, now)?;
+    validate_signing_policy(p, now)?;
     if p.config.route == WalletRoute::Odc && p.simulation_data.is_none() {
         return Err("ODC resource simulation is required before signing".into());
     }
@@ -922,8 +1106,15 @@ pub fn authorize(
     })
 }
 pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
-    validate_prepared(&s.prepared, now)?;
-    validate_retained_signed(s)
+    if s.prepared.state.contract_version == Some(1) && needs_native_preflight(&s.prepared.config)? {
+        if s.prepared.created_at > now || now >= s.prepared.expires_at {
+            return Err("Signed operation is stale".into());
+        }
+        validate_retained_signed(s)
+    } else {
+        validate_prepared(&s.prepared, now)?;
+        validate_retained_signed(s)
+    }
 }
 /// Verify an original signed packet without reauthorizing retired policy source.
 /// Callers must compare their durable original identity and use it only for status/recovery.

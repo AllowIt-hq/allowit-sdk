@@ -1,6 +1,6 @@
 //! Static native-Rust lowering for the admitted Stellar transfer policy profile.
 //! The custody artifact contains generated checks, never an IR interpreter.
-use crate::{CompileError, Expr, Statement, compile};
+use crate::{CompileError, Expr, PolicyKey, PolicyScalar, Statement, compile};
 use std::collections::BTreeMap;
 
 pub const STELLAR_ARGUMENT_SCHEMA: &[u8] = b"allowit.stellar.sep41_transfer.v1:ScValMap(amount:i128,from:Address,to:Address,token:Address)";
@@ -59,11 +59,17 @@ pub struct StellarPolicy {
     pub rust_source: String,
     steps: Vec<Step>,
     mandatory: Vec<Guard>,
+    pub property_keys: Vec<PolicyKey>,
+    pub grant_keys: Vec<PolicyKey>,
+    pub engine_checks: Vec<String>,
+    pub explicit_engine_checks: Vec<String>,
+    pub placement_manifest: crate::PlacementManifest,
+    functional: Option<crate::stellar_functional::FunctionalPolicy>,
 }
 fn unsupported() -> CompileError {
     CompileError::new(
         "UNSUPPORTED_STELLAR_POLICY",
-        "The native Stellar transfer profile cannot enforce this source expression. Use admitted local guards.",
+        "The native Stellar transfer profile cannot enforce this expression. Use its admitted native primitives.",
     )
 }
 fn digest(bytes: &[u8]) -> [u8; 32] {
@@ -377,67 +383,200 @@ fn run(block: &[Step], c: &StellarPolicyContext) -> Result<Option<()>, ()> {
     }
     Ok(None)
 }
-fn unit_code(condition: String) -> String {
-    format!("if {condition} {{ Ok::<(), ()>(()) }} else {{ Err::<(), ()>(()) }}")
-}
-fn code(guard: &Guard) -> String {
+fn method(guard: &Guard) -> Option<&'static str> {
     match guard {
-        Guard::Pass => "Ok::<(), ()>(())".into(),
-        Guard::Fail => "Err::<(), ()>(())".into(),
-        Guard::Boolean(v) => format!("Ok::<bool, ()>({v})"),
-        Guard::Transaction(limit, token) => unit_code(format!(
-            "ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 && ctx.amount <= {limit}i128"
-        )),
-        Guard::AmountAtMost(limit, token) => format!(
-            "if ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 {{ Ok::<bool, ()>(ctx.amount <= {limit}i128) }} else {{ Err::<bool, ()>(()) }}"
-        ),
-        Guard::Daily(limit, token) => unit_code(format!(
-            "ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7 && ctx.now / 86400 >= ctx.spent_day && (if ctx.now / 86400 == ctx.spent_day {{ ctx.spent_daily }} else {{ 0i128 }}).checked_add(ctx.amount).is_some_and(|next| next <= {limit}i128)"
-        )),
-        Guard::Recipient(to) => unit_code(format!(
-            "ctx.recipient == soroban_sdk::Address::from_str(ctx.recipient.env(), {to:?})"
-        )),
-        Guard::Asset(token) => unit_code(format!(
-            "ctx.token == soroban_sdk::String::from_str(ctx.token.env(), {token:?}) && ctx.decimals == 7"
-        )),
-        Guard::Actions(a) => {
-            unit_code(a.iter().any(|v| v == "stellar::sep41_transfer").to_string())
+        Guard::Transaction(..) => Some("cap_per_transaction"),
+        Guard::Daily(..) => Some("cap_per_day"),
+        Guard::AmountAtMost(..) => Some("amount_at_most"),
+        Guard::Recipient(..) => Some("recipient_is"),
+        Guard::Asset(..) => Some("asset_label"),
+        Guard::Actions(..) => Some("actions"),
+        _ => None,
+    }
+}
+fn plans(
+    steps: &[Step],
+    options: &crate::StellarCompileOptions,
+    out: &mut Vec<crate::CheckPlacement>,
+) -> Result<(), CompileError> {
+    fn guard(
+        g: &Guard,
+        options: &crate::StellarCompileOptions,
+        out: &mut Vec<crate::CheckPlacement>,
+    ) -> Result<(), CompileError> {
+        if let Some(method) = method(g) {
+            out.push(crate::stellar_placement::plan(
+                method,
+                crate::stellar_placement::authority(method).ok_or_else(unsupported)?,
+                crate::RulePlacement::Auto,
+                options,
+            )?);
         }
-        Guard::Not(v) => format!("Ok::<bool, ()>(!({{ {} }}?))", code(v)),
+        match g {
+            Guard::Not(v) => guard(v, options, out)?,
+            Guard::And(a, b) | Guard::Or(a, b) => {
+                guard(a, options, out)?;
+                guard(b, options, out)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    for step in steps {
+        match step {
+            Step::Check(g) | Step::Return(g) => guard(g, options, out)?,
+            Step::If(g, a, b) => {
+                guard(g, options, out)?;
+                plans(a, options, out)?;
+                plans(b, options, out)?;
+            }
+        }
+    }
+    Ok(())
+}
+fn rule_code(
+    method: &str,
+    args: &[String],
+    predicate: bool,
+    manifest: &crate::PlacementManifest,
+) -> String {
+    let selected = manifest
+        .checks
+        .iter()
+        .find(|p| p.rule_id == method)
+        .map(|p| p.selected)
+        .expect("native rule has a placement");
+    let call = if selected == crate::RulePlacement::Local {
+        format!(
+            "allowit_policy_rules::{method}(ctx.asset.env().clone(),host.request(),EngineState{{grant:grant.clone(),spent:working_spent.clone()}}{}).map_err(|_|())?",
+            args.iter().map(|a| format!(",{a}")).collect::<String>()
+        )
+    } else {
+        let mut p = "{ let mut params=soroban_sdk::Vec::<soroban_sdk::Val>::new(ctx.asset.env());"
+            .to_string();
+        for arg in args {
+            p += &format!("params.push_back(({arg}).into_val(ctx.asset.env()));");
+        }
+        p += &format!("host.engine_check({method:?},working_spent,params)? }}");
+        p
+    };
+    if predicate {
+        format!("{{let result={call};Ok::<bool,()>(result.approval)}}")
+    } else {
+        format!(
+            "{{let result={call};if result.approval{{*working_spent=result.spent;Ok::<(),()>(())}}else{{Err::<(),()>(())}}}}"
+        )
+    }
+}
+fn code(g: &Guard, m: &crate::PlacementManifest) -> String {
+    match g {
+        Guard::Pass => "Ok::<(),()>(())".into(),
+        Guard::Fail => "Err::<(),()>(())".into(),
+        Guard::Boolean(v) => format!("Ok::<bool,()>({v})"),
+        Guard::Transaction(limit, token) => rule_code(
+            "cap_per_transaction",
+            &[
+                format!("{limit}i128"),
+                format!("soroban_sdk::String::from_str(ctx.asset.env(),{token:?})"),
+            ],
+            false,
+            m,
+        ),
+        Guard::Daily(limit, token) => rule_code(
+            "cap_per_day",
+            &[
+                format!("{limit}i128"),
+                format!("soroban_sdk::String::from_str(ctx.asset.env(),{token:?})"),
+            ],
+            false,
+            m,
+        ),
+        Guard::AmountAtMost(limit, token) => rule_code(
+            "amount_at_most",
+            &[
+                format!("{limit}i128"),
+                format!("soroban_sdk::String::from_str(ctx.asset.env(),{token:?})"),
+            ],
+            true,
+            m,
+        ),
+        Guard::Recipient(to) => rule_code(
+            "recipient_is",
+            &[format!(
+                "soroban_sdk::Address::from_str(ctx.asset.env(),{to:?})"
+            )],
+            false,
+            m,
+        ),
+        Guard::Asset(token) => rule_code(
+            "asset_label",
+            &[format!(
+                "soroban_sdk::String::from_str(ctx.asset.env(),{token:?})"
+            )],
+            false,
+            m,
+        ),
+        Guard::Actions(actions) => {
+            let mut v =
+                "{let mut values=soroban_sdk::Vec::<soroban_sdk::String>::new(ctx.asset.env());"
+                    .to_string();
+            for action in actions {
+                v += &format!(
+                    "values.push_back(soroban_sdk::String::from_str(ctx.asset.env(),{action:?}));"
+                );
+            }
+            v += "values}";
+            rule_code("actions", &[v], false, m)
+        }
+        Guard::Not(v) => format!("Ok::<bool,()>(!({{ {} }}?))", code(v, m)),
         Guard::And(a, b) => format!(
-            "Ok::<bool, ()>(({{ {} }}?) && ({{ {} }}?))",
-            code(a),
-            code(b)
+            "Ok::<bool,()>(({{ {} }}?)&&({{ {} }}?))",
+            code(a, m),
+            code(b, m)
         ),
         Guard::Or(a, b) => format!(
-            "Ok::<bool, ()>(({{ {} }}?) || ({{ {} }}?))",
-            code(a),
-            code(b)
+            "Ok::<bool,()>(({{ {} }}?)||({{ {} }}?))",
+            code(a, m),
+            code(b, m)
         ),
     }
 }
-fn block_code(steps: &[Step], depth: usize) -> String {
+fn block_code(steps: &[Step], depth: usize, manifest: &crate::PlacementManifest) -> String {
     let mut out = String::new();
     let pad = "    ".repeat(depth);
     for step in steps {
         match step {
-            Step::Check(g) => out += &format!("{pad}let _ = {{ {} }}?;\n", code(g)),
-            Step::Return(g) => out += &format!("{pad}return {{ {} }};\n", code(g)),
+            Step::Check(g) => out += &format!("{pad}let _ = {{ {} }}?;\n", code(g, manifest)),
+            Step::Return(g) => out += &format!("{pad}return {{ {} }};\n", code(g, manifest)),
             Step::If(g, a, b) => {
                 out += &format!(
-                    "{pad}if {{ {} }}? {{\n{}{pad}}} else {{\n{}{pad}}}\n",
-                    code(g),
-                    block_code(a, depth + 1),
-                    block_code(b, depth + 1)
+                    "{pad}if {{ {} }}? {{\n{}{pad}}}else{{\n{}{pad}}}\n",
+                    code(g, manifest),
+                    block_code(a, depth + 1, manifest),
+                    block_code(b, depth + 1, manifest)
                 )
             }
         }
     }
     out
 }
+/// Offline evaluation status. Native maps and selected checks require actual policy preflight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StellarEvaluation {
+    Approved,
+    Denied,
+    RequiresNativeEngine,
+}
 /// Compile the same authored source into a bounded static Stellar policy module.
 /// Unsupported source is rejected before an artifact or signing approval is produced.
 pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileError> {
+    compile_stellar_policy_with_options(source, &crate::StellarCompileOptions::default())
+}
+/// Compile source with deterministic eligible-rule placement and an auditable manifest.
+pub fn compile_stellar_policy_with_options(
+    source: &str,
+    options: &crate::StellarCompileOptions,
+) -> Result<StellarPolicy, CompileError> {
     let parsed = syn::parse_file(source).map_err(|_| unsupported())?;
     if !parsed.items.iter().any(|i|matches!(i,syn::Item::Fn(f) if f.sig.ident=="_execute"&&matches!(f.vis,syn::Visibility::Inherited))){return Err(unsupported());}
     // Readability helpers lower to the same IR as raw integer comparisons. Admit
@@ -459,7 +598,7 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
         }
         fn visit_expr_field(&mut self, node: &'ast syn::ExprField) {
             if self.guarded == 0
-                && matches!(&*node.base,syn::Expr::Path(p) if p.path.is_ident("ctx"))
+                && matches!(&*node.base,syn::Expr::Path(p) if (p.path.is_ident("ctx")||p.path.is_ident("request")))
             {
                 self.raw = true;
             }
@@ -474,7 +613,64 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
     if fields.raw {
         return Err(unsupported());
     }
+    let native_entry = parsed
+        .items
+        .iter()
+        .any(|item| matches!(item,syn::Item::Fn(f) if f.sig.inputs.len()==3));
     let compiled = compile(source)?;
+    if native_entry {
+        let functional =
+            crate::stellar_functional::FunctionalPolicy::compile(&compiled.ir.statements, options)?;
+        let source_hash = digest(source.as_bytes());
+        let argument_schema_hash = digest(STELLAR_ARGUMENT_SCHEMA);
+        let placement_manifest =
+            crate::PlacementManifest::new(options, functional.placements.clone());
+        let manifest = serde_json::to_string(&placement_manifest).map_err(|_| unsupported())?;
+        let rust_source = format!(
+            "// Generated from the exact authored source by allowit-sdk.\n// Placement manifest: {manifest}\n#[allow(unused_imports)]\nuse allowit_wallet_protocol::{{PolicyContext,Grant,Spent,EngineState,PolicyEngine,PolicyValue}};\npub const SOURCE_PROFILE: &str = \"allowit-stellar-transfer-v1\";\npub const SOURCE_PROFILE_VERSION:u32=1;\npub const ADMITTED_OPERATION:&str=\"stellar::sep41_transfer\";\npub const SOURCE_HASH:[u8;32]={source_hash:?};\npub const ARGUMENT_SCHEMA_HASH:[u8;32]={argument_schema_hash:?};\npub fn execute(ctx:&PolicyContext,grant:&Grant,state:&EngineState,host:&impl PolicyEngine)->Result<Spent,()> {{ if ctx.amount<=0 {{return Err(());}} _execute(ctx,grant,state,host) }}\n#[allow(unreachable_code,unused_variables)]\nfn _execute(ctx:&PolicyContext,grant:&Grant,state:&EngineState,host:&impl PolicyEngine)->Result<Spent,()> {{\n{}    Err(())\n}}\n",
+            functional.rust_body()
+        );
+        let engine_checks = placement_manifest
+            .checks
+            .iter()
+            .filter(|c| c.selected == crate::RulePlacement::Shared)
+            .map(|c| c.rule_id.clone())
+            .collect();
+        let explicit_engine_checks = placement_manifest
+            .checks
+            .iter()
+            .filter(|c| c.requested == crate::RulePlacement::Shared)
+            .map(|c| c.rule_id.clone())
+            .collect();
+        return Ok(StellarPolicy {
+            source_profile: StellarSourceProfile {
+                profile: STELLAR_SOURCE_PROFILE.into(),
+                version: 1,
+                source_hash,
+                public_entrypoint: "execute".into(),
+                private_entrypoint: "_execute".into(),
+                argument_schema_digest: argument_schema_hash,
+                admitted_operations: vec!["stellar::sep41_transfer".into()],
+                permitted_effects: vec![
+                    "bound_asset_debit".into(),
+                    "recipient_credit".into(),
+                    "policy_spent_output".into(),
+                ],
+            },
+            source_hash,
+            argument_schema_hash,
+            rust_source,
+            property_keys: functional.property_keys.clone(),
+            grant_keys: functional.grant_keys.clone(),
+            steps: Vec::new(),
+            mandatory: Vec::new(),
+            engine_checks,
+            explicit_engine_checks,
+            functional: Some(functional),
+            placement_manifest,
+        });
+    }
+
     let steps = lower(&compiled.ir.statements, &mut BTreeMap::new())?;
     let mut mandatory = Vec::new();
     for s in &compiled.ir.statements {
@@ -487,16 +683,25 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
             mandatory.push(native_guard(value, &BTreeMap::new())?);
         }
     }
+    let mut checks = Vec::new();
+    plans(&steps, options, &mut checks)?;
+    let placement_manifest = crate::PlacementManifest::new(options, checks);
+    let engine_checks = placement_manifest
+        .checks
+        .iter()
+        .filter(|c| c.selected == crate::RulePlacement::Shared)
+        .map(|c| c.rule_id.clone())
+        .collect();
     let source_hash = digest(source.as_bytes());
     let argument_schema_hash = digest(STELLAR_ARGUMENT_SCHEMA);
+    let manifest = serde_json::to_string(&placement_manifest).map_err(|_| unsupported())?;
     let mut rust_source = format!(
-        "// Generated from the exact authored source by allowit-sdk.\nuse allowit_wallet_protocol::PolicyContext;\npub const SOURCE_PROFILE: &str = \"allowit-stellar-transfer-v1\";\npub const SOURCE_PROFILE_VERSION: u32 = 1;\npub const ADMITTED_OPERATION: &str = \"stellar::sep41_transfer\";\npub const SOURCE_HASH: [u8; 32] = {source_hash:?};\npub const ARGUMENT_SCHEMA_HASH: [u8; 32] = {argument_schema_hash:?};\npub fn execute(ctx: &PolicyContext) -> bool {{\n    if ctx.amount <= 0 || ctx.spent_daily < 0 || ctx.spent_total < ctx.spent_daily {{ return false; }}\n    let result = (|| -> Result<(), ()> {{\n"
+        "// Generated from the exact authored source by allowit-sdk.\n// Placement manifest: {manifest}\n#[allow(unused_imports)]\nuse allowit_wallet_protocol::{{PolicyContext,Grant,Spent,EngineState,PolicyEngine}};\n#[allow(unused_imports)]\nuse soroban_sdk::IntoVal;\npub const SOURCE_PROFILE:&str=\"allowit-stellar-transfer-v1\";\npub const SOURCE_PROFILE_VERSION:u32=1;\npub const ADMITTED_OPERATION:&str=\"stellar::sep41_transfer\";\npub const SOURCE_HASH:[u8;32]={source_hash:?};\npub const ARGUMENT_SCHEMA_HASH:[u8;32]={argument_schema_hash:?};\npub fn execute(ctx:&PolicyContext,grant:&Grant,state:&EngineState,host:&impl PolicyEngine)->Result<Spent,()> {{\n    if ctx.amount<=0{{return Err(());}}\n    let mut working_spent=state.spent.clone();\n    _execute(ctx,grant,&mut working_spent,host)?;\n    Ok(working_spent)\n}}\n#[allow(unused_variables,unreachable_code)]\nfn _execute(ctx:&PolicyContext,grant:&Grant,working_spent:&mut Spent,host:&impl PolicyEngine)->Result<(),()>{{\n"
     );
     for guard in &mandatory {
-        rust_source += &format!("        let _ = {{ {} }}?;\n", code(guard));
+        rust_source += &format!("    let _ = {{ {} }}?;\n", code(guard, &placement_manifest));
     }
-    rust_source += "        _execute(ctx)\n    })();\n    result.is_ok()\n}\n#[allow(unreachable_code, unused_variables)]\nfn _execute(ctx: &PolicyContext) -> Result<(), ()> {\n";
-    rust_source += &block_code(&steps, 1);
+    rust_source += &block_code(&steps, 1, &placement_manifest);
     rust_source += "    Err(())\n}\n";
     Ok(StellarPolicy {
         source_profile: StellarSourceProfile {
@@ -514,14 +719,65 @@ pub fn compile_stellar_policy(source: &str) -> Result<StellarPolicy, CompileErro
         rust_source,
         steps,
         mandatory,
+        property_keys: Vec::new(),
+        grant_keys: Vec::new(),
+        engine_checks,
+        explicit_engine_checks: Vec::new(),
+        placement_manifest,
+        functional: None,
     })
 }
 impl StellarPolicy {
-    pub fn evaluate(&self, c: &StellarPolicyContext) -> bool {
+    pub fn evaluate_classic(&self, c: &StellarPolicyContext) -> bool {
+        if self.functional.is_some() {
+            return false;
+        }
         c.amount > 0
             && c.spent_daily >= 0
             && c.spent_total >= c.spent_daily
             && self.mandatory.iter().all(|g| check(g, c).is_ok())
             && matches!(run(&self.steps, c), Ok(Some(())))
+    }
+
+    /// Compatibility evaluator for existing classic-route scalar policies.
+    pub fn evaluate(&self, c: &StellarPolicyContext) -> bool {
+        self.evaluate_classic(c)
+    }
+    /// This flag is independent of local/shared authoring placement.
+    pub fn requires_native_preflight(&self) -> bool {
+        self.functional.is_some() || !self.placement_manifest.checks.is_empty()
+    }
+    pub fn uses_named_state(&self) -> bool {
+        self.functional.is_some()
+    }
+    pub fn evaluation_with_state(
+        &self,
+        c: &StellarPolicyContext,
+        properties: &mut BTreeMap<String, PolicyScalar>,
+        grant: &BTreeMap<String, PolicyScalar>,
+    ) -> StellarEvaluation {
+        if !self.placement_manifest.checks.is_empty() {
+            return StellarEvaluation::RequiresNativeEngine;
+        }
+        if let Some(policy) = &self.functional {
+            return if c.amount > 0 && policy.evaluate(properties, grant) {
+                StellarEvaluation::Approved
+            } else {
+                StellarEvaluation::Denied
+            };
+        }
+        if self.evaluate_classic(c) {
+            StellarEvaluation::Approved
+        } else {
+            StellarEvaluation::Denied
+        }
+    }
+    pub fn evaluate_with_state(
+        &self,
+        c: &StellarPolicyContext,
+        properties: &mut BTreeMap<String, PolicyScalar>,
+        grant: &BTreeMap<String, PolicyScalar>,
+    ) -> bool {
+        self.evaluation_with_state(c, properties, grant) == StellarEvaluation::Approved
     }
 }

@@ -1,4 +1,5 @@
 pub use allowit_native as native;
+pub use allowit_policy_sdk::admin;
 pub use allowit_stellar_wallet as stellar;
 mod args;
 mod client;
