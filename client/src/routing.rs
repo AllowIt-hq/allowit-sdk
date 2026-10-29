@@ -97,6 +97,47 @@ pub(crate) fn extract(args: &[String]) -> Result<(Vec<String>, Option<String>)> 
             network = Some(normalize(bound)?.to_owned());
         }
     }
+    if network.is_none()
+        && rest
+            .first()
+            .is_some_and(|s| matches!(s.as_str(), "show" | "eval" | "exec" | "status"))
+    {
+        let parsed = crate::args::parse(&rest[0], &rest[1..])?;
+        if let Some(selector) = parsed.pos.first() {
+            let path = std::path::Path::new(".allowit-tempo/executor.json");
+            if path.exists() {
+                let policy = allowit_tempo::describe(path)?;
+                if policy["id"].as_str() == Some(selector.as_str()) {
+                    let token = allowit_client_core::config::env_value("ALLOWIT_TOKEN");
+                    let directory = allowit_client_core::config::env_value("ALLOWIT_POLICY_DIR");
+                    let context = std::path::Path::new(if directory.is_empty() {
+                        ".allowit"
+                    } else {
+                        &directory
+                    })
+                    .join("context.json");
+                    let native_matches = if context.exists() {
+                        let c: serde_json::Value =
+                            crate::typed_request::read_request_file(&context)?;
+                        c["policyId"].as_str() == Some(selector.as_str())
+                    } else {
+                        false
+                    };
+                    if native_matches || token.starts_with("allowit-stellar-v1.") {
+                        return Err(Error::config(
+                            "Multiple wallet bindings match this operation; select --network explicitly",
+                        ));
+                    }
+                    network = Some(
+                        normalize(policy["network"].as_str().ok_or_else(|| {
+                            Error::config("Imported Tempo policy lacks network")
+                        })?)?
+                        .to_owned(),
+                    );
+                }
+            }
+        }
+    }
     Ok((rest, network))
 }
 pub(crate) fn tempo_action(

@@ -123,10 +123,13 @@ pub fn signing_url(
         return Err(Error::usage("Deployment handoff exceeds browser bounds"));
     }
     let origin = crate::config::parse_origin(origin)?;
-    Ok(format!(
-        "{origin}/?chain=solana#allowit-deploy={}",
-        URL_SAFE_NO_PAD.encode(bytes)
-    ))
+    let encoded = URL_SAFE_NO_PAD.encode(bytes);
+    if encoded.len() + "#allowit-deploy=".len() > 65536 {
+        return Err(Error::usage(
+            "Deployment handoff exceeds browser fragment bounds",
+        ));
+    }
+    Ok(format!("{origin}/?chain=solana#allowit-deploy={encoded}"))
 }
 
 /// Reads the public review fingerprint from a locally constructed handoff URL.
