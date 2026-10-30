@@ -289,6 +289,18 @@ impl AccountState {
         Ok(())
     }
 }
+/// Protected accounting history records successful operations even when selected Grant inputs are Null.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativePolicyHistory {
+    pub calls: u64,
+    pub spent: i128,
+    pub unpriced: bool,
+    pub day: u64,
+    pub day_spent: i128,
+    pub day_total: i128,
+    pub day_unpriced: bool,
+}
 /// Complete native policy inputs. Both maps preserve arbitrary ScVal values.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -299,6 +311,9 @@ pub struct PolicyStateSnapshot {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrustedState {
+    /// Conservative native history; server actual-settlement accounting remains separate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<NativePolicyHistory>,
     /// Executable release metadata. Legacy code has no advertised release version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_version: Option<u32>,

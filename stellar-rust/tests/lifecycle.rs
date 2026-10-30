@@ -26,6 +26,35 @@ fn wf(value: &str) -> AccountId {
         _ => panic!(),
     }
 }
+const CANONICAL_NATIVE_SOURCE: &str = "use allowit::prelude::*; async fn _execute(ctx:&Context)->PolicyResult {allowit::day_spent_cap(grant::day_spent_cap)?;allowit::spent_cap(grant::spent_cap)?;allowit::call_cap(grant::call_cap)?;Ok(())}";
+fn refresh_binding(c: &mut WalletConfig) {
+    c.source_hash = hash(&c.policy_source);
+    c.prefix_digest = if c.route == WalletRoute::PolicyWallet
+        && c.policy_engine != Some(PolicyEngine::CustomPolicy)
+    {
+        Some(
+            prefix_digest(
+                c,
+                &allowit_policy_sdk::source_updates::initial_rule_prefix(&c.policy_source).unwrap(),
+            )
+            .unwrap(),
+        )
+    } else {
+        None
+    };
+}
+fn empty_history() -> stellar_xdr::ScVal {
+    use stellar_xdr::*;
+    sc_map(vec![
+        ("calls", ScVal::U64(0)),
+        ("spent", ScVal::I128(Int128Parts { hi: 0, lo: 0 })),
+        ("unpriced", ScVal::Bool(false)),
+        ("day", ScVal::U64(1)),
+        ("day_spent", ScVal::I128(Int128Parts { hi: 0, lo: 0 })),
+        ("day_total", ScVal::I128(Int128Parts { hi: 0, lo: 0 })),
+        ("day_unpriced", ScVal::Bool(false)),
+    ])
+}
 fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, TrustedState) {
     let owner = account_for_seed(&[1; 32]);
     let agent = account_for_seed(&[2; 32]);
@@ -58,6 +87,7 @@ fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, T
         max_fee_stroops: 50_000,
     };
     c.asset = sac_address(&c.network, &asset_xdr(&c).unwrap()).unwrap();
+    refresh_binding(&mut c);
     let recipient = account_for_seed(&[6; 32]);
     let token = WorkflowAsset::Token(AssetId {
         network: network_id(&c.network).unwrap(),
@@ -144,6 +174,7 @@ fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, T
         }
     };
     let state = TrustedState {
+        history: (route == WalletRoute::PolicyWallet).then_some(NativePolicyHistory::default()),
         contract_version: (route == WalletRoute::PolicyWallet).then_some(1),
         policy_state: (route == WalletRoute::PolicyWallet).then_some(PolicyStateSnapshot {
             grant: NativeValues::default(),
@@ -158,7 +189,7 @@ fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, T
         calls: 0,
         ledger: 100,
         module_digest: c.module_digest,
-        source_hash: c.source_hash,
+        source_hash: c.prefix_digest.unwrap_or(c.source_hash),
         owner: c.owner.clone(),
         agent: c.agent.clone(),
         server: c.server.clone(),
@@ -250,7 +281,7 @@ fn native_classic_payment_has_real_two_party_signatures() {
         else {
             panic!()
         };
-        assert_eq!(
+        assert_ne!(
             tx.tx.memo,
             stellar_xdr::Memo::Hash(stellar_xdr::Hash(r.operation.nonce))
         );
@@ -306,33 +337,88 @@ fn stale_or_changed_payload_cannot_be_signed() {
     signed.transaction_hash[0] ^= 1;
     assert!(validate_signed(&signed, 86401).is_err());
 }
+fn full_context(
+    c: &WalletConfig,
+    r: &ExecutionRequest,
+    state: &TrustedState,
+) -> allowit_policy_sdk::Context {
+    use allowit_policy_sdk::{Context, PolicyRuleFacts, RuleExpense, TrustedPolicyState};
+    let movement = operation_from_request(c, r).unwrap().movement();
+    let mut ctx = Context::default();
+    ctx.network = c.network.clone();
+    ctx.token = c.asset_symbol.clone();
+    ctx.action = "stellar::sep41_transfer".into();
+    ctx.recipient = movement.recipient.clone();
+    ctx.amount_units = movement.amount.try_into().unwrap();
+    ctx.now = 86401;
+    ctx.policy_state = Some(TrustedPolicyState {
+        grant: state
+            .policy_state
+            .as_ref()
+            .map(policy_grant_values)
+            .transpose()
+            .unwrap()
+            .unwrap_or_default(),
+        properties: Default::default(),
+    });
+    ctx.rule_facts = Some(PolicyRuleFacts {
+        operation_id: hex(&r.operation.nonce),
+        grant_available: c.route == WalletRoute::PolicyWallet,
+        amount_units: ctx.amount_units,
+        asset_id: c.asset.clone(),
+        recipient: movement.recipient,
+        now: ctx.now,
+        expense: r.expense.as_ref().map(|e| RuleExpense {
+            spent_units: e.spent_units.try_into().unwrap(),
+            gas_units: e.gas_units.try_into().unwrap(),
+        }),
+    });
+    ctx
+}
 #[test]
-fn classic_caps_keep_exact_local_math_while_odc_requires_native_preflight() {
-    for route in [WalletRoute::Native, WalletRoute::PolicyWallet] {
-        let (mut c, mut r, mut s) = fixture(route, true);
-        c.policy_source="use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { allowit::cap_per_transaction(ctx, \"2\", \"USDC\")?; Ok(()) }".into();
-        c.source_hash = hash(&c.policy_source);
-        s.source_hash = c.source_hash;
-        if c.route == WalletRoute::Native {
-            assert!(prepare(&c, &r, &s, 86401, 86700).is_ok());
-        } else {
-            assert!(
-                prepare(&c, &r, &s, 86401, 86700)
-                    .unwrap_err()
-                    .contains("preflight")
-            );
-        }
-        let ExecutionInput::Instructions(v) = &mut r.input else {
-            panic!()
-        };
-        let NativeInstruction::StellarCall { arguments, .. } = &mut v[0] else {
-            panic!()
-        };
-        arguments[2] = AbiValue::Signed128(20_000_001);
-        r.effect_bounds[0].max_debit = 20_000_001u64.into();
-        r.effect_bounds[0].min_credit = 20_000_001u64.into();
-        assert!(prepare(&c, &r, &s, 86401, 86700).is_err());
-    }
+fn native_full_policy_literal_rules_require_exact_authenticated_context() {
+    let (mut c, mut r, _) = fixture(WalletRoute::Native, false);
+    c.policy_source="use allowit::prelude::*; async fn _execute(ctx:&Context)->PolicyResult{allowit::transaction_cap(20_000_000)?;Ok(())}".into();
+    refresh_binding(&mut c);
+    let (_, _, mut state) = fixture(WalletRoute::Native, false);
+    state.source_hash = c.source_hash;
+    let rpc = AccountRpc {
+        config: c.clone(),
+        account: state.source.clone(),
+        wrong_network: false,
+    };
+    let usage = rpc::NativeAccounting {
+        nonce: state.nonce,
+        deployment_version: state.deployment_version,
+        spent_daily: 0,
+        spent_total: 0,
+        spent_day: 1,
+        calls: 0,
+    };
+    let context = full_context(&c, &r, &state);
+    let prepared =
+        rpc::prepare_with_policy_context(&rpc, &c, &r, Some(usage.clone()), 86401, 86700, &context)
+            .unwrap();
+    assert!(sign(&prepared, &[3; 32], 86401).is_err());
+    assert!(sign_with_policy_context(&prepared, &[3; 32], 86401, &context).is_ok());
+    let mut altered = context.clone();
+    altered.rule_facts.as_mut().unwrap().amount_units += 1;
+    assert!(sign_with_policy_context(&prepared, &[3; 32], 86401, &altered).is_err());
+    let ExecutionInput::Instructions(ref mut v) = r.input else {
+        panic!()
+    };
+    let NativeInstruction::StellarNativeTransfer { stroops, .. } = &mut v[0] else {
+        panic!()
+    };
+    *stroops += 1;
+    r.effect_bounds[0].max_debit = 20_000_001u64.into();
+    r.effect_bounds[0].min_credit = 20_000_001u64.into();
+    let context = full_context(&c, &r, &state);
+    assert!(
+        rpc::prepare_with_policy_context(&rpc, &c, &r, Some(usage), 86401, 86700, &context)
+            .unwrap_err()
+            .contains("TRANSACTION_CAP_EXCEEDED")
+    );
 }
 #[test]
 fn odc_uses_execute_and_exact_module_schema_payload() {
@@ -1143,6 +1229,7 @@ impl rpc::Rpc for PolicyWalletAccountRpc {
                 }
                 let state = sc_map(vec![
                     ("contract_version", ScVal::U32(1)),
+                    ("history", empty_history()),
                     ("paused", ScVal::Bool(self.paused)),
                     (
                         "owner",
@@ -1153,7 +1240,13 @@ impl rpc::Rpc for PolicyWalletAccountRpc {
                     ("asset", ScVal::Address(address(&c.asset)?)),
                     (
                         "source_digest",
-                        ScVal::Bytes(ScBytes(c.source_hash.to_vec().try_into().unwrap())),
+                        ScVal::Bytes(ScBytes(
+                            c.prefix_digest
+                                .unwrap_or(c.source_hash)
+                                .to_vec()
+                                .try_into()
+                                .unwrap(),
+                        )),
                     ),
                     (
                         "rules",
@@ -1183,19 +1276,19 @@ impl rpc::Rpc for PolicyWalletAccountRpc {
                             vec![
                                 ScMapEntry {
                                     key: ScVal::String(ScString(
-                                        b"daily_limit".to_vec().try_into().unwrap(),
+                                        b"day_spent_cap".to_vec().try_into().unwrap(),
                                     )),
                                     val: ScVal::U64(1_000_000_000),
                                 },
                                 ScMapEntry {
                                     key: ScVal::String(ScString(
-                                        b"max_calls".to_vec().try_into().unwrap(),
+                                        b"call_cap".to_vec().try_into().unwrap(),
                                     )),
                                     val: ScVal::U64(10),
                                 },
                                 ScMapEntry {
                                     key: ScVal::String(ScString(
-                                        b"total_limit".to_vec().try_into().unwrap(),
+                                        b"spent_cap".to_vec().try_into().unwrap(),
                                     )),
                                     val: ScVal::U64(1_000_000_000),
                                 },
@@ -1266,7 +1359,10 @@ impl rpc::Rpc for PolicyWalletAccountRpc {
                     ("contract_version", ScVal::U32(1)),
                     ("policy_instance", bytes(c.policy_instance)),
                     ("module_digest", bytes(c.module_digest)),
-                    ("source_digest", bytes(c.source_hash)),
+                    (
+                        "source_digest",
+                        bytes(c.prefix_digest.unwrap_or(c.source_hash)),
+                    ),
                     ("argument_schema_digest", bytes(hash(ARGUMENT_SCHEMA))),
                     (
                         "entrypoint",
@@ -1425,9 +1521,10 @@ fn odc_exact_resource_bound_preauthorization_completes_current_customer_quorum()
 
 #[test]
 fn retained_packet_validation_does_not_recompile_source_or_grant_execution() {
-    let (c, r, state) = fixture(WalletRoute::Native, false);
-    let prepared = prepare(&c, &r, &state, 86401, 86700).unwrap();
-    let mut signed = sign_native(&prepared);
+    let mut signed: SignedOperation = serde_json::from_str(include_str!(
+        "fixtures/canonical-main-9682-native-signed.json"
+    ))
+    .unwrap();
     // Model source metadata from a retired compiler namespace. The already signed
     // native body and effects stay byte-for-byte identical; this is proof, not admission.
     signed.prepared.config.policy_source="use allowit::v1::prelude::*; async fn _execute(ctx:&Context)->PolicyResult { retired_vendor::check(ctx)?; Ok(()) }".into();
@@ -1459,7 +1556,7 @@ fn retained_packet_validation_does_not_recompile_source_or_grant_execution() {
         original
     );
     assert_eq!(
-        rpc::recover(&rpc, &mut store, r.operation.nonce).unwrap(),
+        rpc::recover(&rpc, &mut store, signed.prepared.request.operation.nonce).unwrap(),
         OperationStatus::Confirmed
     );
     assert_eq!(*rpc.calls.lock().unwrap(), vec!["getTransaction"]);
@@ -1604,7 +1701,10 @@ impl rpc::Rpc for AdminRpc {
                     ),
                     ("policy_instance", bytes(c.policy_instance)),
                     ("module_digest", bytes(c.module_digest)),
-                    ("source_digest", bytes(c.source_hash)),
+                    (
+                        "source_digest",
+                        bytes(c.prefix_digest.unwrap_or(c.source_hash)),
+                    ),
                     ("argument_schema_digest", bytes(hash(ARGUMENT_SCHEMA))),
                     (
                         "entrypoint",
@@ -1814,10 +1914,10 @@ fn full_policy_deployment_uses_one_versioned_owner_flow_and_owner_handoff_author
             owner: next_owner.clone(),
             agent: c.agent.clone(),
             server: c.server.clone(),
-            source_digest: c.source_hash,
+            source_digest: c.prefix_digest.unwrap_or(c.source_hash),
             rules: Vec::new(),
             grant: Grant(std::collections::BTreeMap::from([(
-                "daily_cap".into(),
+                "day_spent_cap".into(),
                 stellar_xdr::ScVal::U64(20),
             )])),
             x402_enabled: enabled,
@@ -1895,10 +1995,10 @@ fn enabled_x402_rejects_contract_agents() {
         owner: c.owner.clone(),
         agent: c.wallet.clone(),
         server: c.server.clone(),
-        source_digest: c.source_hash,
+        source_digest: c.prefix_digest.unwrap_or(c.source_hash),
         rules: Vec::new(),
         grant: Grant(std::collections::BTreeMap::from([(
-            "daily_cap".into(),
+            "day_spent_cap".into(),
             stellar_xdr::ScVal::U64(2),
         )])),
         x402_enabled: true,
@@ -2117,11 +2217,11 @@ impl rpc::Rpc for PreflightRpc {
 }
 fn preflight_fixture() -> PreflightRpc {
     let (mut c, r, s) = fixture(WalletRoute::PolicyWallet, true);
-    c.policy_source = include_str!("../../tests/fixtures/stellar-local-state-policy.rs").into();
+    c.policy_source = CANONICAL_NATIVE_SOURCE.into();
     if c.route == WalletRoute::PolicyWallet {
         c.policy_engine = Some(PolicyEngine::CustomPolicy);
     }
-    c.source_hash = hash(&c.policy_source);
+    refresh_binding(&mut c);
     PreflightRpc {
         base: PolicyWalletAccountRpc {
             config: c,
@@ -2319,24 +2419,24 @@ fn exact_pre_task_records_preserve_request_bytes_hashes_signatures_and_status_re
 #[test]
 fn classic_route_clearly_rejects_stateful_engine_calls_without_fake_validation() {
     let (mut c, r, mut state) = fixture(WalletRoute::Native, true);
-    c.policy_source = include_str!("../../tests/fixtures/stellar-local-state-policy.rs").into();
+    c.policy_source = CANONICAL_NATIVE_SOURCE.into();
     if c.route == WalletRoute::PolicyWallet {
         c.policy_engine = Some(PolicyEngine::CustomPolicy);
     }
-    c.source_hash = hash(&c.policy_source);
+    refresh_binding(&mut c);
     state.source_hash = c.source_hash;
     assert!(
         prepare(&c, &r, &state, 86401, 86700)
             .unwrap_err()
-            .contains("cannot enforce")
+            .contains("rejected")
     );
 }
 
 #[test]
 fn simple_service_authorization_checks_exact_source_and_durable_usage() {
     let (mut c, r, s) = fixture(WalletRoute::PolicyWallet, true);
-    c.policy_source="use allowit::v1::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{allowit::cap_per_transaction(ctx,\"1\",\"USDC\")?;Ok(())}".into();
-    c.source_hash = hash(&c.policy_source);
+    c.policy_source="use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{allowit::transaction_cap(10_000_000)?;Ok(())}".into();
+    refresh_binding(&mut c);
     let rpc = PreflightRpc {
         base: PolicyWalletAccountRpc {
             config: c.clone(),
@@ -2359,7 +2459,7 @@ fn simple_service_authorization_checks_exact_source_and_durable_usage() {
     assert!(
         authorize_server(&prepared, &[3; 32], 86401, Some(usage))
             .unwrap_err()
-            .contains("denied")
+            .contains("Full policy context")
     );
     assert!(sign(&prepared, &[2; 32], 86401).is_err());
 }
@@ -2375,20 +2475,22 @@ fn selected_implementations_bind_constructor_and_both_authorities() {
         let (mut c, r, s) = fixture(WalletRoute::PolicyWallet, true);
         c.policy_engine = Some(engine);
         if engine == PolicyEngine::CommonPolicyEngine {
-            c.policy_source="use allowit::v1::prelude::*;async fn _execute(request:&Context,grant:&Grant,state:&State)->Result<Spent,PolicyError>{allowit::daily_cap(request,state)}".into();
+            c.policy_source="use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{allowit::day_spent_cap(grant::day_spent_cap)?;Ok(())}".into();
         }
         if engine == PolicyEngine::CustomPolicy {
-            c.policy_source =
-                include_str!("../../tests/fixtures/stellar-local-state-policy.rs").into();
+            c.policy_source = CANONICAL_NATIVE_SOURCE.into();
         }
-        c.source_hash = hash(&c.policy_source);
+        refresh_binding(&mut c);
         let config = PolicyConfig::for_policy(&c, Grant::default(), false, true).unwrap();
-        assert_eq!(config.source_digest, c.source_hash);
+        assert_eq!(
+            config.source_digest,
+            c.prefix_digest.unwrap_or(c.source_hash)
+        );
         assert_eq!(config.server, c.server);
         assert_eq!(
             config.rules,
             if engine == PolicyEngine::CommonPolicyEngine {
-                vec!["daily_cap".to_string()]
+                vec!["day_spent_cap".to_string()]
             } else {
                 vec![]
             }
@@ -2464,13 +2566,13 @@ fn common_installed_rules_cannot_omit_or_reorder_authored_checks() {
     }
     let (mut c, r, s) = fixture(WalletRoute::PolicyWallet, true);
     c.policy_engine = Some(PolicyEngine::CommonPolicyEngine);
-    c.policy_source="use allowit::v1::prelude::*;async fn _execute(request:&Context,grant:&Grant,state:&State)->Result<Spent,PolicyError>{let daily=allowit::daily_cap(request,state)?;let next=allowit::with_spent(state,daily)?;allowit::total_cap(request,&next)}".into();
-    c.source_hash = hash(&c.policy_source);
+    c.policy_source="use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{allowit::day_spent_cap(grant::day_spent_cap)?;allowit::spent_cap(grant::spent_cap)?;Ok(())}".into();
+    refresh_binding(&mut c);
     for rules in [
         vec![],
-        vec!["daily_cap"],
-        vec!["total_cap", "daily_cap"],
-        vec!["daily_cap", "daily_cap"],
+        vec!["day_spent_cap"],
+        vec!["spent_cap", "day_spent_cap"],
+        vec!["day_spent_cap", "day_spent_cap"],
     ] {
         let rpc = ChangedRules {
             base: PreflightRpc {
@@ -2762,6 +2864,7 @@ fn historical_signed_issuer_payment_remains_read_only() {
     };
     payment.destination = stellar_xdr::MuxedAccount::Ed25519(key);
     envelope.tx.operations = operations.try_into().unwrap();
+    envelope.tx.memo = stellar_xdr::Memo::Hash(stellar_xdr::Hash(prepared.request.operation.nonce));
     prepared.transaction_xdr = envelope_to_xdr(envelope);
     // Reconstruct the exact formerly admitted payment and signatures without
     // exposing a preparation path for new issuer-burn operations.
@@ -2772,7 +2875,7 @@ fn historical_signed_issuer_payment_remains_read_only() {
     assert!(
         validate_prepared(&signed.prepared, 86401)
             .unwrap_err()
-            .contains("burn")
+            .contains("read-only")
     );
     assert!(
         validate_signed(&signed, 86401)

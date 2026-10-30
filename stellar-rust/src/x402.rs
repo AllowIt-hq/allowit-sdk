@@ -47,7 +47,7 @@ fn checked(
         || state.server != c.server
         || state.policy_instance != c.policy_instance
         || state.module_digest != c.module_digest
-        || state.source_hash != c.source_hash
+        || state.source_hash != native_policy_digest(c)?
         || request.expires_at <= now
         || request.expires_at > now.saturating_add(300)
     {

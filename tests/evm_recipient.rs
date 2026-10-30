@@ -1,6 +1,5 @@
 use allowit_sdk::{
-    Context, NativePolicyStorage, Profile, ServicePaymentAsset, compile, evaluate,
-    evaluate_with_trace_native_payment,
+    Context, PolicyRuleFacts, TrustedPolicyState, compile, evaluate_with_policy_rules,
 };
 
 // The EIP-55 form an owner pastes into a prompt, and the lowercase form the
@@ -9,38 +8,32 @@ const CHECKSUMMED: &str = "0x33b8aF346B1e9462a1EC79866a19f03bB8351Ff4";
 const LOWERCASE: &str = "0x33b8af346b1e9462a1ec79866a19f03bb8351ff4";
 const SOLANA: &str = "GmaDrppBC7P5ARKV8g3djiwP89vz1jLK23V2GBjuAEGB";
 
-fn tempo_source(recipient: &str) -> String {
+fn source(recipient: &str) -> String {
     format!(
-        r#"use allowit::v1::prelude::*;
-struct PolicyParams {{}} fn new() -> PolicyParams {{ PolicyParams {{}} }}
-async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {{
-    allowit::require_asset(&ctx.token, "AlphaUSD")?;
-    allowit::cap_per_transaction(ctx.amount_units, &ctx.token, 5_000_000, "AlphaUSD", 6)?;
-    allowit::require_recipient(&ctx.recipient, {recipient:?})?;
-    Ok(())
-}}"#
+        "use allowit::prelude::*; async fn _execute(ctx:&Context)->PolicyResult {{ allowit::recipients(&[{recipient:?}])?; Ok(()) }}"
     )
 }
-fn tempo_context(recipient: &str) -> Context {
-    let mut ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
-    ctx.network = "tempo:testnet".into();
-    ctx.token = "AlphaUSD".into();
-    ctx.recipient = recipient.into();
-    ctx.amount_units = 300_000;
-    ctx.native_policy_storage = Some(NativePolicyStorage {
-        daily_limit_units: 5_000_000,
-        action_limit_units: 5_000_000,
+fn context(recipient: &str, network: &str) -> Context {
+    let mut c: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
+    c.network = network.into();
+    c.recipient = recipient.into();
+    c.policy_state = Some(TrustedPolicyState::default());
+    c.rule_facts = Some(PolicyRuleFacts {
+        operation_id: "recipient-op".into(),
+        grant_available: true,
+        amount_units: 300_000,
+        asset_id: "AlphaUSD".into(),
+        recipient: recipient.into(),
+        now: 100,
+        expense: None,
     });
-    ctx
+    c
 }
 fn tempo_decision(literal: &str, recipient: &str) -> allowit_sdk::Decision {
-    let policy = compile(&tempo_source(literal)).unwrap();
-    let asset = ServicePaymentAsset {
-        network: "tempo:testnet".into(),
-        asset: "AlphaUSD".into(),
-        decimals: 6,
-    };
-    evaluate_with_trace_native_payment(&policy, &tempo_context(recipient), &asset).0
+    evaluate_with_policy_rules(
+        &compile(&source(literal)).unwrap(),
+        &context(recipient, "tempo:testnet"),
+    )
 }
 
 #[test]
@@ -75,7 +68,7 @@ fn tempo_recipient_still_rejects_a_different_or_malformed_address() {
     ] {
         assert_eq!(
             tempo_decision(CHECKSUMMED, recipient).code,
-            "RECIPIENT_NOT_ALLOWED",
+            "ADDRESS_NOT_ALLOWED",
             "{recipient}"
         );
     }
@@ -83,32 +76,22 @@ fn tempo_recipient_still_rejects_a_different_or_malformed_address() {
 
 #[test]
 fn solana_recipients_stay_case_sensitive() {
-    let source = format!(
-        "pub async fn evaluate(ctx: &Context) -> PolicyResult {{ require_recipient(ctx, {SOLANA:?})?; Ok(()) }}"
+    let policy = compile(&source(SOLANA)).unwrap();
+    assert_eq!(
+        evaluate_with_policy_rules(&policy, &context(SOLANA, "solana:devnet")).outcome,
+        "pass"
     );
-    let policy = compile(&source).unwrap();
-    let mut ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
-    ctx.recipient = SOLANA.into();
-    assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, "pass");
     for recipient in [SOLANA.to_ascii_lowercase(), SOLANA.to_ascii_uppercase()] {
-        ctx.recipient = recipient;
         assert_eq!(
-            evaluate(&policy, Profile::Oracle, &ctx).code,
-            "RECIPIENT_NOT_ALLOWED"
+            evaluate_with_policy_rules(&policy, &context(&recipient, "solana:devnet")).code,
+            "ADDRESS_NOT_ALLOWED"
         );
     }
 }
-
 #[test]
-fn native_primitive_matches_evm_case_insensitively_and_solana_exactly() {
-    assert!(allowit_sdk::require_recipient(LOWERCASE, CHECKSUMMED).is_ok());
-    assert!(allowit_sdk::require_recipient(CHECKSUMMED, LOWERCASE).is_ok());
+fn direct_facade_has_no_authenticated_host_and_fails_closed() {
     assert_eq!(
-        allowit_sdk::require_recipient(&LOWERCASE.replacen("ff4", "ff5", 1), CHECKSUMMED)
-            .unwrap_err()
-            .code,
-        "RECIPIENT_NOT_ALLOWED"
+        allowit_sdk::recipients(&[CHECKSUMMED]).unwrap_err().code,
+        "POLICY_CONTEXT_REQUIRED"
     );
-    assert!(allowit_sdk::require_recipient(SOLANA, SOLANA).is_ok());
-    assert!(allowit_sdk::require_recipient(&SOLANA.to_ascii_lowercase(), SOLANA).is_err());
 }

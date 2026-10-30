@@ -348,7 +348,7 @@ impl Client {
             })
         {
             return Err(Error::uncertain(
-                "Stellar response changed the original operation identity",
+                "Stellar response changed the approved operation or source. Refresh the owner-approved public bundle before using an updated policy.",
             ));
         }
         if terminal(&r.operation.status) && r.receipt.is_none() {

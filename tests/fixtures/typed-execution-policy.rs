@@ -6,14 +6,14 @@ async fn _execute(ctx: &Context, params:&PolicyParams) -> PolicyResult {
         let validated = allowit::execution_request_validate(request)?;
         allowit::execution_request_cap(&validated,"native-budget",params.native_asset,9,params.total_native_budget,10000000,10000)?;
         for effect in &validated.request.effect_bounds {
-            if effect.max_debit > 10000000 { return allowit::fail("Debit exceeds owner ceiling"); }
-            if effect.max_burn > 0 { return allowit::fail("Burn is not allowed"); }
+            if effect.max_debit > 10000000 { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Debit exceeds owner ceiling".into() }); }
+            if effect.max_burn > 0 { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Burn is not allowed".into() }); }
         }
         if let Some(fees) = &validated.request.fee_bounds {
             for fee in fees {
-                if fee.max_fee > 10000 { return allowit::fail("Fee exceeds owner ceiling"); }
+                if fee.max_fee > 10000 { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Fee exceeds owner ceiling".into() }); }
             }
-        } else { return allowit::fail("Fees are unresolved"); }
-    } else { return allowit::fail("Native request is missing"); }
+        } else { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Fees are unresolved".into() }); }
+    } else { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Native request is missing".into() }); }
     Ok(())
 }

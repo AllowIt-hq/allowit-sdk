@@ -102,19 +102,19 @@ mod primitives;
 pub use prelude::{
     confidence, context_u64, percent, require_user_input, semantic, usdc, within_percentage_points,
 };
-pub use primitives::is_one_of;
+pub use primitives::{cap_purchase_tiers, is_one_of, require_merchant};
 
 #[cfg(feature = "std")]
 pub use primitives::check_preference;
 pub use primitives::{OwnerLimit, owner_limit, preference_evidence, stored_limit};
 
 pub use runtime::evaluate_ir;
-#[cfg(feature = "compiler")]
-pub use runtime::evaluate_with_trace;
 #[cfg(all(feature = "compiler", feature = "std"))]
 pub use runtime::evaluate_with_trace_native_payment;
 #[cfg(feature = "compiler")]
 pub use runtime::{evaluate, evaluate_with_policy_rules};
+#[cfg(feature = "compiler")]
+pub use runtime::{evaluate_with_trace, evaluate_with_trace_policy_rules};
 #[cfg(all(feature = "compiler", feature = "typed-workflow", feature = "std"))]
 pub use runtime::{
     evaluate_with_trace_native_service_policy, evaluate_with_trace_private_service_localnet,

@@ -26,7 +26,7 @@ fn range(span: Span) -> SourceSpan {
 // Namespace paths are bounded and resolved against the exact registry spelling.
 pub(crate) fn registered_path(path: &syn::Path) -> Option<String> {
     if path.leading_colon.is_some()
-        || path.segments.len() > 2
+        || path.segments.len() > 4
         || path
             .segments
             .iter()
@@ -128,9 +128,6 @@ impl Parser {
         call: &syn::ExprCall,
         depth: usize,
     ) -> Result<Option<Expr>, CompileError> {
-        if self.params.is_none() {
-            return Ok(None);
-        }
         let SynExpr::Path(path) = &*call.func else {
             return Ok(None);
         };
@@ -150,7 +147,10 @@ impl Parser {
         {
             return Ok(None);
         }
-        if path.path.segments.len() != 2 || !path.attrs.is_empty() || !call.attrs.is_empty() {
+        if path.path.segments.len() != 2 {
+            return Ok(None);
+        }
+        if !path.attrs.is_empty() || !call.attrs.is_empty() {
             return Err(error(
                 call.span(),
                 "Use the namespaced primitive guard signature.",
@@ -277,7 +277,9 @@ impl Parser {
         if p.qself.is_some() || registered_path(&p.path).as_deref() != Some("check_preference") {
             return Ok(None);
         }
-        if p.path.segments.len() == 2 && c.args.len() != 4 {
+        if (p.path.segments.len() == 2 || p.path.segments.len() == 4) && c.args.len() != 4
+            || p.path.segments.len() == 3 && c.args.len() != 6
+        {
             return Err(error(
                 c.span(),
                 "Use the four-argument namespaced preference check.",
@@ -295,7 +297,7 @@ impl Parser {
                 "Use check_preference(ctx, question, auto_approve, approve_percent, auto_deny, deny_percent).await?; with literal settings.",
             ));
         }
-        let context_arg = if self.params.is_some() {
+        let context_arg = if p.path.segments.len() == 2 {
             if p.path.segments.len() != 2 || c.args.len() != 4 {
                 return Err(error(
                     c.span(),
@@ -464,12 +466,6 @@ impl Parser {
         let SynExpr::Path(path) = &*call.func else {
             return Ok(None);
         };
-        if self.params.is_some() && path.path.segments.len() != 2 {
-            return Err(error(
-                path.span(),
-                "Use the exact namespaced system function.",
-            ));
-        }
         if path.qself.is_none() && registered_path(&path.path).as_deref() == Some("stored_limit") {
             if self.params.is_none()
                 || path.path.segments.len() != 2
@@ -1891,7 +1887,25 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                                 "Use an exact registered policy function name.",
                             ));
                         };
-                        let name = format!("{ident}::{operation}");
+                        let mut name = format!("{ident}::{operation}");
+                        for _ in 0..2 {
+                            let mut next = lookahead.clone();
+                            if matches!(next.next(),Some(TokenTree::Punct(p))if p.as_char()==':'&&p.spacing()==proc_macro2::Spacing::Joint)
+                                && matches!(next.next(),Some(TokenTree::Punct(p))if p.as_char()==':')
+                            {
+                                let Some(TokenTree::Ident(segment)) = next.next() else {
+                                    return Err(error(
+                                        ident.span(),
+                                        "Use an exact registered namespace path.",
+                                    ));
+                                };
+                                name.push_str("::");
+                                name.push_str(&segment.to_string());
+                                lookahead = next;
+                            } else {
+                                break;
+                            }
+                        }
                         if crate::registry::canonical_function(&name).is_none()
                             || !matches!(lookahead.clone().next(), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Parenthesis)
                         {

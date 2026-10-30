@@ -59,6 +59,25 @@ fn registry_impl() -> Vec<FunctionInfo> {
         };
         result.push(qualified);
     }
+    for (name, path) in [
+        ("check_preference", "allowit::prelude::check_preference"),
+        ("check_preference", "allowit::v1::prelude::check_preference"),
+        ("require_merchant", "allowit::prelude::require_merchant"),
+        ("cap_purchase_tiers", "allowit::prelude::cap_purchase_tiers"),
+    ] {
+        let mut entry = result
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap()
+            .clone();
+        entry.name = path.into();
+        entry.signature = if path == "allowit::prelude::check_preference" {
+            "async allowit::prelude::check_preference(ctx: &Context, question: &str, auto_approve: bool, above: &str, auto_deny: bool, below: &str) -> PolicyResult".into()
+        } else {
+            entry.signature.replace(name, path)
+        };
+        result.push(entry);
+    }
     for method in [
         "spent_cap",
         "day_spent_cap",
@@ -181,6 +200,9 @@ fn registry_impl() -> Vec<FunctionInfo> {
 }
 
 fn public_name(name: &str) -> bool {
+    if !name.contains("::") {
+        return false;
+    }
     let suffix = name.rsplit("::").next().unwrap_or(name);
     if [
         "daily_cap",
@@ -195,8 +217,6 @@ fn public_name(name: &str) -> bool {
         "require_recipient",
         "require_asset",
         "allow_actions",
-        "cap_purchase_tiers",
-        "require_merchant",
     ]
     .contains(&suffix)
     {

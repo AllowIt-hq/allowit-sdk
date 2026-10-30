@@ -174,3 +174,38 @@ fn original_template_denies_with_ordinary_error() {
         "POLICY_NOT_CONFIGURED"
     );
 }
+
+#[allow(dead_code)]
+async fn exact_existing_helper_paths(ctx: &Context) -> PolicyResult {
+    allowit::prelude::require_merchant(ctx, "research.example")?;
+    allowit::prelude::cap_purchase_tiers(ctx, "1", 2, "USDC")?;
+    allowit::prelude::check_preference(ctx, "Purpose?", false, "85", false, "40").await?;
+    allowit::v1::prelude::check_preference(ctx, "Purpose?", None, None).await?;
+    Ok(())
+}
+#[test]
+fn existing_real_profile_helpers_are_namespaced_offchain_only() {
+    for call in [
+        "allowit::prelude::require_merchant(ctx,\"research.example\")?;",
+        "allowit::prelude::cap_purchase_tiers(ctx,\"1\",2,\"USDC\")?;",
+        "allowit::prelude::check_preference(ctx,\"Purpose?\",false,\"85\",false,\"40\").await?;",
+        "allowit::v1::prelude::check_preference(ctx,\"Purpose?\",None,None).await?;",
+    ] {
+        let compiled = compile(&source(&format!("{call} Ok(())"))).unwrap();
+        assert!(compiled.native_prefix.is_empty());
+        assert!(compiled.offchain_required);
+    }
+    assert!(
+        compile(&source(
+            "allowit::fake::prelude::require_merchant(ctx,\"x\")?; Ok(())"
+        ))
+        .is_err()
+    );
+    assert!(compile(&source("confidence(ctx,\"score\")?; Ok(())")).is_err());
+    assert!(
+        compile(&source(
+            "allowit::prelude::spent_cap(grant::spent_cap)?; Ok(())"
+        ))
+        .is_err()
+    );
+}

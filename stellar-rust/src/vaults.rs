@@ -828,6 +828,7 @@ mod tests {
         };
         c.asset = sac_address(&c.network, &Asset::Native).unwrap();
         let state = TrustedState {
+            history: Some(NativePolicyHistory::default()),
             contract_version: Some(1),
             policy_state: Some(PolicyStateSnapshot {
                 grant: NativeValues::default(),

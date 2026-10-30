@@ -251,7 +251,7 @@ impl Validator<'_> {
                 }
                 Statement::Return { value, .. } => {
                     #[cfg(feature = "typed-workflow")]
-                    if self.loop_depth > 0 && !matches!(value,Expr::Call{name,..} if name=="fail") {
+                    if self.loop_depth > 0 && !matches!(value,Expr::Call{name,..} if name=="Err") {
                         return Err(bad(
                             "A bounded loop can only return a refusal; it must check every entry before allowing.",
                         ));
@@ -1095,6 +1095,15 @@ fn asset_declarations(program: &Program) -> impl Iterator<Item = &str> {
         let Expr::Call { name, args, .. } = &**value else {
             return None;
         };
+        if name == "tokens" {
+            return match args.as_slice() {
+                [Expr::Array { values }] => match values.as_slice() {
+                    [Expr::String { value }] => Some(value.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            };
+        }
         let index = match name.as_str() {
             "require_asset" => 1,
             "set_cap_per_day" | "cap_per_transaction" => 2,

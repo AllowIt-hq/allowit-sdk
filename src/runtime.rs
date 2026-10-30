@@ -1451,6 +1451,19 @@ fn run_inner_scoped(
             || ctx.recipient.len() > 256
             || ctx.action.is_empty()
             || ctx.action.len() > 128
+            || ctx.merchant.len() > 256
+            || ctx.answers.len() > 32
+            || ctx.confidence.len() > 32
+            || ctx
+                .confidence
+                .keys()
+                .any(|key| key.is_empty() || key.len() > 128)
+            || ctx.answers.keys().any(|key| key.len() != 64)
+            || ctx.original_intent.len() > 16384
+            || ctx
+                .confidence
+                .values()
+                .any(|value| value.lower_bps > value.upper_bps || value.upper_bps > 10000)
         {
             Err(failure(
                 "INVALID_CONTEXT",
@@ -1666,6 +1679,12 @@ pub fn evaluate_with_policy_rules(policy: &CompiledPolicy, ctx: &Context) -> Dec
         Ok(compiled) => compiled,
         Err(decision) => return *decision,
     };
+    if crate::validation::service_call_required(&compiled.ir) {
+        return Decision::fail(
+            "PROVIDER_PROFILE_UNSUPPORTED",
+            "Use the authenticated native service policy adapter.",
+        );
+    }
     run_inner(
         &compiled.ir,
         Profile::Oracle,
@@ -1688,6 +1707,42 @@ pub fn evaluate_with_trace(
     ctx: &Context,
 ) -> (Decision, Option<crate::WorkflowTrace>) {
     evaluate_with_trace_inner(policy, ctx, false, None)
+}
+
+/// Evaluate full offchain policy code with protected canonical rule facts and a source trace.
+/// Native service adapters must keep their dedicated authorization entrypoint.
+#[cfg(feature = "compiler")]
+pub fn evaluate_with_trace_policy_rules(
+    policy: &CompiledPolicy,
+    ctx: &Context,
+) -> (Decision, Option<crate::WorkflowTrace>) {
+    let compiled = match validate_artifact(policy) {
+        Ok(compiled) => compiled,
+        Err(decision) => return (*decision, None),
+    };
+    if crate::validation::service_call_required(&compiled.ir) {
+        return (
+            Decision::fail(
+                "PROVIDER_PROFILE_UNSUPPORTED",
+                "Use the authenticated native service policy adapter.",
+            ),
+            None,
+        );
+    }
+    let mut trace = crate::trace::TraceRecorder::new(&compiled);
+    let decision = run_inner(
+        &compiled.ir,
+        Profile::Oracle,
+        ctx,
+        compiled.source_hash.clone(),
+        false,
+        None,
+        false,
+        true,
+        Some(&mut trace),
+    );
+    let trace = trace.finish(&decision);
+    (decision, Some(trace))
 }
 
 /// Explicit developer-host capability for authenticated service input on a
@@ -1762,6 +1817,8 @@ fn validate_artifact(
     let compiled = crate::compile(&policy.source)
         .map_err(|_| failure("INVALID_ARTIFACT", "The policy source is not valid."))?;
     if compiled.ir_hash != policy.ir_hash
+        || compiled.native_prefix != policy.native_prefix
+        || compiled.offchain_required != policy.offchain_required
         || compiled.limit != policy.limit
         || compiled.token != policy.token
         || compiled.execution_requirements != policy.execution_requirements

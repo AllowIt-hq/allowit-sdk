@@ -138,3 +138,36 @@ pub async fn require_user_input(_ctx: &Context, _prompt: &str) -> PolicyResult {
         "Use the trusted oracle to obtain an authenticated answer.",
     ))
 }
+#[cfg(feature = "oracle-ledger")]
+pub fn cap_purchase_tiers(
+    ctx: &Context,
+    maximum: &str,
+    first_count: u64,
+    token: &str,
+) -> PolicyResult {
+    if token != "USDC" || ctx.token != token {
+        return Err(error("TOKEN_MISMATCH", "Token does not match."));
+    }
+    let maximum = crate::validation::amount_units(maximum)
+        .map_err(|e| error("INVALID_AMOUNT", &e.message))?;
+    crate::spending::check_tiers(ctx, maximum, first_count).map_err(|e| error(&e.code, &e.reason))
+}
+#[cfg(not(feature = "oracle-ledger"))]
+pub fn cap_purchase_tiers(
+    _ctx: &Context,
+    _maximum: &str,
+    _first_count: u64,
+    _token: &str,
+) -> PolicyResult {
+    Err(error(
+        "LEDGER_REQUIRED",
+        "Purchase tiers require the oracle ledger feature.",
+    ))
+}
+pub fn require_merchant(ctx: &Context, merchant: &str) -> PolicyResult {
+    if ctx.merchant == merchant {
+        Ok(())
+    } else {
+        Err(error("MERCHANT_NOT_ALLOWED", "Merchant is not permitted."))
+    }
+}

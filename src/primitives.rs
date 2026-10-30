@@ -1,5 +1,6 @@
 //! Primitive source functions. The compiler binds accounting inputs to authenticated fields.
 use crate::prelude::{PolicyError, PolicyResult};
+use alloc::vec::Vec;
 fn denied(code: &str, reason: &str) -> PolicyError {
     PolicyError {
         code: code.into(),
@@ -129,4 +130,55 @@ pub(crate) fn daily_spend(
         ));
     }
     Ok(if day == spent_day { spent } else { 0 })
+}
+pub fn require_merchant(merchant: &str, required: &str) -> PolicyResult {
+    if merchant == required {
+        Ok(())
+    } else {
+        Err(denied("MERCHANT_NOT_ALLOWED", "Merchant is not permitted."))
+    }
+}
+#[cfg(feature = "oracle-ledger")]
+pub fn cap_purchase_tiers(
+    amount_units: u64,
+    token: &str,
+    purchase_counts: &Option<Vec<u64>>,
+    maximum_units: u64,
+    first_count: u64,
+    currency: &str,
+    decimals: u64,
+) -> PolicyResult {
+    denomination(token, currency, decimals)?;
+    crate::spending::check_tier_values(
+        amount_units,
+        purchase_counts.as_deref(),
+        maximum_units,
+        first_count,
+    )
+    .map_err(|e| denied(&e.code, &e.reason))
+}
+#[cfg(not(feature = "oracle-ledger"))]
+pub fn cap_purchase_tiers(
+    _amount_units: u64,
+    _token: &str,
+    _purchase_counts: &Option<Vec<u64>>,
+    _maximum_units: u64,
+    _first_count: u64,
+    _currency: &str,
+    _decimals: u64,
+) -> PolicyResult {
+    Err(denied(
+        "LEDGER_REQUIRED",
+        "Purchase tiers require the oracle ledger feature.",
+    ))
+}
+#[cfg(feature = "oracle-ledger")]
+fn denomination(token: &str, currency: &str, decimals: u64) -> PolicyResult {
+    if currency != "USDC" || token != currency || decimals != 6 {
+        return Err(denied(
+            "TOKEN_MISMATCH",
+            "Use the bound six-decimal USDC asset.",
+        ));
+    }
+    Ok(())
 }

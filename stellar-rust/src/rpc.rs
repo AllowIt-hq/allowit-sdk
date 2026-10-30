@@ -912,6 +912,7 @@ fn trusted_state_inner(
             state: TrustedState {
                 contract_version: None,
                 policy_state: None,
+                history: None,
                 source,
                 nonce: a.nonce,
                 deployment_version: a.deployment_version,
@@ -1030,7 +1031,34 @@ fn trusted_state_inner(
             spent: properties::read_spent(rpc, c, &source)?,
         })
     };
+    let history = if historical {
+        None
+    } else {
+        let h = map_field(state, "history")?;
+        let flag = |key: &str| match map_field(h, key)? {
+            ScVal::Bool(value) => Ok(*value),
+            _ => Err("Invalid protected accounting status".to_string()),
+        };
+        let value = NativePolicyHistory {
+            calls: number(map_field(h, "calls")?)?,
+            spent: wide(map_field(h, "spent")?)?,
+            unpriced: flag("unpriced")?,
+            day: number(map_field(h, "day")?)?,
+            day_spent: wide(map_field(h, "day_spent")?)?,
+            day_total: wide(map_field(h, "day_total")?)?,
+            day_unpriced: flag("day_unpriced")?,
+        };
+        if value.spent < 0
+            || value.day_spent < 0
+            || value.day_total < 0
+            || value.day_spent > value.spent
+        {
+            return Err("Invalid protected native accounting history".into());
+        }
+        Some(value)
+    };
     let out = TrustedState {
+        history,
         contract_version: (!historical).then_some(contract_version),
         policy_state,
         source,

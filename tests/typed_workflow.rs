@@ -398,7 +398,7 @@ fn opaque_json_cannot_install_authority_and_static_metadata_is_checked() {
 fn no_early_loop_approval_or_effectful_loop() {
     assert!(
         compile(&EXEC.replace(
-            "return allowit::fail(\"Debit exceeds owner ceiling\")",
+            "return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"Debit exceeds owner ceiling\".into() })",
             "return Ok(())"
         ))
         .is_err()
@@ -422,7 +422,7 @@ fn old_ir_cannot_smuggle_new_semantics() {
     ir.version = "1.0.0".into();
     assert!(allowit_sdk::validate_program(&ir).is_err());
     let registry = allowit_sdk::process_value(serde_json::json!({"operation":"registry"}));
-    assert_eq!(registry["registry_version"], "1.7.0");
+    assert_eq!(registry["registry_version"], "1.8.0");
     assert_eq!(registry["type_declarations"][0], "ExecutionRequest");
 }
 
@@ -771,7 +771,7 @@ fn deceptive_context_guards_unicode_and_fee_claims_fail_closed() {
         evaluate(&p, Profile::Oracle, &c).code,
         "WORKFLOW_ZERO_FEE_EVIDENCE_REQUIRED"
     );
-    let source = "async fn _execute(ctx:&Context)->PolicyResult { if let Some(request)=&ctx.execution_request {let exists=true;} else {return allowit::fail(\"Missing\");} Ok(()) }";
+    let source = "async fn _execute(ctx:&Context)->PolicyResult { if let Some(request)=&ctx.execution_request {let exists=true;} else {return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"Missing\".into() });} Ok(()) }";
     let p = compile(source).unwrap();
     let (_, mut c) = execution();
     c.workflow.as_mut().unwrap().binding = binding(&p);
@@ -880,7 +880,7 @@ impl WorkflowHost for MissingPaymentFees {
 fn final_authorization_rejects_missing_fees_even_without_source_fee_refusal() {
     for (source, is_payment) in [(EXEC, false), (PAYMENT, true)] {
         let source = source.replace(
-            "return allowit::fail(\"Fees are unresolved\");",
+            "return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"Fees are unresolved\".into() });",
             "let unresolved = true;",
         );
         let policy = compile(&source).unwrap();

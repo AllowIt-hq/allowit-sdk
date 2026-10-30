@@ -8,15 +8,15 @@ async fn _execute(ctx: &Context, params:&PolicyParams) -> PolicyResult {
             if let Some(payment) = proposed {
                 allowit::payment_request_cap(&payment,"token-budget",params.token_asset,6,params.total_token_budget,1000,0)?;
                 allowit::payment_request_cap(&payment,"native-budget",params.native_asset,9,params.total_native_budget,0,10000)?;
-                if payment.payment.units > 1000 { return allowit::fail("Payment exceeds owner ceiling"); }
-                if payment.payment.decimals != 6 { return allowit::fail("Wrong decimal scale"); }
+                if payment.payment.units > 1000 { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Payment exceeds owner ceiling".into() }); }
+                if payment.payment.decimals != 6 { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Wrong decimal scale".into() }); }
                 if let Some(fees) = &payment.fee_bounds {
                     for fee in fees {
-                        if fee.max_fee > 10000 { return allowit::fail("Fee exceeds owner ceiling"); }
+                        if fee.max_fee > 10000 { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Fee exceeds owner ceiling".into() }); }
                     }
-                } else { return allowit::fail("Fees are unresolved"); }
+                } else { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Fees are unresolved".into() }); }
             }
-        } else { return allowit::fail("HTTP outcome is missing"); }
-    } else { return allowit::fail("HTTP request is missing"); }
+        } else { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "HTTP outcome is missing".into() }); }
+    } else { return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "HTTP request is missing".into() }); }
     Ok(())
 }
