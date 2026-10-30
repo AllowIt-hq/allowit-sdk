@@ -1,4 +1,17 @@
-//! `allowit show POLICY`: prints the policy description.
+//! `allowit show POLICY [--json] [--source]`: prints the policy description.
+//! Reads `GET /api/harness/OWNER/POLICY/skill` with `ALLOWIT_URL` and
+//! `ALLOWIT_TOKEN` (`owner.policy.secret`). `--source` adds the policy source.
+//! With `--network tempo:testnet` it reads the local Tempo bundle instead; with
+//! `ALLOWIT_STELLAR_BUNDLE` it reads the public Stellar bundle.
+//!
+//! ```text
+//! export ALLOWIT_URL=https://allowit.example
+//! export ALLOWIT_TOKEN=OWNER.POLICY.SECRET
+//! allowit show POLICY
+//! allowit show POLICY --json --source
+//! allowit eval POLICY --action transfer --rail solana --op transferSOL \
+//!   --addr ADDRESS --amount 0.1 --request-id eval-0001
+//! ```
 use crate::{
     action::{self, Begin},
     client::Client,

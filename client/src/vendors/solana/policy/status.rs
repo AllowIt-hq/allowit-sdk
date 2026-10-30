@@ -1,4 +1,10 @@
 //! `allowit policy status`: observes the vault and recovers journaled operations.
+//! Reads the chain; needs no signer.
+//!
+//! ```text
+//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute TOKEN_ACCOUNT 0.25   # exit 5
+//! allowit policy status --json
+//! ```
 use super::*;
 
 pub(super) fn run(

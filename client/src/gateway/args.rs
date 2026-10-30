@@ -1,4 +1,7 @@
 //! Public Allowit command input. Vendor payment protocols remain on the backend.
+//! Parses the backend command group and its global flags (`--policy`,
+//! `--sandbox`, `--account`, `--request-id`, `--rail` with `--rpc`,
+//! `--max-payment`, `--currency`, `--json`) into an [`Invocation`].
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

@@ -1,5 +1,7 @@
 //! Tempo connection: the pinned Tempo crate owns execution and paid calls.
 //! The selected network must match the Tempo bundle before any call.
+//! Backs `allowit tempo`, `allowit policy import|execute --network tempo:*` and
+//! `show`/`eval`/`exec`/`status` with a Tempo network.
 use crate::{
     error::{Error, Result},
     routing::{normalize, selected},

@@ -1,4 +1,15 @@
 //! `allowit mcp`: local MCP transport for the same Allowit backend command boundary.
+//! Reads newline-delimited JSON-RPC on stdin and writes replies on stdout.
+//! Tools: `allowit_call`, `allowit_services`, `allowit_status`, which call
+//! `/api/gateway/quote`, `/api/gateway/call`, `/api/gateway/services` and
+//! `/api/gateway/operations/status`. `allowit claude` and `allowit codex`
+//! start it for the agent.
+//!
+//! ```text
+//! printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+//!   | allowit mcp --sandbox
+//! allowit claude --sandbox -- -p "List Allowit services"   # starts allowit mcp
+//! ```
 mod tools;
 
 use crate::{

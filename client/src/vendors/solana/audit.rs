@@ -1,4 +1,5 @@
 //! Capability-scoped SQL audit reporting; it grants no signing or owner authority.
+//! Enabled by an executor bundle that carries an audit binding.
 use crate::{config::parse_origin, error::Error};
 use allowit_native::{
     client::Binding,

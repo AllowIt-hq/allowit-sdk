@@ -1,4 +1,10 @@
 //! `allowit policy generate PROMPT`: compiles and saves a new local policy.
+//! Local only; never signs. Prints the generated Rust source.
+//!
+//! ```text
+//! allowit policy generate "Allow up to 2 USDC per action and 10 USDC a day"
+//! allowit policy deploy 10
+//! ```
 use super::*;
 
 pub(super) fn run(local: &Local, pos: &[String], json: bool, stdout: &mut String) -> Result<i32> {

@@ -1,4 +1,6 @@
 //! Browser owner-signing intent. Contains public metadata only.
+//! `allowit policy deploy AMOUNT` records the intent and prints the browser link
+//! that the owner opens to sign the vault deployment.
 use crate::{
     error::{Error, Result},
     routing,

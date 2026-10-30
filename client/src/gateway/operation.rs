@@ -1,4 +1,6 @@
-//! Quote, call and status rendering for backend operations.
+//! Quote, call and status rendering for backend operations. [`purchase`] posts
+//! `/api/gateway/quote`, checks the quote binding and expiry, then posts
+//! `/api/gateway/call` once; an uncertain result points to `allowit call status`.
 use super::{
     Gateway,
     args::{self, Common},

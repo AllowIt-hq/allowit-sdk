@@ -1,5 +1,16 @@
 //! `allowit setup`: registers public wallet metadata with the selected account.
 //! Private keys, seeds and wallet files stay on this device.
+//!
+//! Input: `--input JSON` or `--input-file PATH` with `network` (canonical CAIP-2),
+//! `address`, `publicKey`, `keyType` and optional `name`. Posts to
+//! `/api/gateway/setup` with `ALLOWIT_ACCOUNT_TOKEN`; refuses `--policy`.
+//!
+//! ```text
+//! allowit wallet generate --network stellar:testnet --output agent.key
+//! allowit wallet show --network stellar:testnet agent.key > agent.json
+//! allowit setup --input-file agent.json --request-id setup-0001
+//! allowit whoami
+//! ```
 use crate::{
     error::{Error, Result},
     gateway::{args::Invocation, control},

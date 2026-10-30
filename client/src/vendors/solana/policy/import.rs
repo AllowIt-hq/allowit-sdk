@@ -1,4 +1,11 @@
-//! `allowit policy import EXECUTOR_JSON`: imports an owner-issued executor bundle.
+//! `allowit policy import EXECUTOR_JSON`: imports an owner-issued executor bundle
+//! exported by the owner browser after deployment. Local only.
+//!
+//! ```text
+//! allowit policy deploy 10            # owner signs and exports executor.json
+//! allowit policy import executor.json
+//! allowit policy status
+//! ```
 use super::*;
 
 pub(super) fn run(local: &Local, pos: &[String], json: bool, stdout: &mut String) -> Result<i32> {

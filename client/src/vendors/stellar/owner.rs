@@ -1,4 +1,6 @@
 //! Native Stellar owner signing through a public browser fragment.
+//! Backs `allowit wallet configure`: checks the owner account state and prints a
+//! link whose fragment holds the public setup request for the owner to sign.
 use crate::{
     error::{Error, Result},
     routing,

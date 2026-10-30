@@ -1,4 +1,6 @@
 //! HTTP tool syntax shared by the curl and http commands. No external HTTP tool runs here.
+//! Normalizes curl, wget and HTTPie arguments into one [`HttpRequest`] that the
+//! backend sends.
 use super::args::{Invocation, body_file, public_url};
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,11 @@
-//! `allowit whoami`: shows the selected account.
+//! `allowit whoami`: shows the selected account. Reads `GET /api/gateway/whoami`
+//! with `ALLOWIT_ACCOUNT_TOKEN`. Takes no input and refuses `--policy`.
+//!
+//! ```text
+//! export ALLOWIT_URL=https://allowit.example ALLOWIT_ACCOUNT_TOKEN=TOKEN
+//! allowit whoami --json
+//! allowit skills list
+//! ```
 use crate::{
     error::{Error, Result},
     gateway::{args::Invocation, control},

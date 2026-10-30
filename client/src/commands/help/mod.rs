@@ -1,4 +1,12 @@
-//! `allowit help`: local usage followed by the backend command groups.
+//! `allowit help`: prints the local usage (`usage.txt`) followed by the backend
+//! command groups. Local only; sends nothing. With no command, the same usage
+//! goes to stderr with exit 2. `allowit COMMAND --help` prints per-command help.
+//!
+//! ```text
+//! allowit help
+//! allowit policy help
+//! allowit call --help
+//! ```
 use crate::{error::Result, gateway::help::HELP};
 
 pub(crate) const USAGE: &str = include_str!("usage.txt");

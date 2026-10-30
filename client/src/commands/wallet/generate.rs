@@ -1,4 +1,13 @@
-//! `allowit wallet generate --network CAIP2 --output PRIVATE_FILE`: writes a new local signer file.
+//! `allowit wallet generate --network CAIP2 --output PRIVATE_FILE`: writes a new
+//! local signer file (mode 0600) and prints only its public metadata
+//! (`network`, `address`, `publicKey`, `keyType`). Local only; refuses an
+//! existing file.
+//!
+//! ```text
+//! allowit wallet generate --network solana:devnet --output agent.key
+//! allowit wallet show --network solana:devnet agent.key > agent.json
+//! allowit setup --input-file agent.json
+//! ```
 use crate::{
     error::{Error, Result},
     routing,

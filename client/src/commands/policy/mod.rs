@@ -1,5 +1,21 @@
 //! `allowit policy SUBCOMMAND`: owner policy lifecycle. Validates arguments and
 //! routes each rail to its vendor implementation under `vendors/`.
+//!
+//! Subcommands: `generate`, `import`, `deploy`, `fund`, `execute`, `status`,
+//! `revoke`, `withdraw`, `close`, `tune`, `tune-action`. Every one accepts
+//! `--json`. Solana (default `solana:testnet`) runs through the native SDK and
+//! the chain; no `ALLOWIT_TOKEN` is needed. `--network stellar:testnet deploy`
+//! approves an installed policy; `tempo:*` supports only `import` and `execute`.
+//!
+//! ```text
+//! export ALLOWIT_POLICY_DIR=.allowit ALLOWIT_NETWORK=solana:testnet
+//! allowit policy generate "Pay up to 5 USDC a day to approved merchants"
+//! ALLOWIT_OWNER=OWNER_PUBKEY ALLOWIT_REQUEST_ID=deploy-0001 \
+//!   allowit policy deploy 10            # owner signs in the browser
+//! allowit policy import executor.json
+//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute TOKEN_ACCOUNT 0.25
+//! allowit policy status --json
+//! ```
 use crate::{
     error::{Error, Result, quoted},
     request::{matches, solana_address},

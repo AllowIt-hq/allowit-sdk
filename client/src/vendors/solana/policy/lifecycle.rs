@@ -1,5 +1,15 @@
 //! Owner operations (fund, withdraw, revoke, close, tune, tune-action) and
 //! executor payments (execute) submitted through the native lifecycle.
+//! Owner operations sign with `ALLOWIT_OWNER_KEYPAIR`; execute signs with
+//! `ALLOWIT_EXECUTOR_KEYPAIR` and needs `ALLOWIT_REQUEST_ID`.
+//!
+//! ```text
+//! allowit policy fund 10
+//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute TOKEN_ACCOUNT 0.25
+//! allowit policy tune 20
+//! allowit policy withdraw 5
+//! allowit policy close
+//! ```
 use super::*;
 
 pub(super) fn run(

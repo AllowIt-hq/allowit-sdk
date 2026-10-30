@@ -1,4 +1,7 @@
 //! Native agent launchers. Payments stay in the remote Allowit MCP service.
+//! Used by `allowit claude` and `allowit codex`: checks the subscription sign-in,
+//! removes API-key environment, injects `allowit mcp` as the MCP server and
+//! passes only the selected Allowit authority to the agent.
 use crate::{
     error::{Error, Result},
     gateway::args::Common,
