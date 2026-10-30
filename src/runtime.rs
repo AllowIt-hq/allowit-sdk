@@ -790,6 +790,7 @@ impl Evaluator<'_> {
                             return Err(invalid());
                         };
                         let mut map = if name == "grant_get" {
+                            if !self.context.rule_facts.as_ref().is_some_and(|facts|facts.grant_available){return Err(failure("NATIVE_GRANT_UNAVAILABLE","This route has no authenticated native Grant map."))}
                             self.context
                                 .policy_state
                                 .as_ref()
@@ -1550,6 +1551,7 @@ fn run_inner_scoped(
     match evaluator.block(&ir.statements, &mut env) {
         Ok(true) => {
             if let Some(map) = &evaluator.returned_spent {
+                if !ctx.policy_state_writes{return Decision::fail("NATIVE_STATE_WRITE_UNAVAILABLE","This adapter has no persistent custom State result binding.")}
                 let Some(state) = &ctx.policy_state else {
                     return Decision::fail(
                         "POLICY_STATE_REQUIRED",

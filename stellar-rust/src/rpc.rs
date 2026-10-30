@@ -162,6 +162,82 @@ pub fn prepare_with_policy_context(
         simulate(rpc, &intent)
     }
 }
+/// Read-only resource estimation. No prepared operation, signature or admission capability escapes.
+/// The private zero-gas candidate estimates execution resources only. The service must rebind
+/// its returned fee, replay the full policy and simulate/sign the final exact request separately.
+pub fn estimate_operation_fee(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    request: &ExecutionRequest,
+    accounting: Option<NativeAccounting>,
+    now: u64,
+    expires_at: u64,
+) -> Result<u32> {
+    validate_config(c)?;
+    let state = trusted_state(rpc, c, accounting)?;
+    let _ = vaults::decode_operation(c, request, false)?;
+    if c.route == WalletRoute::Native {
+        return Ok(100);
+    }
+    if c.route != WalletRoute::PolicyWallet {
+        return Err("Historical wallets cannot estimate fresh execution".into());
+    }
+    native_policy_digest(c)?;
+    let mut quote = request.clone();
+    let e = quote
+        .expense
+        .as_mut()
+        .ok_or("Resource estimation requires authoritative underlying expense identity")?;
+    e.gas_units = 0;
+    e.max_fee_stroops = 0;
+    let operation = vaults::decode_operation(c, request, false)?;
+    let movement = operation.movement();
+    if let Some(e) = quote.expense.as_mut() {
+        e.spent_units = match operation {
+            StellarOperation::Transfer(_) => movement.amount,
+            StellarOperation::VaultDeposit(_) => e.conversion_units,
+        };
+    }
+    let intent = prepare_with_bounds(
+        c,
+        &quote,
+        &state,
+        now,
+        expires_at,
+        false,
+        PacketUse::FeeQuote,
+    )?;
+    let response = rpc.call(
+        "simulateTransaction",
+        json!({"transaction":intent.transaction_xdr,"authMode":"record"}),
+    )?;
+    if response.get("error").is_some_and(|value| !value.is_null()) {
+        return Err("Read-only fee estimate rejected the candidate operation".into());
+    }
+    reject_restoration(&response)?;
+    let _: ScVal = readonly_result(&response)?;
+    let resource: SorobanTransactionData = read(
+        response["transactionData"]
+            .as_str()
+            .ok_or("Fee estimate omitted resource data")?,
+    )?;
+    let min = response["minResourceFee"]
+        .as_str()
+        .ok_or("Fee estimate omitted the minimum resource fee")?
+        .parse::<u64>()
+        .map_err(err)?;
+    if resource.resource_fee < 0 || min > resource.resource_fee as u64 {
+        return Err("Fee estimate resource amount is below its minimum".into());
+    }
+    let fee = u32::try_from(resource.resource_fee)
+        .map_err(err)?
+        .checked_add(100)
+        .ok_or("Fee estimate overflow")?;
+    if fee > c.max_fee_stroops {
+        return Err("Estimated fee exceeds the approved ceiling".into());
+    }
+    Ok(fee)
+}
 pub(crate) fn reject_restoration(value: &Value) -> Result<()> {
     if value
         .get("restorePreamble")

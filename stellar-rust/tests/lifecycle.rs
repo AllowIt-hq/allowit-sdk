@@ -2877,11 +2877,85 @@ fn historical_signed_issuer_payment_remains_read_only() {
             .unwrap_err()
             .contains("read-only")
     );
-    assert!(
-        validate_signed(&signed, 86401)
-            .unwrap_err()
-            .contains("burn")
-    );
+    assert!(validate_signed(&signed, 86401).is_err());
     assert!(sign(&signed.prepared, &[2; 32], 86401).is_err());
     assert!(prepare(&c, &signed.prepared.request, &state, 86401, 86700).is_err());
+}
+
+#[test]
+fn fee_estimate_is_read_only_and_final_signed_resource_cost_must_converge() {
+    use allowit_policy_sdk::typed_workflow::ExpenseBounds;
+    use stellar_xdr::*;
+    struct FeeRpc(PreflightRpc);
+    impl rpc::Rpc for FeeRpc {
+        fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+            let mut response = self.0.call(method, params.clone())?;
+            if method == "simulateTransaction" && response.get("transactionData").is_some() {
+                let TransactionEnvelope::Tx(env) = TransactionEnvelope::from_xdr_base64(
+                    params["transaction"].as_str().unwrap(),
+                    Limits::none(),
+                )
+                .unwrap() else {
+                    panic!()
+                };
+                let OperationBody::InvokeHostFunction(op) = &env.tx.operations[0].body else {
+                    panic!()
+                };
+                let signed = matches!(&op.auth[1].credentials,SorobanCredentials::Address(a)if a.signature!=ScVal::Void);
+                let data = SorobanTransactionData {
+                    resource_fee: if signed { 2000 } else { 1000 },
+                    ..Default::default()
+                };
+                response["transactionData"] = json!(data.to_xdr_base64(Limits::none()).unwrap());
+                response["minResourceFee"] = json!(data.resource_fee.to_string());
+            }
+            Ok(response)
+        }
+    }
+    let (mut c, mut request, state) = fixture(WalletRoute::PolicyWallet, false);
+    c.policy_engine = Some(PolicyEngine::CommonPolicyEngine);
+    c.policy_source="use allowit::prelude::*; async fn _execute(ctx:&Context)->PolicyResult{allowit::spent_cap(grant::spent_cap)?;Ok(())}".into();
+    refresh_binding(&mut c);
+    request.expense = Some(ExpenseBounds {
+        asset: wf(&c.asset),
+        decimals: 7,
+        gas_units: 50_000,
+        conversion_units: 0,
+        spent_units: 20_050_000,
+        max_fee_stroops: 50_000,
+        observed_ledger: 100,
+        day: 1,
+    });
+    let rpc = FeeRpc(PreflightRpc {
+        base: PolicyWalletAccountRpc {
+            config: c.clone(),
+            source: state.source,
+            paused: false,
+        },
+        request: request.clone(),
+        failure: "",
+    });
+    let estimate = rpc::estimate_operation_fee(&rpc, &c, &request, None, 86401, 86700).unwrap();
+    assert_eq!(estimate, 1100);
+    // This probe returns only a fee number. Every executable scope is rebuilt independently.
+    for fee in [estimate, 2100] {
+        let expense = request.expense.as_mut().unwrap();
+        expense.max_fee_stroops = fee;
+        expense.gas_units = fee.into();
+        expense.spent_units = 20_000_000 + i128::from(fee);
+        let unsigned = rpc::prepare(&rpc, &c, &request, None, 86401, 86700).unwrap();
+        // Unsigned simulation may change the outer fee. Rebind before issuing any authorization.
+        if operation_fee(&unsigned).unwrap() != fee {
+            continue;
+        }
+        let signed = authorize_server(&unsigned, &[3; 32], 86401, None).unwrap();
+        let checked = rpc::simulate(&rpc, &signed).unwrap();
+        assert_eq!(operation_fee(&checked).unwrap(), 2100);
+        if fee == estimate {
+            assert!(sign(&checked, &[2; 32], 86401).is_err());
+            assert!(validate_prepared(&checked, 86401).is_err());
+        } else {
+            assert!(sign(&checked, &[2; 32], 86401).is_ok());
+        }
+    }
 }

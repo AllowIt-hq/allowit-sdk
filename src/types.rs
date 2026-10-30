@@ -371,6 +371,10 @@ pub struct Context {
     /// Trusted adapter capability. Public Context JSON cannot populate this field.
     #[serde(skip)]
     pub policy_state: Option<crate::TrustedPolicyState>,
+    /// Separate native adapter capability for an explicitly supported persistent State result.
+    /// Canonical rule accounting and an available Grant do not grant this authority.
+    #[serde(skip)]
+    pub policy_state_writes: bool,
     #[serde(skip)]
     #[cfg(feature = "typed-workflow")]
     pub workflow: Option<alloc::boxed::Box<crate::typed_workflow::WorkflowEnvironment>>,
@@ -437,6 +441,7 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             rule_facts: None,
+            policy_state_writes:false,
             #[cfg(feature = "typed-workflow")]
             workflow: None,
             #[cfg(feature = "typed-workflow")]

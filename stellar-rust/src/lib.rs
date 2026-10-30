@@ -721,6 +721,7 @@ enum PacketUse {
     RetainedWithoutExpense,
     RetainedRevision,
     NativePreflight,
+    FeeQuote,
 }
 fn build(
     c: &WalletConfig,
@@ -761,11 +762,10 @@ fn build(
             return Err("Expense observation day or ledger differs from native preparation".into());
         }
         if matches!(packet, PacketUse::Current | PacketUse::NativePreflight)
-            && e.max_fee_stroops != c.max_fee_stroops
+            && (e.max_fee_stroops < 100 || e.max_fee_stroops > c.max_fee_stroops)
         {
             return Err(
-                "Direct execution expense gas must bind the exact configured agent fee ceiling"
-                    .into(),
+                "Direct execution expense gas must fit the approved agent fee ceiling".into(),
             );
         }
     }
@@ -882,7 +882,14 @@ fn build(
     }
     let tx = Transaction {
         source_account: muxed(&state.source.address)?,
-        fee: c.max_fee_stroops,
+        fee: if matches!(packet, PacketUse::FeeQuote) {
+            c.max_fee_stroops
+        } else {
+            r.expense
+                .as_ref()
+                .map(|e| e.max_fee_stroops)
+                .unwrap_or(c.max_fee_stroops)
+        },
         seq_num: SequenceNumber(
             state
                 .source
@@ -1055,6 +1062,7 @@ pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
         );
     }
     validate_signing_policy(p, p.created_at)?;
+    validate_expense_fee(p)?;
     validate_retained_prepared(p)
 }
 /// Verify retained transport and effect identity for read-only history or recovery.
@@ -1103,6 +1111,23 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
     Ok(())
 }
 /// Private original-byte decoder. It never creates a fresh legacy preparation route.
+pub fn operation_fee(p: &PreparedOperation) -> Result<u32> {
+    let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+        return Err("Expected a Stellar transaction envelope".into());
+    };
+    Ok(env.tx.fee)
+}
+fn validate_expense_fee(p: &PreparedOperation) -> Result<()> {
+    if let Some(expense) = &p.request.expense {
+        if expense.max_fee_stroops < 100
+            || expense.max_fee_stroops > p.config.max_fee_stroops
+            || operation_fee(p)? != expense.max_fee_stroops
+        {
+            return Err("Final attributable expense gas must equal the exact outer transaction fee within its approved ceiling".into());
+        }
+    }
+    Ok(())
+}
 fn packet_has_expense(p: &PreparedOperation) -> Result<bool> {
     if p.config.route == WalletRoute::Native {
         let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
@@ -1345,6 +1370,10 @@ pub fn authorize(
     })
 }
 pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
+    if !packet_has_expense(&s.prepared)? {
+        return Err("Historical packets are read-only".into());
+    }
+    validate_expense_fee(&s.prepared)?;
     operation_from_request(&s.prepared.config, &s.prepared.request)?;
     if s.prepared.state.contract_version == Some(1) && needs_native_preflight(&s.prepared.config)? {
         if s.prepared.created_at > now || now >= s.prepared.expires_at {
@@ -1423,7 +1452,12 @@ pub fn attach_simulation(p: &PreparedOperation, data: &str) -> Result<PreparedOp
         return Err("Unsupported transaction envelope".into());
     };
     env.tx.ext = TransactionExt::V1(resource);
-    env.tx.fee = required;
+    env.tx.fee = p
+        .request
+        .expense
+        .as_ref()
+        .map(|expense| expense.max_fee_stroops.max(required))
+        .unwrap_or(required);
     let mut out = p.clone();
     out.transaction_hash = transaction_hash(&p.config.network, &env.tx)?;
     out.transaction_xdr = xdr(&TransactionEnvelope::Tx(env))?;
