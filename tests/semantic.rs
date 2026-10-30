@@ -11,12 +11,13 @@ fn context() -> Context {
 fn research_category_requires_assessment_regardless_of_caller_label() {
     let policy = compile(include_str!("../examples/research.rs")).unwrap();
     let mut ctx: Context = serde_json::from_str(include_str!("../examples/context.json")).unwrap();
+    bind_rules(&mut ctx);
     let question =
         "Does this purchase count as research under the user's stated purpose and definitions?";
     for label in ["research", "study", "caller-chosen-label"] {
         ctx.action = label.into();
         ctx.confidence.clear();
-        let missing = evaluate(&policy, Profile::Oracle, &ctx);
+        let missing = allowit_sdk::evaluate_with_policy_rules(&policy, &ctx);
         assert_eq!(missing.code, "SEMANTIC_EVIDENCE_REQUIRED");
         assert_eq!(missing.question.as_deref(), Some(question));
         for (score, outcome) in [(8500, "pass"), (4000, "fail")] {
@@ -27,7 +28,10 @@ fn research_category_requires_assessment_regardless_of_caller_label() {
                     upper_bps: score,
                 },
             );
-            assert_eq!(evaluate(&policy, Profile::Oracle, &ctx).outcome, outcome);
+            assert_eq!(
+                allowit_sdk::evaluate_with_policy_rules(&policy, &ctx).outcome,
+                outcome
+            );
         }
     }
 }
@@ -35,7 +39,7 @@ fn research_category_requires_assessment_regardless_of_caller_label() {
 #[test]
 fn semantic_request_identifies_exact_question_and_requires_original_intent() {
     let question = "Does this request avoid hype?";
-    let p=compile(&source(&format!("let score = semantic(ctx, \"{question}\")?; if score.lower_bps < 8000 {{ return fail(\"Too much hype\"); }} Ok(())"))).unwrap();
+    let p=compile(&source(&format!("let score = allowit::semantic(ctx, \"{question}\")?; if score.lower_bps < 8000 {{ return Err(PolicyError {{ code: \"POLICY_REJECTED\".into(), reason: \"Too much hype\".into() }}); }} Ok(())"))).unwrap();
     let mut ctx = context();
     let missing = evaluate(&p, Profile::Oracle, &ctx);
     assert_eq!(missing.outcome, "fail");
@@ -70,11 +74,12 @@ fn semantic_request_identifies_exact_question_and_requires_original_intent() {
 fn deterministic_return_gap_cannot_be_overridden_by_a_high_semantic_score() {
     let p = compile(include_str!("../examples/green-investments.rs")).unwrap();
     let mut ctx = context();
+    bind_rules(&mut ctx);
     for question in [
         "Does this transaction count as an investment under the user's stated purpose and definitions?",
         "Does this investment prioritize credible environmental benefits and avoid hype?",
     ] {
-        let missing = evaluate(&p, Profile::Oracle, &ctx);
+        let missing = allowit_sdk::evaluate_with_policy_rules(&p, &ctx);
         assert_eq!(missing.code, "SEMANTIC_EVIDENCE_REQUIRED");
         assert_eq!(missing.question.as_deref(), Some(question));
         ctx.confidence.insert(
@@ -85,19 +90,34 @@ fn deterministic_return_gap_cannot_be_overridden_by_a_high_semantic_score() {
             },
         );
     }
-    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "pass");
+    assert_eq!(
+        allowit_sdk::evaluate_with_policy_rules(&p, &ctx).outcome,
+        "pass"
+    );
     ctx.runtime_context["candidate_yield_bps"] = json!(400);
-    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).outcome, "pass");
+    assert_eq!(
+        allowit_sdk::evaluate_with_policy_rules(&p, &ctx).outcome,
+        "pass"
+    );
     ctx.runtime_context["candidate_yield_bps"] = json!(399);
-    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).code, "POLICY_REJECTED");
+    assert_eq!(
+        allowit_sdk::evaluate_with_policy_rules(&p, &ctx).code,
+        "POLICY_REJECTED"
+    );
     ctx.runtime_context["candidate_yield_bps"] = json!(u64::MAX);
     // A higher candidate return passes the gap check without overflowing candidate + gap.
     // This numeric comparison does not authenticate the supplied return estimate.
-    assert_eq!(evaluate(&p, Profile::Oracle, &ctx).code, "PASS");
+    assert_eq!(
+        allowit_sdk::evaluate_with_policy_rules(&p, &ctx).code,
+        "PASS"
+    );
 }
 #[test]
 fn context_values_are_strict_u64_not_coerced() {
-    let p = compile(&source("let value = context_u64(ctx, \"yield\")?; Ok(())")).unwrap();
+    let p = compile(&source(
+        "let value = allowit::context_u64(ctx, \"yield\")?; Ok(())",
+    ))
+    .unwrap();
     let mut ctx = context();
     assert_eq!(
         evaluate(&p, Profile::Oracle, &ctx).code,
@@ -138,4 +158,20 @@ fn runtime_json_and_original_intent_are_bounded() {
     }
     ctx.runtime_context = deep;
     assert_eq!(evaluate(&p, Profile::Oracle, &ctx).code, "INVALID_CONTEXT");
+}
+
+fn bind_rules(ctx: &mut Context) {
+    ctx.policy_state = Some(allowit_sdk::TrustedPolicyState::default());
+    ctx.rule_facts = Some(allowit_sdk::PolicyRuleFacts {
+        operation_id: "semantic-fixture".into(),
+        grant_available: true,
+        amount_units: ctx.amount_units,
+        asset_id: "SAC".into(),
+        recipient: ctx.recipient.clone(),
+        now: ctx.now,
+        expense: Some(allowit_sdk::RuleExpense {
+            spent_units: ctx.amount_units,
+            gas_units: 0,
+        }),
+    });
 }

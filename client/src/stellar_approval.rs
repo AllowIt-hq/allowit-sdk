@@ -14,7 +14,13 @@ pub struct PolicyBinding {
     pub wallet: String,
     pub route: String,
     pub policy_instance: String,
-    pub module_digest: String,
+    /// Retained old packets can decode this field. Fresh Native intents omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_revision: Option<u64>,
     pub asset: String,
     pub asset_symbol: String,
     pub asset_issuer: Option<String>,
@@ -82,6 +88,10 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || b.route != "native"
+        || b.module_digest.is_some()
+        || b.prefix_digest.is_none()
+        || b.source_revision
+            .is_none_or(|revision| revision > 9_007_199_254_740_991)
         || b.asset_symbol.is_empty()
         || b.asset_symbol.len() > 12
         || !b.asset_symbol.bytes().all(|b| b.is_ascii_alphanumeric())
@@ -110,7 +120,7 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
             "The Stellar SAC differs from its asset code, issuer or network",
         ));
     }
-    for h in [&b.policy_instance, &b.module_digest] {
+    for h in [&b.policy_instance, b.prefix_digest.as_ref().unwrap()] {
         allowit_stellar_wallet::unhex::<32>(h).map_err(Error::config)?;
         if !h
             .bytes()
@@ -120,6 +130,19 @@ pub fn validate(v: &ApprovalIntent) -> Result<()> {
                 "Stellar policy identities must use lowercase hexadecimal",
             ));
         }
+    }
+    let expected = allowit_stellar_wallet::source_updates::native_source_binding_digest(
+        &v.network,
+        &b.wallet,
+        allowit_stellar_wallet::unhex(&b.policy_instance).map_err(Error::config)?,
+        &b.asset,
+        b.max_fee_stroops,
+    )
+    .map_err(Error::config)?;
+    if b.prefix_digest.as_deref() != Some(&allowit_stellar_wallet::hex(&expected)) {
+        return Err(Error::config(
+            "Native source binding differs from the actual wallet, asset or fee ceiling",
+        ));
     }
     if let Some(h) = &b.deployment_id {
         allowit_stellar_wallet::unhex::<32>(h).map_err(Error::config)?;
@@ -181,7 +204,9 @@ pub fn approval_for_policy(
         wallet: raw["wallet"].as_str().unwrap_or("").into(),
         route: raw["route"].as_str().unwrap_or("").into(),
         policy_instance: raw["policyInstance"].as_str().unwrap_or("").into(),
-        module_digest: raw["moduleDigest"].as_str().unwrap_or("").into(),
+        module_digest: optional("moduleDigest")?,
+        prefix_digest: optional("prefixDigest")?,
+        source_revision: raw["sourceRevision"].as_u64(),
         asset: text("mint")?,
         asset_symbol: text("token")?,
         asset_issuer: optional("assetIssuer")?,
@@ -272,7 +297,28 @@ pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {
 mod tests {
     use super::*;
     fn fixture() -> serde_json::Value {
-        serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap()
+        let mut fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap();
+        let mut intent: ApprovalIntent = serde_json::from_value(fixture["intent"].clone()).unwrap();
+        intent.binding.module_digest = None;
+        intent.binding.source_revision = Some(0);
+        intent.binding.prefix_digest = Some(allowit_stellar_wallet::hex(
+            &allowit_stellar_wallet::source_updates::native_source_binding_digest(
+                &intent.network,
+                &intent.binding.wallet,
+                allowit_stellar_wallet::unhex(&intent.binding.policy_instance).unwrap(),
+                &intent.binding.asset,
+                intent.binding.max_fee_stroops,
+            )
+            .unwrap(),
+        ));
+        intent.intent_digest = intent_digest(&intent).unwrap();
+        fixture["intent"] = serde_json::to_value(&intent).unwrap();
+        let binding = &mut fixture["policy"]["runtime"]["instanceBinding"];
+        binding.as_object_mut().unwrap().remove("moduleDigest");
+        binding["prefixDigest"] = serde_json::json!(intent.binding.prefix_digest);
+        binding["sourceRevision"] = serde_json::json!(0);
+        fixture
     }
     #[test]
     fn public_approval_binds_original_source_and_filters_secret_fields() {
@@ -296,7 +342,7 @@ mod tests {
     fn altered_binding_profile_and_network_are_refused() {
         let f = fixture();
         let mut intent: ApprovalIntent = serde_json::from_value(f["intent"].clone()).unwrap();
-        intent.binding.module_digest = "11".repeat(32);
+        intent.binding.module_digest = Some("11".repeat(32));
         assert!(validate(&intent).is_err());
         let mut policy = f["policy"].clone();
         policy["network"] = serde_json::json!("stellar:mainnet");
@@ -327,6 +373,16 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+        issued.binding.prefix_digest = Some(allowit_stellar_wallet::hex(
+            &allowit_stellar_wallet::source_updates::native_source_binding_digest(
+                &issued.network,
+                &issued.binding.wallet,
+                allowit_stellar_wallet::unhex(&issued.binding.policy_instance).unwrap(),
+                &issued.binding.asset,
+                issued.binding.max_fee_stroops,
+            )
+            .unwrap(),
+        ));
         issued.intent_digest = intent_digest(&issued).unwrap();
         validate(&issued).unwrap();
         for symbol in ["XLM\n", "USDC\u{202e}", "TOO_LONG_ASSET"] {

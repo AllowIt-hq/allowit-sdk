@@ -72,9 +72,9 @@ fn context(question: &str, lower: u64, upper: u64) -> Context {
 #[test]
 fn current_helper_preserves_unicode_comments_and_unrelated_literal_text() {
     let original = source(
-        r#"// 🌱 café: check_preference(ctx, "Research", 0.40, 0.85).await?;
+        r#"// 🌱 café: allowit::v1::prelude::check_preference(ctx, "Research", 0.40, 0.85).await?;
 let note = "0.40, 0.85; fit.lower_bps < 8500 🧪";
-check_preference(ctx, "Research 🧪, 0.40, 0.85", /* deny */ 0.40, /* approve */ 0.85).await?;
+allowit::v1::prelude::check_preference(ctx, "Research 🧪, 0.40, 0.85", /* deny */ 0.40, /* approve */ 0.85).await?;
 Ok(())"#,
     );
     let response = preference(
@@ -95,8 +95,8 @@ Ok(())"#,
 #[test]
 fn identical_questions_are_targeted_by_step_id_for_both_helpers() {
     for call in [
-        "check_preference(ctx, \"Same question\", 0.40, 0.85).await?;",
-        "check_preference(ctx, \"Same question\", true, \"85\", true, \"40\").await?;",
+        "allowit::v1::prelude::check_preference(ctx, \"Same question\", 0.40, 0.85).await?;",
+        "allowit::prelude::check_preference(ctx, \"Same question\", true, \"85\", true, \"40\").await?;",
     ] {
         let original = source(&format!(
             "{call}\n// Keep the first occurrence.\n{call}\nOk(())"
@@ -124,7 +124,7 @@ fn identical_questions_are_targeted_by_step_id_for_both_helpers() {
 fn legacy_helper_changes_only_selected_arguments() {
     let original = source(
         r#"// Décision 🌱; unrelated values: true, "85", true, "40".
-check_preference(ctx, "Research 🌱", true /* A */, "85" /* B */, true /* C */, "40" /* D */).await?;
+allowit::prelude::check_preference(ctx, "Research 🌱", true /* A */, "85" /* B */, true /* C */, "40" /* D */).await?;
 Ok(())"#,
     );
     let mut values = settings(&step_id(&original, "check_preference", 0));
@@ -143,8 +143,9 @@ Ok(())"#,
 
 #[test]
 fn current_auto_and_none_arguments_can_enable_or_disable_each_outcome() {
-    let original =
-        source("check_preference(ctx, \"Research\", auto(\"deny\"), None).await?;\nOk(())");
+    let original = source(
+        "allowit::v1::prelude::check_preference(ctx, \"Research\", auto(\"deny\"), None).await?;\nOk(())",
+    );
     let mut values = settings(&step_id(&original, "check_preference", 0));
     values["auto_deny"] = json!(false);
     values["approve_percent"] = json!("100");
@@ -170,12 +171,7 @@ fn current_auto_and_none_arguments_can_enable_or_disable_each_outcome() {
 #[test]
 fn raw_semantic_bounds_preserve_operators_and_unrelated_source() {
     let original = source(
-        r#"// λ 🧪: fit.lower_bps < 8500; percent("40")?
-let note = "fit.lower_bps < 8500; fit.upper_bps <= percent(\"40\")?";
-let fit = semantic(ctx, "Research 🧪")?;
-if fit.upper_bps <= percent("40")? { return fail("No"); }
-if fit.lower_bps < 8500 { return fail("Uncertain"); }
-Ok(())"#,
+        "// λ 🧪: fit.lower_bps < 8500; allowit::percent(\"40\")?\nlet note = \"fit.lower_bps < 8500; fit.upper_bps <= allowit::percent(\\\"40\\\")?\";\nlet fit = allowit::semantic(ctx, \"Research 🧪\")?;\nif fit.upper_bps <= allowit::percent(\"40\")? { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nif fit.lower_bps < 8500 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"Uncertain\".into() }); }\nOk(())",
     );
     let policy = compile(&original).unwrap();
     let step = policy
@@ -192,8 +188,8 @@ Ok(())"#,
     let response = thresholds(&original, &step.id, json!([3000, 9000]));
     let expected = original
         .replace(
-            "if fit.upper_bps <= percent(\"40\")?",
-            "if fit.upper_bps <= percent(\"30.00\")?",
+            "if fit.upper_bps <= allowit::percent(\"40\")?",
+            "if fit.upper_bps <= allowit::percent(\"30.00\")?",
         )
         .replace("if fit.lower_bps < 8500", "if fit.lower_bps < 9000");
     assert_eq!(edited(&response), expected);
@@ -202,11 +198,7 @@ Ok(())"#,
 #[test]
 fn raw_semantic_edits_do_not_confuse_identical_questions_or_other_variables() {
     let original = source(
-        r#"let first = semantic(ctx, "Same")?;
-let second = semantic(ctx, "Same")?;
-if first.lower_bps < 8500 || second.lower_bps < 8500 { return fail("No"); }
-if second.upper_bps > percent("95")? { return fail("No"); }
-Ok(())"#,
+        "let first = allowit::semantic(ctx, \"Same\")?;\nlet second = allowit::semantic(ctx, \"Same\")?;\nif first.lower_bps < 8500 || second.lower_bps < 8500 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nif second.upper_bps > allowit::percent(\"95\")? { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nOk(())",
     );
     let response = thresholds(
         &original,
@@ -218,8 +210,8 @@ Ok(())"#,
         original
             .replace("second.lower_bps < 8500", "second.lower_bps < 9000")
             .replace(
-                "second.upper_bps > percent(\"95\")?",
-                "second.upper_bps > percent(\"100.00\")?"
+                "second.upper_bps > allowit::percent(\"95\")?",
+                "second.upper_bps > allowit::percent(\"100.00\")?"
             )
     );
 }
@@ -227,7 +219,7 @@ Ok(())"#,
 #[test]
 fn stale_step_ids_and_wrong_operation_targets_are_rejected() {
     let original = source(
-        "check_preference(ctx, \"Research\", 0.40, 0.85).await?;\nlet fit = semantic(ctx, \"Other\")?;\nif fit.lower_bps < 8000 { return fail(\"No\"); }\nOk(())",
+        "allowit::v1::prelude::check_preference(ctx, \"Research\", 0.40, 0.85).await?;\nlet fit = allowit::semantic(ctx, \"Other\")?;\nif fit.lower_bps < 8000 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nOk(())",
     );
     let helper_id = step_id(&original, "check_preference", 0);
     let semantic_id = step_id(&original, "semantic", 0);
@@ -243,7 +235,9 @@ fn stale_step_ids_and_wrong_operation_targets_are_rejected() {
 
 #[test]
 fn malformed_or_ambiguous_threshold_updates_are_rejected() {
-    let original = source("check_preference(ctx, \"Research\", 0.40, 0.85).await?;\nOk(())");
+    let original = source(
+        "allowit::v1::prelude::check_preference(ctx, \"Research\", 0.40, 0.85).await?;\nOk(())",
+    );
     let id = step_id(&original, "check_preference", 0);
     for invalid in [
         json!("101"),
@@ -272,7 +266,7 @@ fn malformed_or_ambiguous_threshold_updates_are_rejected() {
     rejected(preference(&original, values));
 
     let raw = source(
-        "let fit = semantic(ctx, \"Research\")?;\nif fit.lower_bps < 8500 { return fail(\"No\"); }\nOk(())",
+        "let fit = allowit::semantic(ctx, \"Research\")?;\nif fit.lower_bps < 8500 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nOk(())",
     );
     let id = step_id(&raw, "semantic", 0);
     for invalid in [
@@ -291,7 +285,7 @@ fn malformed_or_ambiguous_threshold_updates_are_rejected() {
 #[test]
 fn helper_edits_change_only_requested_inclusive_score_boundaries() {
     let original = source(
-        "set_cap_per_day(ctx, \"25\", \"USDC\")?;\ncheck_preference(ctx, \"Research\", 0.40, 0.85).await?;\nOk(())",
+        "if ctx.amount_units > 25_000_000 { return Err(PolicyError {code: \"TRANSACTION_CAP_EXCEEDED\".into(),reason: \"Amount exceeds its limit.\".into()}); }\nallowit::v1::prelude::check_preference(ctx, \"Research\", 0.40, 0.85).await?;\nOk(())",
     );
     let before = compile(&original).unwrap();
     let response = preference(
@@ -330,7 +324,7 @@ fn helper_edits_change_only_requested_inclusive_score_boundaries() {
         context.amount_units += 1;
         assert_eq!(
             evaluate(policy, Profile::Oracle, &context).code,
-            "DAILY_CAP_EXCEEDED"
+            "TRANSACTION_CAP_EXCEEDED"
         );
         context.amount_units = 1;
         context.confidence.clear();
@@ -353,7 +347,7 @@ fn helper_edits_change_only_requested_inclusive_score_boundaries() {
 #[test]
 fn raw_bound_edits_preserve_inclusive_runtime_comparisons() {
     let original = source(
-        "let fit = semantic(ctx, \"Research\")?;\nif fit.lower_bps < 8500 || fit.upper_bps > percent(\"95\")? { return fail(\"No\"); }\nOk(())",
+        "let fit = allowit::semantic(ctx, \"Research\")?;\nif fit.lower_bps < 8500 || fit.upper_bps > allowit::percent(\"95\")? { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nOk(())",
     );
     let response = thresholds(
         &original,
@@ -378,7 +372,7 @@ fn raw_bound_edits_preserve_inclusive_runtime_comparisons() {
 #[test]
 fn shadowing_is_rejected_before_any_source_edit() {
     let original = source(
-        "let fit = semantic(ctx, \"Research\")?;\nif true { let fit = semantic(ctx, \"Other\")?; if fit.lower_bps < 8500 { return fail(\"No\"); } }\nOk(())",
+        "let fit = allowit::semantic(ctx, \"Research\")?;\nif true { let fit = allowit::semantic(ctx, \"Other\")?; if fit.lower_bps < 8500 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); } }\nOk(())",
     );
     assert!(compile(&original).is_err());
     rejected(thresholds(&original, "anything", json!([9000])));
@@ -387,11 +381,7 @@ fn shadowing_is_rejected_before_any_source_edit() {
 #[test]
 fn typed_semantic_bindings_and_parenthesized_bounds_remain_editable() {
     let original = source(
-        r#"// Typé 🌱, preserve every pair of parentheses.
-let fit: ConfidenceInterval = (semantic(ctx, "Research")?);
-if ((fit).lower_bps) < ((8_500u64)) { return fail("No"); }
-if (fit.upper_bps) > (percent("95")?) { return fail("No"); }
-Ok(())"#,
+        "// Typé 🌱, preserve every pair of parentheses.\nlet fit: ConfidenceInterval = (allowit::semantic(ctx, \"Research\")?);\nif ((fit).lower_bps) < ((8_500u64)) { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nif (fit.upper_bps) > (allowit::percent(\"95\")?) { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nOk(())",
     );
     let response = thresholds(
         &original,
@@ -402,7 +392,7 @@ Ok(())"#,
         edited(&response),
         original
             .replace("((8_500u64))", "((9000))")
-            .replace("percent(\"95\")?", "percent(\"98.00\")?")
+            .replace("allowit::percent(\"95\")?", "allowit::percent(\"98.00\")?")
     );
 }
 
@@ -410,7 +400,7 @@ Ok(())"#,
 fn current_helper_preserves_unchanged_numeric_and_auto_arguments_byte_for_byte() {
     for deny in ["0.40", "0.4000", "auto(/* retain this 🌱 */ \"deny\")"] {
         let original = source(&format!(
-            "check_preference(ctx, \"Research\", {deny}, /* change only this */ 0.85).await?;\nOk(())"
+            "allowit::v1::prelude::check_preference(ctx, \"Research\", {deny}, /* change only this */ 0.85).await?;\nOk(())"
         ));
         let mut values = settings(&step_id(&original, "check_preference", 0));
         values["deny_percent"] = json!("40.00");
@@ -428,7 +418,7 @@ fn current_helper_preserves_unchanged_numeric_and_auto_arguments_byte_for_byte()
 #[test]
 fn legacy_helper_preserves_unchanged_numeric_argument_bytes() {
     let original = source(
-        r##"check_preference(ctx, "Research", true, "85", true, r#"040.00"#).await?;
+        r##"allowit::prelude::check_preference(ctx, "Research", true, "85", true, r#"040.00"#).await?;
 Ok(())"##,
     );
     let mut values = settings(&step_id(&original, "check_preference", 0));
@@ -444,7 +434,7 @@ Ok(())"##,
 fn unchanged_raw_numeric_and_percentage_bounds_keep_exact_spelling() {
     for numeric in ["8_500u64", "0x2134", "8500"] {
         let original = source(&format!(
-            "let fit = semantic(ctx, \"Research\")?;\nif fit.lower_bps < {numeric} || fit.upper_bps > percent(\"095.0\")? {{ return fail(\"No\"); }}\nOk(())"
+            "let fit = allowit::semantic(ctx, \"Research\")?;\nif fit.lower_bps < {numeric} || fit.upper_bps > allowit::percent(\"095.0\")? {{ return Err(PolicyError {{ code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }}); }}\nOk(())"
         ));
         let response = thresholds(
             &original,
@@ -474,7 +464,7 @@ fn unchanged_raw_numeric_and_percentage_bounds_keep_exact_spelling() {
 #[test]
 fn no_op_parameter_edits_preserve_source_and_artifact_hashes() {
     let helper = source(
-        "check_preference(ctx, \"Research 🌱\", auto(/* retain */ \"deny\"), 0.8500).await?;\nOk(())",
+        "allowit::v1::prelude::check_preference(ctx, \"Research 🌱\", auto(/* retain */ \"deny\"), 0.8500).await?;\nOk(())",
     );
     let mut values = settings(&step_id(&helper, "check_preference", 0));
     values["approve_percent"] = json!("85");
@@ -491,7 +481,7 @@ fn no_op_parameter_edits_preserve_source_and_artifact_hashes() {
     );
 
     let raw = source(
-        "let fit = semantic(ctx, \"Research\")?;\nif fit.lower_bps < 8_500u64 || fit.upper_bps > percent(\"095.0\")? { return fail(\"No\"); }\nOk(())",
+        "let fit = allowit::semantic(ctx, \"Research\")?;\nif fit.lower_bps < 8_500u64 || fit.upper_bps > allowit::percent(\"095.0\")? { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nOk(())",
     );
     let response = thresholds(&raw, &step_id(&raw, "semantic", 0), json!([8500, 9500]));
     assert_eq!(edited(&response), raw);
@@ -521,7 +511,7 @@ fn partial_semantic_edit_is_rejected(body: &str) {
 #[test]
 fn a_reversed_comparison_prevents_partial_literal_threshold_edits() {
     partial_semantic_edit_is_rejected(
-        "let fit = semantic(ctx, \"Research\")?;\nif 5000 <= fit.lower_bps { return Ok(()); }\nif fit.lower_bps < 9000 { return fail(\"No\"); }\nOk(())",
+        "let fit = allowit::semantic(ctx, \"Research\")?;\nif 5000 <= fit.lower_bps { return Ok(()); }\nif fit.lower_bps < 9000 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); }\nOk(())",
     );
 }
 
@@ -533,7 +523,7 @@ fn a_computed_bound_prevents_partial_literal_threshold_edits() {
         "if fit.lower_bps + 1000 >= 6000 { return Ok(()); }",
     ] {
         partial_semantic_edit_is_rejected(&format!(
-            "let fit = semantic(ctx, \"Research\")?;\n{other_comparison}\nif fit.lower_bps < 9000 {{ return fail(\"No\"); }}\nOk(())"
+            "let fit = allowit::semantic(ctx, \"Research\")?;\n{other_comparison}\nif fit.lower_bps < 9000 {{ return Err(PolicyError {{ code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }}); }}\nOk(())"
         ));
     }
 }
@@ -545,7 +535,7 @@ fn an_aliased_assessment_prevents_partial_literal_threshold_edits() {
         "let lower = fit.lower_bps; if lower >= 5000 { return Ok(()); }",
     ] {
         partial_semantic_edit_is_rejected(&format!(
-            "let fit = semantic(ctx, \"Research\")?;\n{alias}\nif fit.lower_bps < 9000 {{ return fail(\"No\"); }}\nOk(())"
+            "let fit = allowit::semantic(ctx, \"Research\")?;\n{alias}\nif fit.lower_bps < 9000 {{ return Err(PolicyError {{ code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }}); }}\nOk(())"
         ));
     }
 }
@@ -553,7 +543,7 @@ fn an_aliased_assessment_prevents_partial_literal_threshold_edits() {
 #[test]
 fn unsupported_reads_of_another_assessment_do_not_disable_the_selected_one() {
     let original = source(
-        "let selected = semantic(ctx, \"Selected\")?;\nlet other = semantic(ctx, \"Other\")?;\nif 5000 <= other.lower_bps { return fail(\"Other\"); }\nif selected.lower_bps < 9000 { return fail(\"Selected\"); }\nOk(())",
+        "let selected = allowit::semantic(ctx, \"Selected\")?;\nlet other = allowit::semantic(ctx, \"Other\")?;\nif 5000 <= other.lower_bps { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"Other\".into() }); }\nif selected.lower_bps < 9000 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"Selected\".into() }); }\nOk(())",
     );
     let response = thresholds(&original, &step_id(&original, "semantic", 0), json!([9500]));
     assert_eq!(
@@ -565,12 +555,12 @@ fn unsupported_reads_of_another_assessment_do_not_disable_the_selected_one() {
 #[test]
 fn qualified_preference_edits_preserve_namespaces_and_comments() {
     let original = source(
-        "allowit::check_preference(ctx, \"Research?\", /* deny */ 0.40, /* approve */ 0.85).await?; Ok(())",
+        "allowit::v1::prelude::check_preference(ctx, \"Research?\", /* deny */ 0.40, /* approve */ 0.85).await?; Ok(())",
     );
     let id = step_id(&original, "check_preference", 0);
     let response = preference(&original, settings(&id));
     let next = edited(&response);
-    assert!(next.contains("allowit::check_preference"));
+    assert!(next.contains("allowit::v1::prelude::check_preference"));
     assert!(next.contains("/* deny */ 0.3000"));
     assert!(next.contains("/* approve */ 0.9000"));
 }

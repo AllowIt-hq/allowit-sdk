@@ -14,29 +14,26 @@ fn context() -> Context {
     }
 }
 fn policy(body: &str) -> String {
-    format!(
-        "pub async fn exec(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"10\", \"USDC\")?; {body} Ok(()) }}"
-    )
+    format!("pub async fn exec(ctx: &Context) -> PolicyResult {{  {body} Ok(()) }}")
 }
 #[test]
 fn reports_actual_call_not_first_similar_rule() {
-    let source = policy(
-        "cap_per_transaction(ctx, \"1\", \"USDC\")?; cap_per_transaction(ctx, \"0.5\", \"USDC\")?;",
-    );
+    let source =
+        policy("allowit::transaction_cap(1_000_000)?; allowit::transaction_cap(500_000)?;");
     let compiled = compile(&source).unwrap();
-    let d = evaluate(&compiled, Profile::Oracle, &context());
-    assert_eq!(d.code, "PURCHASE_CAP_EXCEEDED");
-    assert_eq!(d.source_start, source.rfind("cap_per_transaction"));
+    let d = allowit_sdk::evaluate_with_policy_rules(&compiled, &rule_context());
+    assert_eq!(d.code, "TRANSACTION_CAP_EXCEEDED");
+    assert_eq!(d.source_start, source.rfind("allowit::transaction_cap"));
     assert_eq!(
         &source[d.source_start.unwrap()..d.source_end.unwrap()],
-        "cap_per_transaction"
+        "allowit::transaction_cap"
     );
 }
 #[test]
 fn maps_lowered_preference_and_custom_input_to_exact_source() {
     for body in [
-        "check_preference(ctx, \"Primary 🌱 evidence?\", None, None).await?;",
-        "if ctx.amount_units > 500000 { require_user_input(ctx, \"Review 🌱\").await?; }",
+        "allowit::v1::prelude::check_preference(ctx, \"Primary 🌱 evidence?\", None, None).await?;",
+        "if ctx.amount_units > 500000 { allowit::require_user_input(ctx, \"Review 🌱\").await?; }",
     ] {
         let source = policy(body);
         let compiled = compile(&source).unwrap();
@@ -44,12 +41,12 @@ fn maps_lowered_preference_and_custom_input_to_exact_source() {
         assert_eq!(d.outcome, "awaiting_input");
         let slice = &source[d.source_start.unwrap()..d.source_end.unwrap()];
         assert!(
-            slice.starts_with("check_preference") || slice.starts_with("require_user_input"),
+            slice.contains("check_preference") || slice.contains("require_user_input"),
             "{slice}"
         );
         assert!(
             source[d.source_start.unwrap()..].starts_with(body)
-                || source[d.source_start.unwrap()..].starts_with("require_user_input")
+                || source[d.source_start.unwrap()..].starts_with("allowit::require_user_input")
         );
     }
 }
@@ -68,4 +65,19 @@ fn arithmetic_failure_gets_containing_statement_but_host_checks_have_no_span() {
     let d = evaluate(&compiled, Profile::Oracle, &invalid);
     assert_eq!(d.code, "BUDGET_EXCEEDED");
     assert!(d.source_start.is_none() && d.source_end.is_none());
+}
+
+fn rule_context() -> Context {
+    let mut c = context();
+    c.policy_state = Some(allowit_sdk::TrustedPolicyState::default());
+    c.rule_facts = Some(allowit_sdk::PolicyRuleFacts {
+        operation_id: "decision-trace".into(),
+        grant_available: true,
+        amount_units: c.amount_units,
+        asset_id: "SAC".into(),
+        recipient: "recipient".into(),
+        now: 0,
+        expense: None,
+    });
+    c
 }

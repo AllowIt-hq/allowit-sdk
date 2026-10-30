@@ -1,75 +1,47 @@
 # AllowIt SDK
 
-AllowIt policies are a restricted, validated subset of Rust. This repository contains the source compiler, deterministic interpreter, function registry, workflow projection, CLI and stdio language server. The same `no_std + alloc` interpreter is used by the contract adapters in `contracts/`.
+AllowIt policies use a restricted subset of Rust. This repository contains the compiler, checked interpreter, registry, workflow projection and language server.
 
 ```rust
-use allowit::v1::prelude::*;
+use allowit::prelude::*;
 
-struct PolicyParams {}
-fn new() -> PolicyParams { PolicyParams {} }
-
-async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
-    allowit::set_cap_per_day(ctx.daily_spent_units, ctx.spent_day, ctx.now, ctx.amount_units, &ctx.token, 100_000_000, "USDC", 6)?;
-    allowit::cap_per_transaction(ctx.amount_units, &ctx.token, 10_000_000, "USDC", 6)?;
-    allowit::require_merchant(&ctx.merchant, "research.example")?;
-    allowit::check_preference(
-        allowit::preference_evidence(ctx, "Does this purchase support the requested research?"),
-        "Does this purchase support the requested research?",
-        auto("deny"), auto("approve"),
-    ).await?;
+async fn _execute(ctx: &Context) -> PolicyResult {
+    allowit::spent_cap(grant::spent_cap)?;
+    allowit::day_total_cap(grant::day_total_cap)?;
+    allowit::recipients(grant::recipients)?;
+    if ctx.amount_units == 0 {
+        return Err(PolicyError {
+            code: "ZERO_AMOUNT".into(),
+            reason: "A positive amount is required.".into(),
+        });
+    }
     Ok(())
 }
 ```
 
-The Go [action CLI](https://github.com/AllowIt-hq/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. The app server owns HTTP transport. Hosted-agent control and runtime are optional, outside the MVP; they are not SDK responsibilities. Restricted Rust remains the policy source and enforcement language.
+The Go [action CLI](https://github.com/AllowIt-hq/allowit-cli) provides customer `show`, `eval`, `exec` and `status` commands. The Rust executable here provides developer compiler commands.
 
-## Policy source and configuration
+## Policy rules and placement
 
-Use the versioned import, `PolicyParams`, private `new()` and `_execute` shown above. Keep limits inline. Immutable configuration accepts inline literals: `u64`, `bool`, `&'static str` and bounded `&'static [&'static str]` lists. Use sequential guards with authenticated primitives.
+The eight basic rules are `allowit::spent_cap`, `allowit::day_spent_cap`, `allowit::day_total_cap`, `allowit::transaction_cap`, `allowit::call_cap`, `allowit::recipients`, `allowit::expiry` and `allowit::tokens`. Each takes one value or Grant reference. Other helpers use their exact registered namespace and Rust signature. Ordinary Rust `Err(PolicyError { ... })` returns a refusal.
 
-The [policy template](templates/policy/README.md) validates Rust and restricted source. Immutable configuration changes require a new approved artifact. Native mutable limits use:
+Standard Stellar wallets enforce the consecutive initial calls that use the same-named Grant reference, as shown above. Any subset is valid. Order and duplicates remain explicit. Extraction stops at the first other statement. Conditional calls, computed values, literals and later calls run offchain. The server executes the complete `_execute` source. Its failure discards all working accounting changes. The source profile records each rule's placement.
 
-```rust
-struct PolicyParams {
-    daily_limit: OwnerLimit,
-    action_limit: OwnerLimit,
-}
-fn new() -> PolicyParams {
-    PolicyParams {
-        daily_limit: allowit::owner_limit("native_daily_limit", 5_000_000),
-        action_limit: allowit::owner_limit("native_action_limit", 1_000_000),
-    }
-}
-```
+Missing or Null Grant values skip the selected rule. Nonnull values must have the correct type. Numeric caps accept zero. `recipients` and `tokens` use native address lists. A deposit's destination is its vault. Token checks use the actual asset address.
 
-`allowit::stored_limit(ctx, params.action_limit)?` reads adapter-verified `Context.native_policy_storage`. Only these two fields work. JSON and portable contracts reject native storage. Missing state fails closed.
+`spent_cap` limits cumulative irreversible expenses. `day_spent_cap` applies the same measure per UTC day. Ordinary payment principal counts as spent. Deposit principal and temporary redeemable loss remain separate. `day_total_cap` counts gross debit plus separately attributable gas. It does not add embedded conversion expenses twice.
 
-## Native named state and rule placement
+Stellar amounts use the installed SAC's seven-decimal base units. Vault shares keep their independent scale. `allowit::usdc` always returns six-decimal units. Its result is not an implicit Stellar amount conversion. Other profiles retain their authenticated denomination. Use `u64` suffixes or typed variables for large literal rule inputs.
 
-A functional Stellar policy receives the request, owner Grant and current state separately. It returns the exact spent map to persist:
+`evaluate_with_policy_rules` and `evaluate_with_trace_policy_rules` require host-only operation facts and authoritative accounting. Public Context JSON cannot install those capabilities. Native adapters retain their separate funding and authorization checks. Unavailable expense valuation fails when a nonnull expense rule executes. Unpriced historical expenses prevent the corresponding active cap.
 
-```rust
-use allowit::v1::prelude::*;
-async fn _execute(request: &Context, grant: &Grant, state: &State) -> Result<Spent, PolicyError> {
-    let next = allowit::daily_cap(request, state)?;
-    let n = allowit::state_get(&next, "custom_count", 0u64)?;
-    allowit::state_set(next, "custom_count", n + 1)
-}
-```
+The standard wallet binds the ordered prefix, native module, asset and schemas. Its digest excludes mutable Grant values and the complete offchain source. Owner Grant updates preserve protected history. Offline source updates bind the complete source hash, logical source instance, wallet, network, prefix and next revision. An unchanged prefix needs no chain transaction. Clients retain their approved bundle until an explicit owner-approved refresh.
 
-Direct native rule amounts use the installed asset's base units. Existing classic amount helpers keep their original authoring units.
+`compile_stellar_wallet` requires an explicit engine and rail. Simple handles an empty prefix. Common preserves the selected prefix. The developer Custom generator emits that prefix and identifies the offchain remainder. It does not compile arbitrary custom conditions into native code. `require_onchain` rejects a selection whose complete source needs offchain evaluation.
 
-Grant and spent preserve arbitrary native named values. Typed `grant_get` and `state_get` read a requested `u64`, Boolean or string. A missing key uses its source default. A different native type rejects the executed read. Unrelated values remain unchanged. Property names are source literals. The adapter reads the trusted native spent map; request JSON cannot supply it.
+Named-value helpers return local copies or require an explicit native binding. A canonical accounting context does not authorize persistent custom state writes. The current single-context source does not provide the former functional State argument. Those helpers do not imply that a custom suffix can replace kernel history.
 
-`spent(state)` copies the map. `state_set` and `state_remove` return changed copies. `with_spent(state, values)` replaces the map while preserving Grant. Only the final returned map persists. A denial or failed native effect rolls back the operation. The namespace uses the stable policy instance, so compatible policy redeployments preserve named values. No named value can overwrite kernel ownership, asset binding, pause, version or replay records.
-
-The compiler recommends the smallest fixed Stellar wallet implementation that preserves the complete policy. `SimplePolicyEngine` provides custody and agent/server authorization. `CommonPolicyEngine` executes an owner-selected ordered list of canonical rules. `CustomPolicy` compiles bespoke control flow and local rule mixins. Common selection rejects discarded rule results, branching, repeated rules and custom map changes; those policies require Custom.
-
-`compile` JSON responses include `stellar_engines`. The `compile_stellar_wallet` JSON operation requires `source`, `network`, `rail`, `engine` and `require_onchain`. It returns the selected implementation, exact Common rules, source digest and generated Rust only for Custom. Supported networks are `stellar:testnet` and `stellar:mainnet`; `rail` is `classic` or `policy_wallet`. The SDK never substitutes weaker enforcement when a selection fails.
-
-Classic G-address wallets support Simple-style agent/server signing with service-enforced scalar policies. Classic reserves apply; there is no Soroban custody rent. They cannot execute Custom code or Common onchain rules. Simple contract wallets also use service policy enforcement except for a pass-through policy. Stateful native policies require Common or Custom. Unsupported or external-evidence source has no Stellar recommendation.
-
-Custom `allowit::*` and `self::*` rules use local mixins. Shared-engine calls and cost-based or hybrid placement are rejected. Each selected rule receives the complete Grant and spent maps; declaring a Grant key does not activate a check. Shared checker contracts remain separate from owner-controlled wallet implementations.
+The [policy template](templates/policy/README.md) checks the source with rustc and the restricted compiler. The [Stellar adapter guide](stellar-rust/README.md) covers native requests, signatures and receipt accounting.
 
 ## Run
 
@@ -88,7 +60,7 @@ cargo run --locked -- registry
 cargo run --locked -- lsp
 ```
 
-Inspect the JSON decision before authorizing execution. Examples without semantic evidence return `SEMANTIC_EVIDENCE_REQUIRED`.
+Inspect the JSON decision before authorizing execution. Missing native facts or semantic evidence prevent approval.
 
 For ordinary Rust type-checking:
 
@@ -102,7 +74,7 @@ The facade does not replace compilation or checked interpretation.
 
 The compiler validates every branch and rejects unregistered calls, mutation, loops, recursion, I/O and unsafe code. Source limits are 32 KiB/1,024 tokens.
 
-Monetary guards require the bound six-decimal USDC asset and exact integer units. Adapters reject precision loss. The host independently enforces allocation. `set_cap_per_day` runs before control flow, using authenticated counters and UTC midnight resets.
+Adapters authenticate denomination, funding and exact integer units. The complete offchain policy follows its actual control flow. Only the explicit initial Grant prefix receives standard native placement.
 
 Oracle input suspends for an authenticated, request-bound owner answer. Hosts enforce replay protection, expiry, revocation and fresh budgets. Contract input fails with `USER_INPUT_REQUIRED`.
 
@@ -131,9 +103,9 @@ Compilation returns `policy`, hashes, workflow and IR. Evaluation accepts source
 
 Hosts authenticate edits. Stale IDs fail. Workflow spans use UTF-16 offsets. Diagnostic byte spans use UTF-8. Oracle `trace: true` records execution, not settlement. Bind traces to requests/revisions.
 
-Enable `typed-workflow` for host workflows/services. Typed APIs install authenticated records. Contracts authenticate IR without recompiling source. Use registry 1.7 readers for named state and functional native policies. Known original registry 1.6 programs remain valid; new constructs cannot claim that older registry.
+Enable `typed-workflow` for host workflows/services. Typed APIs install authenticated records. Contracts authenticate IR without recompiling source. Registry 1.8 identifies the canonical one-argument rules. New constructs cannot claim an older registry. Retained signed history uses its original bytes and binding.
 
-Service policies bind an exact asset with `require_asset` or a monetary cap. Each policy supports one `allowit::service_call`. Typed adapters bind canonical input, settle the exact admitted amount, enforce payment/swap/fee ceilings and native limits, and deduplicate execution. Execute effects only from successful in-process evaluation. Contracts reject service calls. Native policy-only evaluation requires verified owner/source/executor authority and actual funding.
+Service policies declare one exact actual asset with an unconditional `allowit::tokens(&["actual-asset-id"])?;` call. The host must install that authenticated asset identity. Each policy supports one `allowit::service_call`. Typed adapters bind canonical input, settle the exact admitted amount, enforce payment/swap/fee ceilings and native limits, and deduplicate execution. Execute effects only from successful in-process evaluation. Contracts reject service calls. Native policy-only evaluation requires verified owner/source/executor authority and actual funding.
 
 ## WebAssembly
 
@@ -162,15 +134,14 @@ Use decimal string literals and retain `?`. Helpers require compiler revision `6
 
 | Helper | Meaning |
 | --- | --- |
-| `usdc("25.50")?` | 25.50 USDC, exactly 25,500,000 units; up to six decimals. Zero is allowed in comparisons. |
-| `percent("85.25")?` | 85.25%, exactly 8,525 basis points; 0–100 with up to two decimals. |
-| `allowit::amount_at_most(ctx.amount_units, "25.50")?` | Whether this purchase is at or below 25.50 USDC, including equality. |
-| `within_percentage_points(candidate, benchmark, "1")?` | Whether a candidate return is at most one percentage point below the benchmark. Both values are immutable integer variables or literals in basis points; 4% versus 5% passes. Higher returns pass. |
+| `allowit::usdc("25.50")?` | 25.50 USDC, exactly 25,500,000 units; up to six decimals. Zero is allowed in comparisons. |
+| `allowit::percent("85.25")?` | 85.25%, exactly 8,525 basis points; 0–100 with up to two decimals. |
+| `allowit::within_percentage_points(candidate, benchmark, "1")?` | Whether a candidate return is at most one percentage point below the benchmark. Both values are immutable integer variables or literals in basis points; 4% versus 5% passes. Higher returns pass. |
 
-Use `set_cap_per_day` and `cap_per_transaction` for limits. Hosts authenticate compared values.
+Use the canonical rules for spending caps. Plain comparisons can express additional source conditions. Hosts authenticate compared values.
 
 ```rust
-if !allowit::amount_at_most(ctx.amount_units, "25.50")? {
+if ctx.amount_units > allowit::usdc("25.50")? {
     allowit::require_user_input(ctx, "Approve this purchase above 25.50 USDC?").await?;
 }
 allowit::check_preference(allowit::preference_evidence(ctx, "Is there primary evidence supporting this purchase?"), "Is there primary evidence supporting this purchase?", 0.40, 0.85).await?;
@@ -191,5 +162,3 @@ Hosts supply 40 authoritative ledger counters, including pending reservations, a
 ## License
 
 AllowIt-authored source is MIT licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms. Redistributed binaries require the root license and full [licenses/](licenses/) directory.
-
-Registry `1.6.0` uses AllowIt service and preference functions. Retired vendor namespaces are rejected for new compilation and execution. Owners must reauthor and approve affected policies. Unchanged non-vendor source retains its source and IR hashes when its lowering is unchanged. Read historical receipts with the original durable binding, without recompiling or rewriting them.
