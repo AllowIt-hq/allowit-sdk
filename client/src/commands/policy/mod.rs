@@ -1,8 +1,10 @@
+//! `allowit policy SUBCOMMAND`: owner policy lifecycle. Validates arguments and
+//! routes each rail to its vendor implementation under `vendors/`.
 use crate::{
     error::{Error, Result, quoted},
     request::{matches, solana_address},
 };
-const USAGE: &str = include_str!("policy-usage.txt");
+const USAGE: &str = include_str!("usage.txt");
 pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
     if args.is_empty() {
         stderr.push_str(USAGE);
@@ -109,7 +111,7 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
                     "Stellar deployment approves an existing installed policy and moves no funds. Set ALLOWIT_STELLAR_POLICY_FILE, ALLOWIT_OWNER and ALLOWIT_REQUEST_ID, or use wallet approve --policy-file PATH --owner G_ADDRESS --request-id ID",
                 ));
             }
-            return crate::stellar_approval::run(
+            return crate::vendors::stellar::approval::run(
                 &[
                     "--policy-file".into(),
                     file,
@@ -136,7 +138,7 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
             if json {
                 args.push("--json".into());
             }
-            return crate::routing::tempo_command(&args, stdout, stderr);
+            return crate::vendors::tempo::command(&args, stdout, stderr);
         }
         if !network.starts_with("solana:") {
             return Err(Error::unsupported(
@@ -144,7 +146,7 @@ pub(crate) fn run(args: &[String], stdout: &mut String, stderr: &mut String) -> 
             ));
         }
     }
-    crate::policy_native::run(name, &pos, json, stdout, stderr)
+    crate::vendors::solana::policy::run(name, &pos, json, stdout, stderr)
 }
 fn decimal(name: &str, v: &str, positive: bool) -> Result<()> {
     if v.len() > 40

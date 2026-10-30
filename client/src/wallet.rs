@@ -240,37 +240,6 @@ pub fn inspect_wallet(network: &str, path: &Path) -> Result<PublicWallet> {
     bytes.zeroize();
     Ok(metadata)
 }
-pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {
-    if args.first().map(String::as_str) == Some("configure") {
-        return crate::stellar_owner::run(&args[1..], stdout);
-    }
-    if args.first().map(String::as_str) == Some("approve") {
-        return crate::stellar_approval::run(&args[1..], stdout);
-    }
-    let value = match args.first().map(String::as_str) {
-        Some("generate") => {
-            if args.len() != 3 || args[1] != "--output" {
-                return Err(Error::usage(
-                    "allowit wallet generate --network NETWORK --output PRIVATE_FILE",
-                ));
-            }
-            let n = routing::selected()
-                .ok_or_else(|| Error::usage("Wallet generation requires --network CAIP2"))?;
-            generate_wallet(&n, Path::new(&args[2]))?
-        }
-        Some("show") if args.len() == 2 => inspect_wallet(
-            &routing::selected().ok_or_else(|| Error::usage("wallet show requires --network"))?,
-            Path::new(&args[1]),
-        )?,
-        _ => {
-            return Err(Error::usage(
-                "allowit wallet generate --network NETWORK --output PRIVATE_FILE | allowit wallet show PRIVATE_FILE",
-            ));
-        }
-    };
-    *stdout += &crate::output::json(&serde_json::to_value(value).unwrap());
-    Ok(0)
-}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,6 +6,17 @@ The CLI calls this facade. Rail adapters live in vendor repositories and depend 
 `--network` accepts x402 CAIP-2 identifiers. Explicit networks must match the selected wallet and policy deployment.
 Solana addresses alone do not distinguish its clusters. EVM addresses alone do not identify a chain.
 
+Source layout:
+
+- `src/commands/<command>/` holds one top-level CLI command. Each subcommand has its own file.
+- `src/vendors/<name>/` holds each vendor connection: `paysh`, `solana`, `stellar` and `tempo`.
+  Command code reaches a rail only through these modules.
+- `src/gateway/` holds the Allowit backend client and the input, operation and help helpers that the
+  backend commands share. `src/action/` holds the pipeline that `show`, `eval`, `exec` and `status` share.
+
+Global flags can come before the command name, for example `allowit --json show POLICY` or
+`allowit --json policy status`.
+
 Generate an agent key locally:
 
 ```sh

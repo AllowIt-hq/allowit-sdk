@@ -603,8 +603,10 @@ fn render(r: &Response, stdout: &mut String) -> Result<i32> {
 mod public_bundle_tests {
     use super::*;
     fn fixture() -> serde_json::Value {
-        let f: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap();
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/stellar-approval.json"
+        ))
+        .unwrap();
         let policy = &f["policy"];
         let config = WalletConfig {
             network: "stellar:testnet".into(),
@@ -693,7 +695,7 @@ mod native_revalidation_tests {
     use std::{io::Write, net::TcpListener};
     fn fixture() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
+            "../../../tests/fixtures/stellar-policy-wallet-revalidation-rpc.json"
         ))
         .unwrap()
     }
@@ -765,7 +767,7 @@ mod native_revalidation_tests {
         changed.request.operation.nonce[0] ^= 1;
         assert!(revalidate_with_rpc_url(&changed, 86402, "http://127.0.0.1:1").is_err());
         let old: SignedOperation = serde_json::from_str(include_str!(
-            "../../stellar-rust/tests/fixtures/canonical-main-9682-native-signed.json"
+            "../../../../stellar-rust/tests/fixtures/canonical-main-9682-native-signed.json"
         ))
         .unwrap();
         assert_eq!(
@@ -776,7 +778,7 @@ mod native_revalidation_tests {
     #[test]
     fn retained_signed_status_validation_does_not_need_local_rpc_or_new_approval() {
         let data: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/stellar-native-revalidation-rpc.json"
+            "../../../tests/fixtures/stellar-native-revalidation-rpc.json"
         ))
         .unwrap();
         let signed: SignedOperation = serde_json::from_value(data["signed"].clone()).unwrap();

@@ -1,58 +1,16 @@
-//! Local MCP transport for the same Allowit backend command boundary.
+//! MCP methods and the Allowit tools they expose.
 use crate::{
     error::{Error, Result},
-    gateway::{self, Gateway},
-    gateway_args::{self, Invocation},
+    gateway::{
+        Gateway,
+        args::{self, Invocation},
+        operation::purchase,
+        target::call_target,
+    },
 };
 use serde_json::{Value, json};
-use std::io::{BufRead, Read, Write};
 
-pub(crate) fn run(inv: &Invocation, _stdout: &mut String, stderr: &mut String) -> Result<i32> {
-    if !inv.args.is_empty() {
-        return Err(Error::usage(
-            "usage: allowit mcp [--policy version@addr] [--sandbox]",
-        ));
-    }
-    let stdin = std::io::stdin();
-    let mut reader = stdin.lock();
-    let stdout = std::io::stdout();
-    let mut writer = stdout.lock();
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        let n = std::io::Read::by_ref(&mut reader)
-            .take(65_537)
-            .read_until(b'\n', &mut line)
-            .map_err(|_| Error::config("cannot read MCP input"))?;
-        if n == 0 {
-            break;
-        }
-        if line.len() > 65_536 {
-            return Err(Error::usage("MCP message exceeds 65536 bytes"));
-        }
-        let message: Value = serde_json::from_slice(&line)
-            .map_err(|_| Error::usage("MCP input must be a JSON object"))?;
-        if message.get("id").is_none() {
-            continue;
-        }
-        let id = message["id"].clone();
-        let result = dispatch(&message, inv, stderr);
-        let response = match result {
-            Ok(v) => json!({"jsonrpc":"2.0","id":id,"result":v}),
-            Err(e) => {
-                json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":crate::output::one_line(&e.message)}})
-            }
-        };
-        writeln!(writer, "{}", crate::redact(response.to_string()))
-            .map_err(|_| Error::config("cannot write MCP response"))?;
-        writer
-            .flush()
-            .map_err(|_| Error::config("cannot flush MCP response"))?;
-    }
-    Ok(0)
-}
-
-fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Value> {
+pub(super) fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Value> {
     match message["method"].as_str().unwrap_or("") {
         "initialize" => Ok(
             json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"allowit","version":crate::VERSION}}),
@@ -72,10 +30,7 @@ fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Va
             let result = match name {
                 "allowit_services" => Gateway::new(&common)?.send(
                     "GET",
-                    &format!(
-                        "/api/gateway/services?{}",
-                        gateway_args::query_context(&common)
-                    ),
+                    &format!("/api/gateway/services?{}", args::query_context(&common)),
                     None,
                 )?,
                 "allowit_status" => {
@@ -83,7 +38,7 @@ fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Va
                         .as_str()
                         .filter(|s| crate::request::request_id_valid(s))
                         .ok_or_else(|| Error::usage("operationId is required"))?;
-                    let mut q = gateway_args::context(&common);
+                    let mut q = args::context(&common);
                     q["operationId"] = json!(id);
                     let value = Gateway::new(&common)?.send(
                         "POST",
@@ -116,8 +71,8 @@ fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Va
                         common: common.clone(),
                         help: false,
                     };
-                    let (service, request, input) = gateway_args::call_target(&call)?;
-                    let mut q = gateway_args::context(&common);
+                    let (service, request, input) = call_target(&call)?;
+                    let mut q = args::context(&common);
                     if let Some(v) = service {
                         q["serviceId"] = json!(v);
                     }
@@ -127,7 +82,7 @@ fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Va
                     if let Some(v) = input {
                         q["input"] = v;
                     }
-                    let exit = gateway::purchase(q, &common, &mut out, stderr)?;
+                    let exit = purchase(q, &common, &mut out, stderr)?;
                     let v = serde_json::from_str::<Value>(&out).map_err(|_| {
                         Error::uncertain("Allowit operation response was not available")
                     })?;
