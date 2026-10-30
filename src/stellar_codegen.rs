@@ -646,10 +646,10 @@ pub fn compile_stellar_policy_with_options(
         raw: false,
     };
     for item in &parsed.items {
-        if let syn::Item::Fn(function) = item {
-            if function.sig.ident == "_execute" {
-                syn::visit::Visit::visit_item_fn(&mut fields, function);
-            }
+        if let syn::Item::Fn(function) = item
+            && function.sig.ident == "_execute"
+        {
+            syn::visit::Visit::visit_item_fn(&mut fields, function);
         }
     }
     if fields.raw {

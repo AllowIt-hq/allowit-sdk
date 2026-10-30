@@ -47,7 +47,6 @@ pub struct VaultRedeem {
 fn account(account: &AccountId) -> bool {
     account.chain == Chain::Stellar
         && matches!(account.kind, AccountKind::Wallet | AccountKind::Contract)
-        && account.address != [0; 32]
 }
 fn parties(
     vault: &AccountId,
@@ -79,7 +78,7 @@ impl VaultRedeem {
     pub fn validate(&self) -> Result<(), String> {
         if !parties(&self.vault, &self.owner, &self.receiver, &self.operator)
             || self.shares <= 0
-            || self.min_assets <= 0
+            || self.min_assets < 0
         {
             return Err("Invalid SEP-56 redemption identities or positive bounds".into());
         }

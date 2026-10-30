@@ -23,13 +23,21 @@ fn run() -> Result<(), String> {
     }
     if command == "help" || command == "--help" {
         println!(
-            "allowit compile|check|workflow POLICY.rs\nallowit evaluate POLICY.rs CONTEXT.json [oracle|contract]\nallowit stellar-native POLICY.rs\nallowit registry\nallowit json [REQUEST.json|-]\nallowit lsp\n\nUse - to read source or a JSON request from stdin."
+            "allowit compile|check|workflow POLICY.rs\nallowit evaluate POLICY.rs CONTEXT.json [oracle|contract]\nallowit stellar-native POLICY.rs [transfer|deposit]\nallowit registry\nallowit json [REQUEST.json|-]\nallowit lsp\n\nUse - to read source or a JSON request from stdin."
         );
         return Ok(());
     }
     if command == "stellar-native" {
         let source = read(args.get(1).ok_or("Supply a policy source file.")?)?;
-        let policy = allowit_sdk::compile_stellar_policy(&source).map_err(|e| e.to_string())?;
+        if args.len() > 3 {
+            return Err("Use stellar-native POLICY.rs [transfer|deposit].".into());
+        }
+        let policy = match args.get(2).map(String::as_str).unwrap_or("transfer") {
+            "transfer" => allowit_sdk::compile_stellar_policy(&source),
+            "deposit" => allowit_sdk::compile_stellar_deposit_policy(&source),
+            _ => return Err("Select transfer or deposit.".into()),
+        }
+        .map_err(|e| e.to_string())?;
         print!("{}", policy.rust_source);
         return Ok(());
     }

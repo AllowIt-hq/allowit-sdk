@@ -35,7 +35,7 @@ fn deposit_and_redeem_keep_independent_asset_and_share_units_and_owner_custody()
         min_assets: 999_000,
     };
     assert!(r.validate().is_ok());
-    r.min_assets = 0;
+    r.min_assets = -1;
     assert!(r.validate().is_err());
     r.min_assets = 999_000;
     r.operator.address = [3; 32];

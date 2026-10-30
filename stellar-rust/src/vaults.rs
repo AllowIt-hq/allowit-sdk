@@ -495,15 +495,15 @@ fn token_effect(
         if body.topics.len() < count || body.topics[1] != ScVal::Address(address(from)?) {
             continue;
         }
-        if let Some(to) = to {
-            if body.topics[2] != ScVal::Address(address(to)?) {
-                continue;
-            }
+        if let Some(to) = to
+            && body.topics[2] != ScVal::Address(address(to)?)
+        {
+            continue;
         }
-        if let Ok(muxed) = rpc::map_field(&body.data, "to_muxed_id") {
-            if *muxed != ScVal::Void {
-                return Err("Multiplexed vault token effects are not admitted".into());
-            }
+        if let Ok(muxed) = rpc::map_field(&body.data, "to_muxed_id")
+            && *muxed != ScVal::Void
+        {
+            return Err("Multiplexed vault token effects are not admitted".into());
         }
         total = total
             .checked_add(event_amount(&body.data)?)
@@ -628,7 +628,7 @@ pub fn vault_redemption_receipt(
     let shares = rpc::wide(&redeem_args[0])?;
     let assets = rpc::wide(&returned)?;
     if shares <= 0
-        || assets <= 0
+        || assets < 0
         || token_effect(&events, vault, "burn", &c.wallet, None)? != shares
         || token_effect(&events, &c.asset, "transfer", vault, Some(&c.wallet))? != assets
     {
@@ -636,12 +636,11 @@ pub fn vault_redemption_receipt(
     }
     // An additional underlying debit would invalidate the net credit represented above.
     for event in &events {
-        if let Some(body) = event_body(event, &c.asset)? {
-            if body.topics.first() == Some(&value_symbol("transfer")?)
-                && body.topics.get(1) == Some(&ScVal::Address(address(&c.wallet)?))
-            {
-                return Err("Redemption also debits the holder's underlying asset".into());
-            }
+        if let Some(body) = event_body(event, &c.asset)?
+            && body.topics.first() == Some(&value_symbol("transfer")?)
+            && body.topics.get(1) == Some(&ScVal::Address(address(&c.wallet)?))
+        {
+            return Err("Redemption also debits the holder's underlying asset".into());
         }
     }
     Ok(VerifiedVaultRedemption {
@@ -1022,6 +1021,23 @@ mod tests {
             vault_redemption_receipt(&rpc, &c, &receipt.transaction_hash, &vault, 499).unwrap();
         assert_eq!(proof.assets(), 990);
         assert_eq!(proof.shares(), 95);
+        let TransactionEnvelope::Tx(original) = read(&receipt.envelope_xdr).unwrap() else {
+            panic!()
+        };
+        let burn_only = vec![event(
+            &vault,
+            vec![
+                value_symbol("burn").unwrap(),
+                ScVal::Address(address(&c.wallet).unwrap()),
+            ],
+            i128_value(95),
+        )];
+        let (zero_rpc, zero_receipt) = committed(&c, original.tx, burn_only, i128_value(0));
+        let zero =
+            vault_redemption_receipt(&zero_rpc, &c, &zero_receipt.transaction_hash, &vault, 499)
+                .unwrap();
+        assert_eq!(zero.assets(), 0);
+        assert_eq!(zero.shares(), 95);
         assert!(
             vault_redemption_receipt(&rpc, &c, &receipt.transaction_hash, &vault, 501).is_err()
         );
