@@ -14,13 +14,17 @@ pub fn policy_grant_values(
         let value = match value {
             ScVal::Void => PolicyScalar::Null,
             ScVal::U64(n) => PolicyScalar::U64(*n),
-            ScVal::I128(parts) => PolicyScalar::U64(
+            ScVal::I128(parts) => {
                 u64::try_from((i128::from(parts.hi) << 64) | i128::from(parts.lo))
-                    .map_err(|_| "Owner rule limit exceeds supported offchain units")?,
-            ),
-            ScVal::Vec(Some(entries)) if *rule == "tokens" || *rule == "recipients" => {
-                PolicyScalar::Strings(entries.iter().map(rpc::addr).collect::<Result<Vec<_>>>()?)
+                    .map(PolicyScalar::U64)
+                    .unwrap_or(PolicyScalar::Unsupported)
             }
+            ScVal::Vec(Some(entries)) if *rule == "tokens" || *rule == "recipients" => entries
+                .iter()
+                .map(rpc::addr)
+                .collect::<Result<Vec<_>>>()
+                .map(PolicyScalar::Strings)
+                .unwrap_or(PolicyScalar::Unsupported),
             _ => PolicyScalar::Unsupported,
         };
         values.insert((*rule).into(), value);
@@ -28,7 +32,7 @@ pub fn policy_grant_values(
     Ok(values)
 }
 /// The host supplies authoritative actual Spent; the SDK binds its operation facts and Grant to this packet.
-/// A failed evaluation restores every working property. Success returns only a proposed working map.
+/// Validation evaluates an independent context copy. It never commits caller properties.
 pub fn evaluate_policy_context(p: &PreparedOperation, context: &Context) -> Result<()> {
     let c = &p.config;
     let operation = operation_from_request(c, &p.request)?;
@@ -89,9 +93,19 @@ pub fn evaluate_policy_context(p: &PreparedOperation, context: &Context) -> Resu
     if policy.source_hash != hex(&c.source_hash) {
         return Err("Owner-approved full source identity differs".into());
     }
-    let decision = allowit_policy_sdk::evaluate_with_policy_rules(&policy, context);
+    let validation_context = context.clone();
+    let decision = allowit_policy_sdk::evaluate_with_policy_rules(&policy, &validation_context);
     if decision.outcome != "pass" {
         return Err(format!("{}: {}", decision.code, decision.reason));
+    }
+    if let Some(deadline) = *validation_context.policy_deadline.borrow() {
+        // Stellar Core maxTime is inclusive; the native policy rule deadline is exclusive.
+        let maximum = deadline
+            .checked_sub(1)
+            .ok_or("Policy deadline cannot admit a native transaction")?;
+        if p.expires_at > maximum {
+            return Err("POLICY_EXPIRY_BOUNDS_REQUIRED: Bound the final operation to its reached exclusive policy deadline".into());
+        }
     }
     Ok(())
 }
@@ -109,4 +123,81 @@ pub fn sign_with_policy_context(
         return sign(p, seed, now);
     }
     sign_unchecked_role(p, seed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use allowit_policy_sdk::{PolicyRuleFacts, TrustedPolicyState};
+    #[test]
+    fn malformed_unread_grants_remain_values_until_a_rule_executes() {
+        let snapshot = PolicyStateSnapshot {
+            grant: NativeValues(std::collections::BTreeMap::from([
+                (
+                    "spent_cap".into(),
+                    ScVal::I128(Int128Parts {
+                        hi: -1,
+                        lo: u64::MAX,
+                    }),
+                ),
+                ("expiry".into(), ScVal::I128(Int128Parts { hi: 1, lo: 0 })),
+                (
+                    "tokens".into(),
+                    ScVal::Vec(Some(vec![ScVal::U64(7)].try_into().unwrap())),
+                ),
+            ])),
+            spent: NativeValues::default(),
+        };
+        let grant = policy_grant_values(&snapshot).unwrap();
+        assert!(
+            grant
+                .values()
+                .all(|value| value == &PolicyScalar::Unsupported)
+        );
+        let mut ctx = Context::default();
+        ctx.token = "XLM".into();
+        ctx.action = "stellar::sep41_transfer".into();
+        ctx.policy_state = Some(TrustedPolicyState {
+            grant,
+            properties: Default::default(),
+        });
+        ctx.rule_facts = Some(PolicyRuleFacts {
+            operation_id: "op".into(),
+            grant_available: true,
+            amount_units: 1,
+            asset_id: "SAC".into(),
+            recipient: "RECIPIENT".into(),
+            now: 10,
+            expense: None,
+        });
+        for body in [
+            "Ok(())",
+            "if false{allowit::spent_cap(grant::spent_cap)?;allowit::tokens(grant::tokens)?;}Ok(())",
+        ] {
+            let source = format!(
+                "use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{{{body}}}"
+            );
+            assert_eq!(
+                allowit_policy_sdk::evaluate_with_policy_rules(
+                    &allowit_policy_sdk::compile(&source).unwrap(),
+                    &ctx
+                )
+                .outcome,
+                "pass"
+            );
+        }
+        for rule in ["spent_cap", "expiry", "tokens"] {
+            let source = format!(
+                "use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{{allowit::{rule}(grant::{rule})?;Ok(())}}"
+            );
+            assert_eq!(
+                allowit_policy_sdk::evaluate_with_policy_rules(
+                    &allowit_policy_sdk::compile(&source).unwrap(),
+                    &ctx
+                )
+                .code,
+                "INVALID_GRANT"
+            );
+        }
+    }
 }

@@ -831,7 +831,7 @@ pub(crate) fn readonly_simulation(
     function: &str,
     args: Vec<ScVal>,
 ) -> Result<Value> {
-    validate_config(c)?;
+    validate_config_inner(c, false)?;
     source.validate_structure()?;
     let call = InvokeContractArgs {
         contract_address: address(contract)?,

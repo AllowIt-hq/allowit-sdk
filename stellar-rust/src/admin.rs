@@ -159,7 +159,7 @@ impl OwnerAdmin<'_> {
     fn snapshot(&self) -> Result<Snapshot> {
         use rpc::{addr, digest_field, map_field};
         let c = self.config;
-        validate_config(c)?;
+        validate_config_inner(c, false)?;
         if c.route != WalletRoute::PolicyWallet {
             return Err("Owner administration requires policy wallet custody".into());
         }
@@ -213,11 +213,19 @@ impl OwnerAdmin<'_> {
         let owner = rpc::get_account(self.rpc, &current_owner)?;
         owner.validate_structure()?;
         let binding = rpc::readonly_call(self.rpc, c, &owner, "policy_binding")?;
-        rpc::verify_policy_engine(c, state, &binding)?;
+        let kind = c
+            .policy_engine
+            .ok_or("Selected policy engine is required")?;
+        if map_field(&binding, "engine_kind")? != &value_symbol(kind.symbol())?
+            || digest_field(map_field(state, "source_digest")?)? != retained_binding(c)
+            || addr(map_field(state, "server")?)? != c.server
+        {
+            return Err("Owner-bound installed engine, source or service signer differs".into());
+        }
         if rpc::current_contract_version(&binding)? != contract_version
             || digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
             || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
-            || digest_field(map_field(&binding, "source_digest")?)? != native_policy_digest(c)?
+            || digest_field(map_field(&binding, "source_digest")?)? != retained_binding(c)
             || ![hash(ARGUMENT_SCHEMA), hash(vaults::DEPOSIT_ARGUMENT_SCHEMA)].contains(
                 &digest_field(map_field(&binding, "argument_schema_digest")?)?,
             )

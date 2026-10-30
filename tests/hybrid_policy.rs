@@ -10,6 +10,7 @@ use allowit_sdk as allowit;
 async fn authored_rust(ctx: &Context) -> PolicyResult {
     allowit::spent_cap(grant::spent_cap)?;
     allowit::recipients(grant::recipients)?;
+    allowit::transaction_cap(10_000_000_000u64)?;
     if ctx.amount_units > 100_000_000 {
         return Err(PolicyError {
             code: "AMOUNT_LIMIT".into(),
@@ -208,4 +209,31 @@ fn existing_real_profile_helpers_are_namespaced_offchain_only() {
         ))
         .is_err()
     );
+}
+
+#[test]
+fn deadline_metadata_records_only_reached_nonnull_successful_expiry() {
+    let ctx = context();
+    assert_eq!(
+        run(
+            "if false {allowit::expiry(1)?;} allowit::expiry(None)?; Ok(())",
+            &ctx
+        )
+        .outcome,
+        "pass"
+    );
+    assert_eq!(*ctx.policy_deadline.borrow(), None);
+    assert_eq!(
+        run(
+            "allowit::expiry(86500)?; allowit::expiry(86450)?; Ok(())",
+            &ctx
+        )
+        .outcome,
+        "pass"
+    );
+    assert_eq!(*ctx.policy_deadline.borrow(), Some(86450));
+    assert_eq!(run("allowit::expiry(86500)?; return Err(PolicyError{code:\"DENIED\".into(),reason:\"Denied later.\".into()});",&ctx).code,"DENIED");
+    assert_eq!(*ctx.policy_deadline.borrow(), None);
+    assert_eq!(run("Ok(())", &ctx).outcome, "pass");
+    assert_eq!(*ctx.policy_deadline.borrow(), None);
 }

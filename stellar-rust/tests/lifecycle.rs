@@ -2975,3 +2975,182 @@ fn logical_source_scope_is_required_for_fresh_standard_policies_only() {
     native.source_instance = None;
     validate_config(&native).unwrap();
 }
+
+#[test]
+fn owner_controls_do_not_recompile_retired_offchain_source_or_require_new_logical_scope() {
+    use allowit_policy_sdk::admin::{Admin, DeploymentVersion};
+    use allowit_stellar_wallet::admin::OwnerAdmin;
+    let rpc = admin_fixture(1, Some(stellar_xdr::ScVal::U32(1)));
+    let mut original = rpc.base.config.clone();
+    original.source_instance = None;
+    original.policy_source =
+        "async fn _execute(ctx:&Context)->PolicyResult{retired_vendor::check(ctx)?;Ok(())}".into();
+    original.source_hash = hash(&original.policy_source);
+    assert!(validate_config(&original).is_err());
+    let mut admin = Admin::new(OwnerAdmin {
+        rpc: &rpc,
+        config: &original,
+        now: 86401,
+    });
+    assert!(admin.set_pause(true, DeploymentVersion(3)).is_ok());
+}
+
+#[test]
+fn reached_expiry_bounds_native_inclusive_max_time_but_unreached_rules_do_not() {
+    let (mut c, request, mut state) = fixture(WalletRoute::Native, false);
+    c.policy_source="use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{allowit::expiry(86450)?;Ok(())}".into();
+    refresh_binding(&mut c);
+    state.source_hash = c.source_hash;
+    let rpc = AccountRpc {
+        config: c.clone(),
+        account: state.source.clone(),
+        wrong_network: false,
+    };
+    let usage = rpc::NativeAccounting {
+        nonce: state.nonce,
+        deployment_version: state.deployment_version,
+        spent_daily: 0,
+        spent_total: 0,
+        spent_day: 1,
+        calls: 0,
+    };
+    let context = full_context(&c, &request, &state);
+    let failure = rpc::prepare_with_policy_context(
+        &rpc,
+        &c,
+        &request,
+        Some(usage.clone()),
+        86401,
+        86450,
+        &context,
+    )
+    .unwrap_err();
+    assert!(failure.contains("POLICY_EXPIRY_BOUNDS_REQUIRED"));
+    assert_eq!(*context.policy_deadline.borrow(), None);
+    let prepared = rpc::prepare_with_policy_context(
+        &rpc,
+        &c,
+        &request,
+        Some(usage.clone()),
+        86401,
+        86449,
+        &context,
+    )
+    .unwrap();
+    assert!(sign_with_policy_context(&prepared, &[3; 32], 86401, &context).is_ok());
+    c.policy_source="use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{if false{allowit::expiry(1)?;}allowit::expiry(None)?;Ok(())}".into();
+    refresh_binding(&mut c);
+    state.source_hash = c.source_hash;
+    let rpc = AccountRpc {
+        config: c.clone(),
+        account: state.source.clone(),
+        wrong_network: false,
+    };
+    let context = full_context(&c, &request, &state);
+    assert!(
+        rpc::prepare_with_policy_context(&rpc, &c, &request, Some(usage), 86401, 86700, &context)
+            .is_ok()
+    );
+    assert_eq!(*context.policy_deadline.borrow(), None);
+}
+
+#[test]
+fn normalized_issued_asset_gas_is_bound_without_a_price_or_label_fallback() {
+    use allowit_policy_sdk::typed_workflow::ExpenseBounds;
+    let (c, mut request, state) = fixture(WalletRoute::PolicyWallet, true);
+    request.expense = Some(ExpenseBounds {
+        asset: wf(&c.asset),
+        decimals: 7,
+        gas_units: 3,
+        conversion_units: 0,
+        spent_units: 20_000_003,
+        max_fee_stroops: 1100,
+        observed_ledger: 100,
+        day: 1,
+    });
+    let rpc = PreflightRpc {
+        base: PolicyWalletAccountRpc {
+            config: c.clone(),
+            source: state.source,
+            paused: false,
+        },
+        request: request.clone(),
+        failure: "",
+    };
+    let prepared = rpc::prepare(&rpc, &c, &request, None, 86401, 86700).unwrap();
+    assert!(sign(&prepared, &[2; 32], 86401).is_err());
+    let ready = server_ready(&prepared);
+    assert_eq!(operation_fee(&ready).unwrap(), 1100);
+    assert!(sign(&ready, &[2; 32], 86401).is_ok());
+    for mutation in 0..4 {
+        let mut altered = request.clone();
+        let cost = altered.expense.as_mut().unwrap();
+        match mutation {
+            0 => cost.asset = wf(&c.wallet),
+            1 => cost.decimals = 6,
+            2 => cost.gas_units = 0,
+            _ => cost.gas_units = -1,
+        };
+        assert!(operation_from_request(&c, &altered).is_err());
+    }
+    let (native, mut request, _) = fixture(WalletRoute::PolicyWallet, false);
+    request.expense = Some(ExpenseBounds {
+        asset: wf(&native.asset),
+        decimals: 7,
+        gas_units: 3,
+        conversion_units: 0,
+        spent_units: 20_000_003,
+        max_fee_stroops: 1100,
+        observed_ledger: 100,
+        day: 1,
+    });
+    assert!(operation_from_request(&native, &request).is_err());
+}
+
+#[test]
+fn repeated_sdk_policy_validation_does_not_commit_working_counters_or_properties() {
+    use allowit_policy_sdk::PolicyScalar;
+    let (mut c, request, mut state) = fixture(WalletRoute::Native, false);
+    c.policy_source="use allowit::prelude::*;async fn _execute(ctx:&Context)->PolicyResult{allowit::call_cap(2)?;Ok(())}".into();
+    refresh_binding(&mut c);
+    state.source_hash = c.source_hash;
+    let rpc = AccountRpc {
+        config: c.clone(),
+        account: state.source.clone(),
+        wrong_network: false,
+    };
+    let usage = rpc::NativeAccounting {
+        nonce: state.nonce,
+        deployment_version: state.deployment_version,
+        spent_daily: 0,
+        spent_total: 0,
+        spent_day: 1,
+        calls: 0,
+    };
+    let context = full_context(&c, &request, &state);
+    context
+        .policy_state
+        .as_ref()
+        .unwrap()
+        .properties
+        .borrow_mut()
+        .insert("custom_count".into(), PolicyScalar::U64(7));
+    let original = context
+        .policy_state
+        .as_ref()
+        .unwrap()
+        .properties
+        .borrow()
+        .clone();
+    let prepared =
+        rpc::prepare_with_policy_context(&rpc, &c, &request, Some(usage), 86401, 86700, &context)
+            .unwrap();
+    for _ in 0..2 {
+        evaluate_policy_context(&prepared, &context).unwrap();
+        sign_with_policy_context(&prepared, &[3; 32], 86401, &context).unwrap();
+        assert_eq!(
+            *context.policy_state.as_ref().unwrap().properties.borrow(),
+            original
+        );
+    }
+}

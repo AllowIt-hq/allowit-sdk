@@ -35,6 +35,30 @@ pub fn source_binding_digest(config: &WalletConfig, rules: &[String]) -> Result<
     if config.route != WalletRoute::Native {
         return Err("Historical signed wallets do not accept source updates.".into());
     }
+    native_source_binding_digest(
+        &config.network,
+        &config.wallet,
+        config.policy_instance,
+        &config.asset,
+        config.max_fee_stroops,
+    )
+}
+/// Native-account source identity has no Wasm or standard contract rule prefix.
+pub fn native_source_binding_digest(
+    network: &str,
+    wallet: &str,
+    policy_instance: [u8; 32],
+    asset: &str,
+    max_fee_stroops: u32,
+) -> Result<[u8; 32]> {
+    passphrase(network)?;
+    account_key(wallet)?;
+    if policy_instance == [0; 32]
+        || !(100..=1_000_000).contains(&max_fee_stroops)
+        || !matches!(address(asset)?, ScAddress::Contract(_))
+    {
+        return Err("Invalid native source binding identity".into());
+    }
     let value = ScVal::Vec(Some(
         vec![
             value_symbol("allowit_native_source")?,
@@ -42,14 +66,14 @@ pub fn source_binding_digest(config: &WalletConfig, rules: &[String]) -> Result<
                 PROFILE.as_bytes().to_vec().try_into().map_err(err)?,
             )),
             ScVal::String(ScString(
-                config.network.as_bytes().to_vec().try_into().map_err(err)?,
+                network.as_bytes().to_vec().try_into().map_err(err)?,
             )),
-            ScVal::Address(address(&config.wallet)?),
-            value_bytes(&config.policy_instance)?,
-            ScVal::Address(address(&config.asset)?),
+            ScVal::Address(address(wallet)?),
+            value_bytes(&policy_instance)?,
+            ScVal::Address(address(asset)?),
             value_bytes(&hash(ARGUMENT_SCHEMA))?,
             value_bytes(&hash(vaults::DEPOSIT_ARGUMENT_SCHEMA))?,
-            ScVal::U32(config.max_fee_stroops),
+            ScVal::U32(max_fee_stroops),
         ]
         .try_into()
         .map_err(err)?,

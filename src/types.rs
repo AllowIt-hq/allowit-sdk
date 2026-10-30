@@ -375,6 +375,10 @@ pub struct Context {
     /// Canonical rule accounting and an available Grant do not grant this authority.
     #[serde(skip)]
     pub policy_state_writes: bool,
+    /// Ephemeral minimum deadline reached during a successful canonical expiry evaluation.
+    /// This is approval metadata, never a persistent policy property or caller JSON input.
+    #[serde(skip)]
+    pub policy_deadline: core::cell::RefCell<Option<u64>>,
     #[serde(skip)]
     #[cfg(feature = "typed-workflow")]
     pub workflow: Option<alloc::boxed::Box<crate::typed_workflow::WorkflowEnvironment>>,
@@ -441,7 +445,8 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             rule_facts: None,
-            policy_state_writes:false,
+            policy_state_writes: false,
+            policy_deadline: core::cell::RefCell::new(None),
             #[cfg(feature = "typed-workflow")]
             workflow: None,
             #[cfg(feature = "typed-workflow")]

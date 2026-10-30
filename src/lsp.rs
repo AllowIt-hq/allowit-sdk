@@ -30,13 +30,25 @@ impl LanguageServer {
             "textDocument/hover"=>{
                 let uri=p["textDocument"]["uri"].as_str().unwrap_or("");let source=self.documents.get(uri).map(String::as_str).unwrap_or("");let line=p["position"]["line"].as_u64().unwrap_or(0) as usize;let column=p["position"]["character"].as_u64().unwrap_or(0) as usize;
                 let offset=utf16_position(source,line,column);
-                let help=compile(source).ok().and_then(|policy|policy.calls.into_iter().find(|c|c.start<=offset&&offset<c.end)).and_then(|call|registry().into_iter().find(|f|f.name==call.name));
+                let help=compile(source).ok().and_then(|policy|policy.calls.into_iter().find(|c|c.start<=offset&&offset<c.end)).and_then(|call|authored_path(source,call.start,call.end)).and_then(|path|registry().into_iter().find(|f|f.name==path));
                 vec![response(help.map(|f|json!({"contents":{"kind":"markdown","value":format!("**{}**\n\n{}\n\n```rust\n{}\n```",f.title,f.description,f.signature)}})).unwrap_or(Value::Null))]
             },
             "allowit/workflow"=>{let uri=p["textDocument"]["uri"].as_str().unwrap_or("");let source=p["source"].as_str().or_else(||self.documents.get(uri).map(String::as_str)).unwrap_or("");vec![response(crate::process_value(json!({"operation":"workflow","source":source})))]},
             _=>if id.is_some(){vec![json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not found"}})]}else{vec![]},
         }
     }
+}
+fn authored_path(source: &str, start: usize, end: usize) -> Option<String> {
+    let units: Vec<u16> = source.encode_utf16().collect();
+    let text = String::from_utf16(units.get(start..end)?).ok()?;
+    let path: syn::Path = syn::parse_str(&text).ok()?;
+    Some(
+        path.segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::"),
+    )
 }
 fn utf16_position(source: &str, line: usize, column: usize) -> usize {
     source

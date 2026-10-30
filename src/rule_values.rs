@@ -140,12 +140,6 @@ pub(crate) fn check(ctx: &Context, rule: &str, input: Input) -> PolicyResult {
     if matches!(&input, Input::Null) {
         return Ok(());
     }
-    let state = ctx.policy_state.as_ref().ok_or_else(|| {
-        error(
-            "POLICY_CONTEXT_REQUIRED",
-            "Authenticated owner Grant and Spent are required.",
-        )
-    })?;
     let value = match input {
         Input::Grant(key) => {
             if !ctx
@@ -158,7 +152,18 @@ pub(crate) fn check(ctx: &Context, rule: &str, input: Input) -> PolicyResult {
                     "This route has no authenticated native Grant map.",
                 ));
             }
-            state.grant.get(&key).cloned().unwrap_or(PolicyScalar::Null)
+            ctx.policy_state
+                .as_ref()
+                .ok_or_else(|| {
+                    error(
+                        "NATIVE_GRANT_UNAVAILABLE",
+                        "This route has no authenticated native Grant map.",
+                    )
+                })?
+                .grant
+                .get(&key)
+                .cloned()
+                .unwrap_or(PolicyScalar::Null)
         }
         Input::Units(value) => PolicyScalar::U64(value),
         Input::Addresses(value) => PolicyScalar::Strings(value),
@@ -209,6 +214,8 @@ pub(crate) fn check(ctx: &Context, rule: &str, input: Input) -> PolicyResult {
     };
     if rule == "expiry" {
         return if facts.now < limit {
+            let mut deadline = ctx.policy_deadline.borrow_mut();
+            *deadline = Some(deadline.map_or(limit, |previous| previous.min(limit)));
             Ok(())
         } else {
             Err(error("POLICY_EXPIRED", "The policy has expired."))
@@ -224,6 +231,12 @@ pub(crate) fn check(ctx: &Context, rule: &str, input: Input) -> PolicyResult {
             ))
         };
     }
+    let state = ctx.policy_state.as_ref().ok_or_else(|| {
+        error(
+            "POLICY_ACCOUNTING_UNAVAILABLE",
+            "This adapter has no authoritative accounting for the selected rule.",
+        )
+    })?;
     let property_values = state.properties.borrow();
     let history_day = match property_values.get("day") {
         Some(PolicyScalar::U64(day)) => *day,

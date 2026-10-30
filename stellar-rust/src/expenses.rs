@@ -20,15 +20,17 @@ pub(crate) fn validate(
     {
         return Err("Expense identity, units or observation is invalid".into());
     }
+    if e.max_fee_stroops > 0 && e.gas_units == 0 {
+        return Err("A positive attributable fee needs positive normalized gas units".into());
+    }
     if e.max_fee_stroops == 0 {
         if e.gas_units != 0 {
             return Err("Unattributed sponsor gas cannot be charged as policy expense".into());
         }
-    } else if c.asset_symbol != "XLM" || c.asset_issuer.is_some() {
-        return Err(
-            "Expense gas conversion requires an authenticated accounting-asset quote".into(),
-        );
-    } else if e.gas_units != i128::from(e.max_fee_stroops) {
+    } else if c.asset_symbol == "XLM"
+        && c.asset_issuer.is_none()
+        && e.gas_units != i128::from(e.max_fee_stroops)
+    {
         return Err("XLM expense gas must equal its exact attributable native ceiling".into());
     }
     let expected = match operation {

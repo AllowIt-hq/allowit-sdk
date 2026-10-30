@@ -790,7 +790,17 @@ impl Evaluator<'_> {
                             return Err(invalid());
                         };
                         let mut map = if name == "grant_get" {
-                            if !self.context.rule_facts.as_ref().is_some_and(|facts|facts.grant_available){return Err(failure("NATIVE_GRANT_UNAVAILABLE","This route has no authenticated native Grant map."))}
+                            if !self
+                                .context
+                                .rule_facts
+                                .as_ref()
+                                .is_some_and(|facts| facts.grant_available)
+                            {
+                                return Err(failure(
+                                    "NATIVE_GRANT_UNAVAILABLE",
+                                    "This route has no authenticated native Grant map.",
+                                ));
+                            }
                             self.context
                                 .policy_state
                                 .as_ref()
@@ -1326,6 +1336,7 @@ fn run_inner(
     server_accounting: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
+    *ctx.policy_deadline.borrow_mut() = None;
     let before = ctx
         .policy_state
         .as_ref()
@@ -1342,6 +1353,9 @@ fn run_inner(
         #[cfg(feature = "compiler")]
         trace,
     );
+    if result.outcome != "pass" {
+        *ctx.policy_deadline.borrow_mut() = None;
+    }
     if result.outcome != "pass"
         && let (Some(state), Some(before)) = (&ctx.policy_state, before)
     {
@@ -1551,7 +1565,12 @@ fn run_inner_scoped(
     match evaluator.block(&ir.statements, &mut env) {
         Ok(true) => {
             if let Some(map) = &evaluator.returned_spent {
-                if !ctx.policy_state_writes{return Decision::fail("NATIVE_STATE_WRITE_UNAVAILABLE","This adapter has no persistent custom State result binding.")}
+                if !ctx.policy_state_writes {
+                    return Decision::fail(
+                        "NATIVE_STATE_WRITE_UNAVAILABLE",
+                        "This adapter has no persistent custom State result binding.",
+                    );
+                }
                 let Some(state) = &ctx.policy_state else {
                     return Decision::fail(
                         "POLICY_STATE_REQUIRED",
@@ -1667,6 +1686,7 @@ fn run_inner_scoped(
 /// Evaluate an already compiled policy. Persisted artifacts are hash-checked before evaluation.
 #[cfg(feature = "compiler")]
 pub fn evaluate(policy: &CompiledPolicy, profile: Profile, ctx: &Context) -> Decision {
+    *ctx.policy_deadline.borrow_mut() = None;
     if let Err(decision) = validate_artifact(policy) {
         return *decision;
     }
@@ -1677,6 +1697,7 @@ pub fn evaluate(policy: &CompiledPolicy, profile: Profile, ctx: &Context) -> Dec
 /// No native custody capability or user JSON can be substituted for these trusted bindings.
 #[cfg(feature = "compiler")]
 pub fn evaluate_with_policy_rules(policy: &CompiledPolicy, ctx: &Context) -> Decision {
+    *ctx.policy_deadline.borrow_mut() = None;
     let compiled = match validate_artifact(policy) {
         Ok(compiled) => compiled,
         Err(decision) => return *decision,
@@ -1718,6 +1739,7 @@ pub fn evaluate_with_trace_policy_rules(
     policy: &CompiledPolicy,
     ctx: &Context,
 ) -> (Decision, Option<crate::WorkflowTrace>) {
+    *ctx.policy_deadline.borrow_mut() = None;
     let compiled = match validate_artifact(policy) {
         Ok(compiled) => compiled,
         Err(decision) => return (*decision, None),
