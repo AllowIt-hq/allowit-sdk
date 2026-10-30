@@ -15,6 +15,8 @@
 //! allowit policy import executor.json
 //! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute TOKEN_ACCOUNT 0.25
 //! allowit policy status --json
+//! allowit policy tune-action 2         # per-action limit, owner key
+//! allowit policy revoke --json         # stop the policy, owner key
 //! ```
 use crate::{
     error::{Error, Result, quoted},

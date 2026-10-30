@@ -1,8 +1,9 @@
 //! `allowit wallet SUBCOMMAND`: local agent keys and owner wallet handoffs.
 //!
 //! `generate` writes a new private signer file; `show` prints its public
-//! metadata. Both are local only. `configure` and `approve` print Stellar owner
-//! browser links; they hold no owner key and send nothing.
+//! metadata. Both are local only. `configure` and `approve` read Stellar
+//! testnet account data from Horizon and print owner browser links; they submit
+//! no transaction and hold no owner key.
 //!
 //! ```text
 //! allowit wallet generate --network stellar:testnet --output agent.key

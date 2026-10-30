@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! allowit version
-//! allowit 0.3.0-dev
+//! # prints: allowit X.Y.Z
 //! ```
 use crate::{VERSION, error::Result};
 

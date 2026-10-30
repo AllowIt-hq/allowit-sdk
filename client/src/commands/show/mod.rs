@@ -9,8 +9,8 @@
 //! export ALLOWIT_TOKEN=OWNER.POLICY.SECRET
 //! allowit show POLICY
 //! allowit show POLICY --json --source
-//! allowit eval POLICY --action transfer --rail solana --op transferSOL \
-//!   --addr ADDRESS --amount 0.1 --request-id eval-0001
+//! allowit eval POLICY --action transfer --rail solana --op transferUSDC \
+//!   --addr SOLANA_ADDRESS --amount 0.1 --request-id eval-0001
 //! ```
 use crate::{
     action::{self, Begin},

@@ -5,10 +5,11 @@
 //! Stellar takes a `--request-file`.
 //!
 //! ```text
-//! allowit eval POLICY --action transfer --amount 5 --merchant MERCHANT \
-//!   --request-id eval-0002
-//! allowit exec POLICY --action transfer --amount 5 --merchant MERCHANT \
-//!   --request-id exec-0002 --wait 120s
+//! allowit eval POLICY --action transfer --rail solana --op transferUSDC \
+//!   --addr SOLANA_ADDRESS --amount 5 --merchant MERCHANT --request-id eval-0002
+//! allowit exec POLICY --action transfer --rail solana --op transferUSDC \
+//!   --addr SOLANA_ADDRESS --amount 5 --merchant MERCHANT --request-id exec-0002 \
+//!   --wait 120s
 //! # exit 5 (uncertain): rerun the identical command, or check it:
 //! allowit status POLICY exec-0002 --wait 60s
 //! ```

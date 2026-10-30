@@ -5,7 +5,8 @@
 //! wallets read their own journals and endpoints.
 //!
 //! ```text
-//! allowit exec POLICY --action transfer --amount 1 --request-id exec-0003
+//! allowit exec POLICY --action transfer --rail solana --op transferUSDC \
+//!   --addr SOLANA_ADDRESS --amount 1 --request-id exec-0003
 //! # exit 12 (pending) or 5 (uncertain)
 //! allowit status POLICY exec-0003 --wait 60s
 //! allowit status POLICY SERVER_REQUEST_ID --json

@@ -10,6 +10,8 @@
 //! ALLOWIT_REQUEST_ID=pay-0001 allowit tempo execute RECIPIENT 1.5   # plan only
 //! ALLOWIT_REQUEST_ID=pay-0001 allowit tempo pay RECIPIENT 1.5 --json
 //! allowit tempo status pay-0001
+//! allowit tempo resume pay-0001        # exit 5: recheck the saved transaction
+//! allowit tempo submit pay-0001 TRANSACTION_HASH   # after execute (exit 10)
 //! allowit tempo call https://api.example/v1/data --id call-0001 --max-amount 0.050000
 //! ```
 use crate::error::Result;
