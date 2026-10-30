@@ -1277,6 +1277,7 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
         false,
         None,
         false,
+        false,
         #[cfg(feature = "compiler")]
         None,
     )
@@ -1291,6 +1292,7 @@ fn run_inner(
     private_service_localnet: bool,
     native_payment_asset: Option<&crate::ServicePaymentAsset>,
     native_service_funding: bool,
+    server_accounting: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
     let before = ctx
@@ -1305,6 +1307,7 @@ fn run_inner(
         private_service_localnet,
         native_payment_asset,
         native_service_funding,
+        server_accounting,
         #[cfg(feature = "compiler")]
         trace,
     );
@@ -1325,6 +1328,7 @@ fn run_inner_scoped(
     private_service_localnet: bool,
     native_payment_asset: Option<&crate::ServicePaymentAsset>,
     native_service_funding: bool,
+    server_accounting: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
     if let Err(error) = validate_program(ir) {
@@ -1410,7 +1414,22 @@ fn run_inner_scoped(
     let typed_only = cfg!(feature = "typed-workflow")
         && crate::typed_workflow::required(ir)
         && !crate::validation::service_call_required(ir);
-    if let Err(error) = if typed_only {
+    if let Err(error) = if server_accounting {
+        if !ctx.network.starts_with("stellar:")
+            || ctx.token.is_empty()
+            || ctx.token.len() > 128
+            || ctx.recipient.len() > 256
+            || ctx.action.is_empty()
+            || ctx.action.len() > 128
+        {
+            Err(failure(
+                "INVALID_CONTEXT",
+                "Server accounting requires the exact Stellar asset and operation context.",
+            ))
+        } else {
+            validate_runtime_context(&ctx.runtime_context)
+        }
+    } else if typed_only {
         #[cfg(feature = "typed-workflow")]
         {
             validate_workflow_context(ctx)
@@ -1609,6 +1628,35 @@ pub fn evaluate(policy: &CompiledPolicy, profile: Profile, ctx: &Context) -> Dec
     run(&policy.ir, profile, ctx, policy.source_hash.clone())
 }
 
+/// Server-only integer accounting uses the adapter's explicit denomination.
+/// This path cannot evaluate native guards, mutate policy state or prepare effects.
+#[cfg(feature = "compiler")]
+pub(crate) fn evaluate_server_accounting(policy: &CompiledPolicy, ctx: &Context) -> Decision {
+    let compiled = match validate_artifact(policy) {
+        Ok(compiled) => compiled,
+        Err(decision) => return *decision,
+    };
+    if compiled.calls.iter().any(|call| {
+        !["context_u64", "fail", "is_one_of"].contains(&call.name.rsplit("::").next().unwrap_or(""))
+    }) {
+        return Decision::fail(
+            "INVALID_SERVER_POLICY",
+            "Server accounting cannot execute native or external effects.",
+        );
+    }
+    run_inner(
+        &compiled.ir,
+        Profile::Oracle,
+        ctx,
+        compiled.source_hash,
+        false,
+        None,
+        false,
+        true,
+        None,
+    )
+}
+
 /// Evaluate with bounded source-bound workflow evidence, only in the oracle profile.
 /// Invalid artifacts have no trace. Metadata is reconstructed from the approved source,
 /// never trusted from a caller-supplied workflow projection.
@@ -1661,6 +1709,7 @@ fn evaluate_with_trace_inner(
         policy.source_hash.clone(),
         private_service_localnet,
         native_payment_asset,
+        false,
         false,
         Some(&mut trace),
     );
@@ -1966,6 +2015,7 @@ pub fn evaluate_with_trace_native_service_policy(
         private_localnet,
         None,
         true,
+        false,
         Some(&mut trace),
     );
     let trace = trace.finish(&decision);

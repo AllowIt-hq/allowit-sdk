@@ -118,6 +118,29 @@ pub fn registry() -> Vec<FunctionInfo> {
         effect: "native_effect".into(),
         typed_signature: None,
     });
+    for (name, title, signature, description) in [
+        (
+            "stellar::sep56_deposit",
+            "Deposit vault assets",
+            "stellar::sep56_deposit(vault: AccountId, assets: i128, receiver: AccountId, from: AccountId, operator: AccountId) -> Result<i128>",
+            "Deposits exact underlying units and receives vault shares through the admitted policy-wallet wrapper. The request also binds a positive minimum share credit. The server accounts for fees and slippage as expenses and retains redeemable principal as temporary loss until verified redemption.",
+        ),
+        (
+            "stellar::sep56_redeem",
+            "Redeem vault shares",
+            "stellar::sep56_redeem(vault: AccountId, shares: i128, receiver: AccountId, owner: AccountId, operator: AccountId) -> Result<i128>",
+            "Describes an exact share redemption with a bound minimum underlying credit. Authenticated settled redemption reconciles temporary loss. Delegated policy-wallet redemption is not admitted by the deposit kernel.",
+        ),
+    ] {
+        result.push(FunctionInfo {
+            name: name.into(),
+            title: title.into(),
+            description: description.into(),
+            signature: signature.into(),
+            effect: "native_effect".into(),
+            typed_signature: None,
+        });
+    }
     result
 }
 

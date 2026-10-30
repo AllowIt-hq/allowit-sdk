@@ -93,7 +93,7 @@ fn checked(
         c,
         &request.request,
         state,
-        &transfer,
+        &StellarOperation::Transfer(transfer.clone()),
         request.expires_at,
         false,
     )?;

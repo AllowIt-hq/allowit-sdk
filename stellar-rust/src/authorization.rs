@@ -155,27 +155,30 @@ pub fn authorize_server(
         if usage.nonce != p.state.nonce || usage.deployment_version != p.state.deployment_version {
             return Err("Service accounting differs from active policy ordering".into());
         }
-        let policy =
-            allowit_policy_sdk::compile_stellar_policy(&p.config.policy_source).map_err(err)?;
-        let transfer = transfer_from_request(&p.config, &p.request)?;
+        let operation = operation_from_request(&p.config, &p.request)?;
+        let policy = compile_operation_policy(&p.config.policy_source, &operation)?;
+        let transfer = operation.movement();
         let pass_through = policy.engine_recommendations().iter().any(|choice| {
             choice.engine == PolicyEngine::SimplePolicyEngine && choice.onchain_policy
         });
         if !pass_through
             && (policy.uses_named_state()
                 || !policy.explicit_engine_checks.is_empty()
-                || !policy.evaluate_classic(&allowit_policy_sdk::StellarPolicyContext {
-                    asset: p.config.asset.clone(),
-                    recipient: transfer.recipient,
-                    token: p.config.asset_symbol.clone(),
-                    decimals: 7,
-                    amount: transfer.amount,
-                    spent_daily: usage.spent_daily,
-                    spent_total: usage.spent_total,
-                    spent_day: usage.spent_day,
-                    calls: usage.calls,
-                    now,
-                }))
+                || !policy.evaluate_operation(
+                    &allowit_policy_sdk::StellarPolicyContext {
+                        asset: p.config.asset.clone(),
+                        recipient: transfer.recipient,
+                        token: p.config.asset_symbol.clone(),
+                        decimals: 7,
+                        amount: transfer.amount,
+                        spent_daily: usage.spent_daily,
+                        spent_total: usage.spent_total,
+                        spent_day: usage.spent_day,
+                        calls: usage.calls,
+                        now,
+                    },
+                    operation.name(),
+                ))
         {
             return Err("SimplePolicyEngine service policy denied the exact transfer".into());
         }

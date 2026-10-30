@@ -19,7 +19,9 @@ pub mod properties;
 mod values;
 pub use values::NativeValues;
 pub mod rpc;
+pub mod vaults;
 pub mod x402;
+pub use vaults::{StellarOperation, VaultDeposit, operation_from_request, vault_deposit_request};
 pub type Result<T> = std::result::Result<T, String>;
 
 pub const PROFILE: &str = "allowit-stellar-wallet-v1";
@@ -567,14 +569,27 @@ pub fn sac_address(network: &str, asset: &Asset) -> Result<String> {
     });
     Ok(Contract(hash(preimage.to_xdr(limits()).map_err(err)?)).to_string())
 }
+fn compile_operation_policy(
+    source: &str,
+    operation: &StellarOperation,
+) -> Result<allowit_policy_sdk::StellarPolicy> {
+    match operation {
+        StellarOperation::Transfer(_) => allowit_policy_sdk::compile_stellar_policy(source),
+        StellarOperation::VaultDeposit(_) => {
+            allowit_policy_sdk::compile_stellar_deposit_policy(source)
+        }
+    }
+    .map_err(err)
+}
 pub fn verify_policy(
     c: &WalletConfig,
     r: &ExecutionRequest,
     state: &TrustedState,
     now: u64,
 ) -> Result<()> {
-    let t = transfer_from_request(c, r)?;
-    let policy = allowit_policy_sdk::compile_stellar_policy(&c.policy_source).map_err(err)?;
+    let operation = operation_from_request(c, r)?;
+    let t = operation.movement();
+    let policy = compile_operation_policy(&c.policy_source, &operation)?;
     if c.route == WalletRoute::Native
         && (policy.uses_named_state() || !policy.explicit_engine_checks.is_empty())
     {
@@ -587,18 +602,21 @@ pub fn verify_policy(
         return Err("Native policy requires authoritative execution preflight".into());
     }
     if policy.source_hash != c.source_hash
-        || !policy.evaluate(&allowit_policy_sdk::StellarPolicyContext {
-            asset: c.asset.clone(),
-            recipient: t.recipient,
-            token: c.asset_symbol.clone(),
-            decimals: 7,
-            amount: t.amount,
-            spent_daily: state.spent_daily,
-            spent_total: state.spent_total,
-            calls: state.calls,
-            now,
-            spent_day: state.spent_day,
-        })
+        || !policy.evaluate_operation(
+            &allowit_policy_sdk::StellarPolicyContext {
+                asset: c.asset.clone(),
+                recipient: t.recipient,
+                token: c.asset_symbol.clone(),
+                decimals: 7,
+                amount: t.amount,
+                spent_daily: state.spent_daily,
+                spent_total: state.spent_total,
+                calls: state.calls,
+                now,
+                spent_day: state.spent_day,
+            },
+            operation.name(),
+        )
     {
         return Err("Authored policy rejected this exact Stellar operation".into());
     }
@@ -629,17 +647,17 @@ fn policy_wallet_request(
     c: &WalletConfig,
     r: &ExecutionRequest,
     state: &TrustedState,
-    t: &Transfer,
+    operation: &StellarOperation,
     expires: u64,
     legacy_revision: bool,
 ) -> Result<ScVal> {
-    let args = transfer_args(c, t)?.to_xdr(limits()).map_err(err)?;
+    let args = operation.arguments(c)?.to_xdr(limits()).map_err(err)?;
     let invocation = value_map(vec![
         ("module_digest", value_bytes(&c.module_digest)?),
         ("entrypoint", value_symbol("_execute")?),
         (
             "argument_schema_digest",
-            value_bytes(&hash(ARGUMENT_SCHEMA))?,
+            value_bytes(&hash(operation.argument_schema()))?,
         ),
         ("arguments", value_bytes(&args)?),
     ])?;
@@ -691,11 +709,12 @@ fn build(
             return Err("Unsupported policy contract version".into());
         }
     }
-    let t = decode_transfer(
+    let operation = vaults::decode_operation(
         c,
         r,
         matches!(packet, PacketUse::Retained | PacketUse::RetainedRevision),
     )?;
+    let t = operation.movement();
     if admit_policy {
         verify_policy(c, r, state, now)?;
     }
@@ -753,7 +772,7 @@ fn build(
                         c,
                         r,
                         state,
-                        &t,
+                        &operation,
                         expires,
                         legacy_revision,
                     )?]
@@ -770,7 +789,7 @@ fn build(
                                 c,
                                 r,
                                 state,
-                                &t,
+                                &operation,
                                 expires,
                                 legacy_revision,
                             )?]
@@ -924,7 +943,7 @@ pub(crate) fn prepare_for_native_preflight(
     )
 }
 fn validate_signing_policy(p: &PreparedOperation, now: u64) -> Result<()> {
-    transfer_from_request(&p.config, &p.request)?;
+    operation_from_request(&p.config, &p.request)?;
     if needs_native_preflight(&p.config)? {
         let marker = p
             .native_preflight
@@ -1188,7 +1207,7 @@ pub fn authorize(
     })
 }
 pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
-    transfer_from_request(&s.prepared.config, &s.prepared.request)?;
+    operation_from_request(&s.prepared.config, &s.prepared.request)?;
     if s.prepared.state.contract_version == Some(1) && needs_native_preflight(&s.prepared.config)? {
         if s.prepared.created_at > now || now >= s.prepared.expires_at {
             return Err("Signed operation is stale".into());

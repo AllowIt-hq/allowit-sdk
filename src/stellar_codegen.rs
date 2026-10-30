@@ -26,6 +26,7 @@ enum Guard {
     AmountAtMost(i128, String),
     Daily(i128, String),
     Recipient(String),
+    RecipientOneOf(Vec<String>),
     Asset(String),
     Actions(Vec<String>),
     Not(Box<Guard>),
@@ -47,6 +48,9 @@ pub struct StellarSourceProfile {
     pub source_hash: [u8; 32],
     pub public_entrypoint: String,
     pub private_entrypoint: String,
+    /// Separately validated server enforcement. It is never part of native lowering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_entrypoint: Option<String>,
     pub argument_schema_digest: [u8; 32],
     pub admitted_operations: Vec<String>,
     pub permitted_effects: Vec<String>,
@@ -113,6 +117,13 @@ fn native_guard(expr: &Expr, bindings: &BTreeMap<String, Guard>) -> Result<Guard
                 && matches!(&**right, Expr::Integer { .. }) =>
         {
             Ok(Guard::AmountAtMost(units(right)?, "USDC".into()))
+        }
+        Expr::Binary { op, left, right } if op == "==" && field(left, "recipient") => {
+            let address = literal(right).ok_or_else(unsupported)?;
+            if !valid_strkey(address) {
+                return Err(unsupported());
+            }
+            Ok(Guard::RecipientOneOf(vec![address.to_owned()]))
         }
         Expr::Binary { op, left, right } if op == "&&" || op == "||" => {
             let a = Box::new(native_guard(left, bindings)?);
@@ -210,6 +221,7 @@ fn is_boolean(g: &Guard) -> bool {
     matches!(
         g,
         Guard::Boolean(_)
+            | Guard::RecipientOneOf(_)
             | Guard::AmountAtMost(..)
             | Guard::Not(_)
             | Guard::And(..)
@@ -323,7 +335,7 @@ fn unit(condition: bool) -> Result<NativeValue, ()> {
         Err(())
     }
 }
-fn check(guard: &Guard, c: &StellarPolicyContext) -> Result<NativeValue, ()> {
+fn check(guard: &Guard, c: &StellarPolicyContext, operation: &str) -> Result<NativeValue, ()> {
     match guard {
         Guard::Pass => Ok(NativeValue::Unit),
         Guard::Fail => Err(()),
@@ -350,32 +362,37 @@ fn check(guard: &Guard, c: &StellarPolicyContext) -> Result<NativeValue, ()> {
                 .is_some_and(|v| v <= *limit),
         ),
         Guard::Recipient(to) => unit(c.recipient == *to),
+        Guard::RecipientOneOf(allowed) => Ok(NativeValue::Bool(allowed.contains(&c.recipient))),
         Guard::Asset(token) => unit(c.token == *token && c.decimals == 7),
-        Guard::Actions(actions) => unit(actions.iter().any(|a| a == "stellar::sep41_transfer")),
-        Guard::Not(v) => Ok(NativeValue::Bool(!boolean(check(v, c)?)?)),
+        Guard::Actions(actions) => unit(actions.iter().any(|a| a == operation)),
+        Guard::Not(v) => Ok(NativeValue::Bool(!boolean(check(v, c, operation)?)?)),
         Guard::And(a, b) => Ok(NativeValue::Bool(
-            boolean(check(a, c)?)? && boolean(check(b, c)?)?,
+            boolean(check(a, c, operation)?)? && boolean(check(b, c, operation)?)?,
         )),
         Guard::Or(a, b) => Ok(NativeValue::Bool(
-            boolean(check(a, c)?)? || boolean(check(b, c)?)?,
+            boolean(check(a, c, operation)?)? || boolean(check(b, c, operation)?)?,
         )),
     }
 }
-fn run(block: &[Step], c: &StellarPolicyContext) -> Result<Option<()>, ()> {
+fn run(block: &[Step], c: &StellarPolicyContext, operation: &str) -> Result<Option<()>, ()> {
     for step in block {
         match step {
             Step::Check(g) => {
-                check(g, c)?;
+                check(g, c, operation)?;
             }
             Step::Return(g) => {
-                if !matches!(check(g, c)?, NativeValue::Unit) {
+                if !matches!(check(g, c, operation)?, NativeValue::Unit) {
                     return Err(());
                 }
                 return Ok(Some(()));
             }
             Step::If(g, a, b) => {
-                let selected = if boolean(check(g, c)?)? { a } else { b };
-                if let Some(()) = run(selected, c)? {
+                let selected = if boolean(check(g, c, operation)?)? {
+                    a
+                } else {
+                    b
+                };
+                if let Some(()) = run(selected, c, operation)? {
                     return Ok(Some(()));
                 }
             }
@@ -508,6 +525,18 @@ fn code(g: &Guard, m: &crate::PlacementManifest) -> String {
             false,
             m,
         ),
+        Guard::RecipientOneOf(allowed) => {
+            let condition = allowed
+                .iter()
+                .map(|address| {
+                    format!(
+                        "ctx.recipient==soroban_sdk::Address::from_str(ctx.asset.env(),{address:?})"
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("||");
+            format!("Ok::<bool,()>({condition})")
+        }
         Guard::Asset(token) => rule_code(
             "asset_label",
             &[format!(
@@ -517,16 +546,23 @@ fn code(g: &Guard, m: &crate::PlacementManifest) -> String {
             m,
         ),
         Guard::Actions(actions) => {
-            let mut v =
-                "{let mut values=soroban_sdk::Vec::<soroban_sdk::String>::new(ctx.asset.env());"
-                    .to_string();
-            for action in actions {
-                v += &format!(
-                    "values.push_back(soroban_sdk::String::from_str(ctx.asset.env(),{action:?}));"
-                );
-            }
-            v += "values}";
-            rule_code("actions", &[v], false, m)
+            let conditions: Vec<_> = actions
+                .iter()
+                .filter(|a| {
+                    ["stellar::sep41_transfer", "stellar::sep56_deposit"].contains(&a.as_str())
+                })
+                .map(|a| {
+                    format!("ctx.operation==soroban_sdk::String::from_str(ctx.asset.env(),{a:?})")
+                })
+                .collect();
+            format!(
+                "if {}{{Ok::<(),()>(())}}else{{Err::<(),()>(())}}",
+                if conditions.is_empty() {
+                    "false".into()
+                } else {
+                    conditions.join("||")
+                }
+            )
         }
         Guard::Not(v) => format!("Ok::<bool,()>(!({{ {} }}?))", code(v, m)),
         Guard::And(a, b) => format!(
@@ -587,7 +623,7 @@ pub fn compile_stellar_policy_with_options(
     }
     impl<'ast> syn::visit::Visit<'ast> for SourceFields {
         fn visit_expr_call(&mut self, node: &'ast syn::ExprCall) {
-            let admitted = matches!(&*node.func,syn::Expr::Path(p) if p.path.segments.last().is_some_and(|s|["cap_per_transaction","set_cap_per_day","amount_at_most","require_asset","require_recipient","allow_actions"].contains(&s.ident.to_string().as_str())));
+            let admitted = matches!(&*node.func,syn::Expr::Path(p) if p.path.segments.last().is_some_and(|s|["cap_per_transaction","set_cap_per_day","amount_at_most","require_asset","require_recipient","allow_actions","is_one_of"].contains(&s.ident.to_string().as_str())));
             if admitted {
                 self.guarded += 1;
             }
@@ -609,14 +645,19 @@ pub fn compile_stellar_policy_with_options(
         guarded: 0,
         raw: false,
     };
-    syn::visit::Visit::visit_file(&mut fields, &parsed);
+    for item in &parsed.items {
+        if let syn::Item::Fn(function) = item {
+            if function.sig.ident == "_execute" {
+                syn::visit::Visit::visit_item_fn(&mut fields, function);
+            }
+        }
+    }
     if fields.raw {
         return Err(unsupported());
     }
-    let native_entry = parsed
-        .items
-        .iter()
-        .any(|item| matches!(item,syn::Item::Fn(f) if f.sig.inputs.len()==3));
+    let native_entry = parsed.items.iter().any(
+        |item| matches!(item,syn::Item::Fn(f) if f.sig.ident=="_execute" && f.sig.inputs.len()==3),
+    );
     let compiled = compile(source)?;
     if native_entry {
         let functional =
@@ -649,6 +690,11 @@ pub fn compile_stellar_policy_with_options(
                 source_hash,
                 public_entrypoint: "execute".into(),
                 private_entrypoint: "_execute".into(),
+                server_entrypoint: parsed
+                    .items
+                    .iter()
+                    .any(|i| matches!(i,syn::Item::Fn(f) if f.sig.ident=="_server_execute"))
+                    .then(|| "_server_execute".into()),
                 argument_schema_digest: argument_schema_hash,
                 admitted_operations: vec!["stellar::sep41_transfer".into()],
                 permitted_effects: vec![
@@ -710,6 +756,11 @@ pub fn compile_stellar_policy_with_options(
             source_hash,
             public_entrypoint: "execute".into(),
             private_entrypoint: "_execute".into(),
+            server_entrypoint: parsed
+                .items
+                .iter()
+                .any(|i| matches!(i,syn::Item::Fn(f) if f.sig.ident=="_server_execute"))
+                .then(|| "_server_execute".into()),
             argument_schema_digest: argument_schema_hash,
             admitted_operations: vec!["stellar::sep41_transfer".into()],
             permitted_effects: vec!["bound_asset_debit".into(), "recipient_credit".into()],
@@ -727,6 +778,38 @@ pub fn compile_stellar_policy_with_options(
         functional: None,
     })
 }
+/// Compile a deposit-only native artifact from the same authored policy source.
+/// Atomic asset/share effects remain the custody kernel's responsibility.
+pub fn compile_stellar_deposit_policy(source: &str) -> Result<StellarPolicy, CompileError> {
+    let mut policy = compile_stellar_policy(source)?;
+    let hash = digest(crate::stellar_vault::DEPOSIT_ARGUMENT_SCHEMA);
+    policy.argument_schema_hash = hash;
+    policy.source_profile.profile = "allowit-stellar-deposit-v1".into();
+    policy.source_profile.argument_schema_digest = hash;
+    policy.source_profile.admitted_operations =
+        vec![crate::stellar_vault::DEPOSIT_OPERATION.into()];
+    policy.source_profile.permitted_effects = vec![
+        "bound_asset_debit".into(),
+        "vault_share_credit".into(),
+        "policy_spent_output".into(),
+    ];
+    policy.rust_source = policy
+        .rust_source
+        .replace("allowit-stellar-transfer-v1", "allowit-stellar-deposit-v1")
+        .replace(
+            "pub const ADMITTED_OPERATION:&str=\"stellar::sep41_transfer\"",
+            "pub const ADMITTED_OPERATION:&str=\"stellar::sep56_deposit\"",
+        );
+    let old = format!(
+        "pub const ARGUMENT_SCHEMA_HASH:[u8;32]={:?};",
+        digest(STELLAR_ARGUMENT_SCHEMA)
+    );
+    policy.rust_source = policy.rust_source.replace(
+        &old,
+        &format!("pub const ARGUMENT_SCHEMA_HASH:[u8;32]={hash:?};"),
+    );
+    Ok(policy)
+}
 impl StellarPolicy {
     pub(crate) fn common_rules(&self) -> Option<Vec<String>> {
         if let Some(policy) = &self.functional {
@@ -735,14 +818,29 @@ impl StellarPolicy {
         matches!(self.steps.as_slice(), [Step::Return(Guard::Pass)]).then(Vec::new)
     }
     pub fn evaluate_classic(&self, c: &StellarPolicyContext) -> bool {
+        self.evaluate_operation(c, "stellar::sep41_transfer")
+    }
+    /// Evaluate the exact admitted operation label without substituting transfer semantics.
+    pub fn evaluate_operation(&self, c: &StellarPolicyContext, operation: &str) -> bool {
+        if !self
+            .source_profile
+            .admitted_operations
+            .iter()
+            .any(|op| op == operation)
+        {
+            return false;
+        }
         if self.functional.is_some() {
             return false;
         }
         c.amount > 0
             && c.spent_daily >= 0
             && c.spent_total >= c.spent_daily
-            && self.mandatory.iter().all(|g| check(g, c).is_ok())
-            && matches!(run(&self.steps, c), Ok(Some(())))
+            && self
+                .mandatory
+                .iter()
+                .all(|g| check(g, c, operation).is_ok())
+            && matches!(run(&self.steps, c, operation), Ok(Some(())))
     }
 
     /// Compatibility evaluator for existing classic-route scalar policies.

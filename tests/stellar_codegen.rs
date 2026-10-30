@@ -19,6 +19,57 @@ fn context() -> StellarPolicyContext {
     }
 }
 #[test]
+fn deposit_profile_binds_schema_and_actual_action_without_transfer_substitution() {
+    let policy = allowit_sdk::compile_stellar_deposit_policy(&source(
+        r#"allowit::allow_actions(ctx, &["stellar::sep56_deposit"])?; Ok(())"#,
+    ))
+    .unwrap();
+    assert!(policy.evaluate_operation(&context(), "stellar::sep56_deposit"));
+    assert!(!policy.evaluate(&context()));
+    assert_eq!(
+        policy.source_profile.admitted_operations,
+        vec!["stellar::sep56_deposit"]
+    );
+    assert!(
+        policy
+            .rust_source
+            .contains("ctx.operation==soroban_sdk::String::from_str")
+    );
+    assert!(
+        policy
+            .rust_source
+            .contains("ADMITTED_OPERATION:&str=\"stellar::sep56_deposit\"")
+    );
+    assert_eq!(policy.argument_schema_hash, {
+        use sha2::{Digest, Sha256};
+        <[u8; 32]>::from(Sha256::digest(
+            allowit_sdk::stellar_vault::DEPOSIT_ARGUMENT_SCHEMA,
+        ))
+    });
+    let denied = allowit_sdk::compile_stellar_deposit_policy(&source(
+        r#"allowit::allow_actions(ctx, &["stellar::sep41_transfer"])?; Ok(())"#,
+    ))
+    .unwrap();
+    assert!(!denied.evaluate_operation(&context(), "stellar::sep56_deposit"));
+}
+#[test]
+fn authored_destination_allowlist_selects_vaults_without_hidden_configuration() {
+    let a = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+    let b = "CBNVWW23LNNVWW23LNNVWW23LNNVWW23LNNVWW23LNNVWW23LNNVXQOK";
+    // A second distinct contract address with a valid checksum.
+    let source = source(&format!(
+        r#"if !allowit::is_one_of(&ctx.recipient, &["{a}", "{b}"])? {{ return allowit::fail("vault not allowed"); }} Ok(())"#
+    ));
+    let policy = allowit_sdk::compile_stellar_deposit_policy(&source).unwrap();
+    let mut c = context();
+    for vault in [a, b] {
+        c.recipient = vault.into();
+        assert!(policy.evaluate_operation(&c, "stellar::sep56_deposit"));
+    }
+    c.recipient = context().recipient;
+    assert!(!policy.evaluate_operation(&c, "stellar::sep56_deposit"));
+}
+#[test]
 fn monetary_guards_lower_exactly_to_native_units() {
     let policy=compile_stellar_policy(&source(r#"allowit::cap_per_transaction(ctx, "2", "USDC")?; allowit::set_cap_per_day(ctx, "5", "USDC")?; Ok(())"#)).unwrap();
     let mut c = context();

@@ -1,4 +1,8 @@
 //! Bounded JSON-RPC transport. Submission never retries an uncertain transaction.
+pub use crate::vaults::{
+    VaultPositionObservation, VerifiedVaultDeposit, VerifiedVaultRedemption, vault_deposit_receipt,
+    vault_position_observation, vault_redemption_receipt,
+};
 use crate::*;
 use serde_json::{Value, json};
 use std::{
@@ -165,6 +169,28 @@ pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperatio
     if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(&p.config.network)? {
         return Err("Simulation network differs from installation".into());
     }
+    if let StellarOperation::VaultDeposit(_) = operation_from_request(&p.config, &p.request)? {
+        let binding = readonly_simulation(
+            rpc,
+            &p.config,
+            &p.state.source,
+            &p.config.wallet,
+            "policy_binding_for",
+            vec![value_bytes(&hash(vaults::DEPOSIT_ARGUMENT_SCHEMA))?],
+        )?;
+        reject_restoration(&binding)?;
+        let binding = readonly_result(&binding)?;
+        if digest_field(map_field(&binding, "policy_instance")?)? != p.config.policy_instance
+            || digest_field(map_field(&binding, "module_digest")?)? != p.config.module_digest
+            || digest_field(map_field(&binding, "source_digest")?)? != p.config.source_hash
+            || digest_field(map_field(&binding, "argument_schema_digest")?)?
+                != hash(vaults::DEPOSIT_ARGUMENT_SCHEMA)
+            || map_field(&binding, "entrypoint")? != &value_symbol("_execute")?
+            || current_contract_version(&binding)? != 1
+        {
+            return Err("Deposit source, module or argument binding differs".into());
+        }
+    }
     let v = rpc.call(
         "simulateTransaction",
         json!({"transaction":p.transaction_xdr,"authMode":if authorization::server_signature(p,false)?==ScVal::Void {"record"} else {"enforce"}}),
@@ -174,7 +200,7 @@ pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperatio
     }
     reject_restoration(&v)?;
     let result = readonly_result(&v)?;
-    let transfer = transfer_from_request(&p.config, &p.request)?;
+    let transfer = operation_from_request(&p.config, &p.request)?.movement();
     let expected = value_map(vec![
         ("operation_id", value_bytes(&p.request.operation.nonce)?),
         ("token", ScVal::Address(address(&p.config.asset)?)),
@@ -384,7 +410,7 @@ pub fn status_by_hash(
     let v = rpc.call("getTransaction", json!({"hash":hex(transaction_hash)}))?;
     verify_settlement(&v, network, transaction_hash)
 }
-fn verify_settlement(
+pub(crate) fn verify_settlement(
     v: &Value,
     network: &str,
     transaction_hash: &[u8; 32],
@@ -867,7 +893,9 @@ fn trusted_state_inner(
     if digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
         || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
         || digest_field(map_field(&binding, "source_digest")?)? != c.source_hash
-        || digest_field(map_field(&binding, "argument_schema_digest")?)? != hash(ARGUMENT_SCHEMA)
+        || ![hash(ARGUMENT_SCHEMA), hash(vaults::DEPOSIT_ARGUMENT_SCHEMA)].contains(&digest_field(
+            map_field(&binding, "argument_schema_digest")?,
+        )?)
         || map_field(&binding, "entrypoint")? != &value_symbol("_execute")?
     {
         return Err("Compiled policy binding differs from installation".into());

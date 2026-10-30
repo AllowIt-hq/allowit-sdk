@@ -34,8 +34,8 @@ mod stellar_functional;
 #[cfg(feature = "compiler")]
 pub use stellar_codegen::{
     STELLAR_ARGUMENT_SCHEMA, STELLAR_SOURCE_PROFILE, StellarEvaluation, StellarPolicy,
-    StellarPolicyContext, StellarSourceProfile, compile_stellar_policy,
-    compile_stellar_policy_with_options,
+    StellarPolicyContext, StellarSourceProfile, compile_stellar_deposit_policy,
+    compile_stellar_policy, compile_stellar_policy_with_options,
 };
 #[cfg(feature = "compiler")]
 mod editing;
@@ -69,8 +69,11 @@ mod registry;
 #[cfg(feature = "compiler")]
 mod requirements;
 mod runtime;
+#[cfg(feature = "compiler")]
+pub mod server_policy;
 #[cfg(feature = "oracle-ledger")]
 pub mod spending;
+pub mod stellar_vault;
 #[cfg(feature = "compiler")]
 mod trace;
 pub mod typed_workflow;

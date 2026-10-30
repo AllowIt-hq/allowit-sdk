@@ -1205,7 +1205,7 @@ pub fn compile(source: &str) -> Result<CompiledPolicy, CompileError> {
     compile_inner(source)
 }
 
-fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
+pub(crate) fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     if source.chars().any(|c| matches!(c,'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}'|'\u{200e}'|'\u{200f}'|'\u{061c}')) {
         return Err(CompileError::new("INVALID_POLICY","Bidirectional text controls are not allowed in policy source."));
     }
@@ -1225,6 +1225,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         .parse::<proc_macro2::TokenStream>()
         .map_err(|e| error(e.span(), e.to_string()))?;
     validate_token_budget(&tokens)?;
+    let tokens = crate::server_policy::strip_server_hook(source, tokens)?;
     let (tokens, params) = crate::params::extract(&tokens)?;
     validate_signature(&tokens)?;
     validate_block_shapes(&tokens)?;
