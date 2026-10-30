@@ -4,7 +4,7 @@
 //! Caller-supplied outcomes and validation results have no representation here. A typed
 //! run is POSTed once; every unknown outcome is recovered by status with the same ID.
 //!
-//! Activation stays unavailable until AllowIt publishes the typed owner authorization
+//! Activation stays unavailable until Allowit publishes the typed owner authorization
 //! mode contract. `activate` is the single gate.
 use crate::{
     args::Args,
@@ -23,7 +23,7 @@ use std::path::Path;
 
 pub(crate) const OPERATION_DOMAIN: &str = "allowit-workflow-operation-v1";
 const OPERATION_ENCODING: &str = "nul-separated-utf8-sha256";
-const UNAVAILABLE: &str = "typed request execution is not available: AllowIt has not published the typed owner authorization mode for this CLI. Nothing was sent";
+const UNAVAILABLE: &str = "typed request execution is not available: Allowit has not published the typed owner authorization mode for this CLI. Nothing was sent";
 /// Set only with the genuine backend typed owner authorization mode contract and fixture.
 const TYPED_ACTIVATION: bool = false;
 /// Scalar request flags. A request file is the complete request, so none can combine with it.
@@ -174,7 +174,7 @@ pub(crate) fn parse_ingress(skill: &Skill, cfg: &Config) -> Result<TypedIngress>
         .ok_or_else(|| Error::unsupported(UNAVAILABLE))?;
     let bad = |what: &str| {
         Error::unsupported(format!(
-            "AllowIt published a typed request description this CLI cannot read ({what})"
+            "Allowit published a typed request description this CLI cannot read ({what})"
         ))
     };
     let ingress = TypedIngress::deserialize(raw).map_err(|_| bad("schema"))?;
@@ -207,7 +207,7 @@ pub(crate) fn parse_ingress(skill: &Skill, cfg: &Config) -> Result<TypedIngress>
         .ok_or_else(|| bad("urls"))?;
     if !cfg.is_route("runs", &urls.runs) || !cfg.is_route("status", &urls.status) {
         return Err(Error::config(
-            "AllowIt reported typed request endpoints outside this policy's harness routes; check ALLOWIT_URL",
+            "Allowit reported typed request endpoints outside this policy's harness routes; check ALLOWIT_URL",
         ));
     }
     Ok(ingress)
@@ -234,10 +234,10 @@ impl Activated {
     fn bind(&self, request: &TypedRequest, policy_id: &str) -> Result<()> {
         if !self.ingress.kinds.contains(&request.kind()) {
             return Err(Error::usage(
-                "AllowIt does not accept this typed request kind for this policy",
+                "Allowit does not accept this typed request kind for this policy",
             ));
         }
-        // CurlRequest has no OperationRef; AllowIt binds its wrapper digest to the installation.
+        // CurlRequest has no OperationRef; Allowit binds its wrapper digest to the installation.
         if let TypedInput::Execution(r) = &request.input {
             if r.operation.policy_instance != self.ingress.operation_binding.policy_instance {
                 return Err(Error::usage(
@@ -321,14 +321,14 @@ fn recovery(e: Error, id: &str, check: &str) -> Error {
         return e;
     }
     Error::uncertain(format!(
-        "{e}\nTyped request {id} may have reached AllowIt. Do not resend it and do not use a new requestId. Check it with: {check}"
+        "{e}\nTyped request {id} may have reached Allowit. Do not resend it and do not use a new requestId. Check it with: {check}"
     ))
 }
 /// The typed `{request: PolicyRequest}` reply contract is pending its backend fixture. Until
 /// then no reply is classified: settlement and delivery are never inferred from it.
 fn decode_reply(_reply: &Value, id: &str, check: &str) -> Result<i32> {
     Err(Error::uncertain(format!(
-        "AllowIt answered typed request {id}, but this CLI cannot read typed results yet. Do not resend it. Check it with: {check}"
+        "Allowit answered typed request {id}, but this CLI cannot read typed results yet. Do not resend it. Check it with: {check}"
     )))
 }
 

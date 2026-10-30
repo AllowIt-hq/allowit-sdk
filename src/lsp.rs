@@ -18,7 +18,7 @@ impl LanguageServer {
         let p = &message["params"];
         let response = |result: Value| json!({"jsonrpc":"2.0","id":id,"result":result});
         match method{
-            "initialize"=>vec![response(json!({"capabilities":{"textDocumentSync":1,"hoverProvider":true,"completionProvider":{"triggerCharacters":["_"]},"experimental":{"allowitWorkflow":true}},"serverInfo":{"name":"AllowIt","version":env!("CARGO_PKG_VERSION")}}))],
+            "initialize"=>vec![response(json!({"capabilities":{"textDocumentSync":1,"hoverProvider":true,"completionProvider":{"triggerCharacters":["_"]},"experimental":{"allowitWorkflow":true}},"serverInfo":{"name":"Allowit","version":env!("CARGO_PKG_VERSION")}}))],
             "shutdown"=>{self.shutdown=true;vec![response(Value::Null)]},
             "exit"=>vec![],
             "initialized"=>vec![],
@@ -59,7 +59,7 @@ fn diagnostics(uri: &str, source: &str) -> Value {
                 .map(char::len_utf16)
                 .sum::<usize>();
             vec![
-                json!({"range":{"start":{"line":line,"character":column},"end":{"line":line,"character":column+1}},"severity":1,"source":"AllowIt","code":e.code,"message":e.message}),
+                json!({"range":{"start":{"line":line,"character":column},"end":{"line":line,"character":column+1}},"severity":1,"source":"Allowit","code":e.code,"message":e.message}),
             ]
         }
     };

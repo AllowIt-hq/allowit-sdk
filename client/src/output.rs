@@ -40,7 +40,7 @@ pub(crate) fn classify(r: &Value, command: &str) -> ResultState {
         ResultState::new(
             "awaiting_input",
             11,
-            "The owner must answer this question in AllowIt. Stop, report the prompt, then check again with `allowit status`.",
+            "The owner must answer this question in Allowit. Stop, report the prompt, then check again with `allowit status`.",
         )
     } else if outcome == "pending" {
         ResultState::new(
@@ -66,7 +66,7 @@ pub(crate) fn classify(r: &Value, command: &str) -> ResultState {
         ResultState::new(
             "owner_signature",
             10,
-            "The policy passed. The owner must review and sign this transfer in AllowIt; nothing has been paid yet.",
+            "The policy passed. The owner must review and sign this transfer in Allowit; nothing has been paid yet.",
         )
     } else {
         ResultState::new(
@@ -78,24 +78,24 @@ pub(crate) fn classify(r: &Value, command: &str) -> ResultState {
 }
 pub(crate) fn check_result(r: &Value, command: &str, net: Network) -> Result<()> {
     if r.is_null() {
-        return Err(Error::uncertain("AllowIt returned an empty result"));
+        return Err(Error::uncertain("Allowit returned an empty result"));
     }
     let Some(outcome) = r["outcome"].as_str() else {
         return Err(Error::uncertain(
-            "AllowIt returned a result without an outcome",
+            "Allowit returned a result without an outcome",
         ));
     };
     for k in ["status", "kind", "requestId"] {
         if !r[k].is_null() && !r[k].is_string() {
             return Err(Error::uncertain(format!(
-                "AllowIt returned a result with an invalid {k}"
+                "Allowit returned a result with an invalid {k}"
             )));
         }
     }
     for k in ["executed", "localRecorded"] {
         if !r[k].is_null() && !r[k].is_boolean() {
             return Err(Error::uncertain(format!(
-                "AllowIt returned a result with an invalid {k}"
+                "Allowit returned a result with an invalid {k}"
             )));
         }
     }
@@ -108,42 +108,42 @@ pub(crate) fn check_result(r: &Value, command: &str, net: Network) -> Result<()>
         "fail" => status == "denied",
         _ => {
             return Err(Error::uncertain(format!(
-                "AllowIt returned an unknown outcome {}",
+                "Allowit returned an unknown outcome {}",
                 quoted(outcome)
             )));
         }
     };
     let msg = if !good {
         format!(
-            "AllowIt returned outcome {} with status {}",
+            "Allowit returned outcome {} with status {}",
             quoted(outcome),
             quoted(status)
         )
     } else if (r["executed"] == true) != (status == "settled") {
         format!(
-            "AllowIt returned status {} with executed {}",
+            "Allowit returned status {} with executed {}",
             quoted(status),
             go_display(&r["executed"])
         )
     } else if (r["localRecorded"] == true) != (status == "recorded") {
         format!(
-            "AllowIt returned status {} with localRecorded {}",
+            "Allowit returned status {} with localRecorded {}",
             quoted(status),
             go_display(&r["localRecorded"])
         )
     } else if net == Network::Local && ["settled", "submitted"].contains(&status) {
-        "AllowIt reported an on-chain transaction for a Local dev policy".into()
+        "Allowit reported an on-chain transaction for a Local dev policy".into()
     } else if net == Network::Wallet && status == "recorded" {
-        "AllowIt reported a mock recording for a wallet policy".into()
+        "Allowit reported a mock recording for a wallet policy".into()
     } else if !kind.is_empty() && !["judgment", "transaction"].contains(&kind) {
-        format!("AllowIt returned an unknown kind {}", quoted(kind))
+        format!("Allowit returned an unknown kind {}", quoted(kind))
     } else if command == "eval" && kind == "transaction" || command == "exec" && kind == "judgment"
     {
-        format!("AllowIt returned a {} result for {command}", quoted(kind))
+        format!("Allowit returned a {} result for {command}", quoted(kind))
     } else if (command == "eval" || kind == "judgment")
         && ["settled", "recorded", "submitted"].contains(&status)
     {
-        "AllowIt reported a spend for a permission check".into()
+        "Allowit reported a spend for a permission check".into()
     } else {
         return Ok(());
     };

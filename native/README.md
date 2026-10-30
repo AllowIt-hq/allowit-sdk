@@ -1,7 +1,7 @@
 # Native Solana policy lifecycle
 
-The JavaScript SDK links the native Rust source in AllowIt-contracts-solana to
-owner lifecycle commands and the AllowIt browser. It is a separate adapter from
+The JavaScript SDK links the native Rust source in allowit-contracts-solana to
+owner lifecycle commands and the Allowit browser. It is a separate adapter from
 the restricted Rust compiler/WASM and owner-signed wallet allowance profile.
 
 `new NativePolicySDK(config).generate(prompt)` has exactly one generation

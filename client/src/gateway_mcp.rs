@@ -1,4 +1,4 @@
-//! Local MCP transport for the same AllowIt backend command boundary.
+//! Local MCP transport for the same Allowit backend command boundary.
 use crate::{
     error::{Error, Result},
     gateway::{self, Gateway},
@@ -59,8 +59,8 @@ fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Va
         ),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools":[
-            {"name":"allowit_call","description":"Call a service through the selected AllowIt account or explicit bound policy. The backend owns payment and connections.","inputSchema":{"type":"object","properties":{"target":{"type":"string"},"input":{},"operationId":{"type":"string"}},"required":["target","operationId"],"additionalProperties":false}},
-            {"name":"allowit_services","description":"List services from the authenticated AllowIt backend catalog.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
+            {"name":"allowit_call","description":"Call a service through the selected Allowit account or explicit bound policy. The backend owns payment and connections.","inputSchema":{"type":"object","properties":{"target":{"type":"string"},"input":{},"operationId":{"type":"string"}},"required":["target","operationId"],"additionalProperties":false}},
+            {"name":"allowit_services","description":"List services from the authenticated Allowit backend catalog.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}},
             {"name":"allowit_status","description":"Read an existing operation without creating another purchase.","inputSchema":{"type":"object","properties":{"operationId":{"type":"string"}},"required":["operationId"],"additionalProperties":false}}
         ]})),
         "tools/call" => {
@@ -129,7 +129,7 @@ fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Va
                     }
                     let exit = gateway::purchase(q, &common, &mut out, stderr)?;
                     let v = serde_json::from_str::<Value>(&out).map_err(|_| {
-                        Error::uncertain("AllowIt operation response was not available")
+                        Error::uncertain("Allowit operation response was not available")
                     })?;
                     if exit != 0 {
                         return Ok(
@@ -138,7 +138,7 @@ fn dispatch(message: &Value, inv: &Invocation, stderr: &mut String) -> Result<Va
                     }
                     v
                 }
-                _ => return Err(Error::usage("unknown AllowIt MCP tool")),
+                _ => return Err(Error::usage("unknown Allowit MCP tool")),
             };
             Ok(json!({"content":[{"type":"text","text":result.to_string()}]}))
         }

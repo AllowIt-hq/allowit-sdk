@@ -1,6 +1,6 @@
-# AllowIt SDK
+# Allowit SDK
 
-AllowIt policies are a restricted, validated subset of Rust. This repository contains the source compiler, deterministic interpreter, function registry, workflow projection, CLI and stdio language server. The same `no_std + alloc` interpreter is used by the contract adapters in `contracts/`.
+Allowit policies are a restricted, validated subset of Rust. This repository contains the source compiler, deterministic interpreter, function registry, workflow projection, CLI and stdio language server. The same `no_std + alloc` interpreter is used by the contract adapters in `contracts/`.
 
 ```rust
 use allowit::v1::prelude::*;
@@ -21,7 +21,7 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
 }
 ```
 
-The Go [action CLI](https://github.com/AllowIt-hq/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. The app server owns HTTP transport. Hosted-agent control and runtime are optional, outside the MVP; they are not SDK responsibilities. Restricted Rust remains the policy source and enforcement language.
+The Go [action CLI](https://github.com/allowit-hq/allowit-cli) is a separate client for `allowit show`, `eval`, `exec` and `status`. This repository's Rust CLI is a developer compiler/evaluator tool; use the repository-local Cargo commands below so the two executables are not confused. The app server owns HTTP transport. Hosted-agent control and runtime are optional, outside the MVP; they are not SDK responsibilities. Restricted Rust remains the policy source and enforcement language.
 
 ## Policy source and configuration
 
@@ -93,7 +93,7 @@ Inspect the JSON decision before authorizing execution. Examples without semanti
 For ordinary Rust type-checking:
 
 ```toml
-allowit = { package = "allowit-sdk", path = "../AllowIt-sdk" }
+allowit = { package = "allowit-sdk", path = "../allowit-sdk" }
 ```
 
 The facade does not replace compilation or checked interpretation.
@@ -190,6 +190,6 @@ Hosts supply 40 authoritative ledger counters, including pending reservations, a
 
 ## License
 
-AllowIt-authored source is MIT licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms. Redistributed binaries require the root license and full [licenses/](licenses/) directory.
+Allowit-authored source is MIT licensed. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party terms. Redistributed binaries require the root license and full [licenses/](licenses/) directory.
 
-Registry `1.6.0` uses AllowIt service and preference functions. Retired vendor namespaces are rejected for new compilation and execution. Owners must reauthor and approve affected policies. Unchanged non-vendor source retains its source and IR hashes when its lowering is unchanged. Read historical receipts with the original durable binding, without recompiling or rewriting them.
+Registry `1.6.0` uses Allowit service and preference functions. Retired vendor namespaces are rejected for new compilation and execution. Owners must reauthor and approve affected policies. Unchanged non-vendor source retains its source and IR hashes when its lowering is unchanged. Read historical receipts with the original durable binding, without recompiling or rewriting them.

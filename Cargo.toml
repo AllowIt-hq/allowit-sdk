@@ -3,7 +3,7 @@ name = "allowit-sdk"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "AllowIt restricted Rust policy compiler, evaluator, CLI and language server"
+description = "Allowit restricted Rust policy compiler, evaluator, CLI and language server"
 autoexamples = false
 
 [lib]

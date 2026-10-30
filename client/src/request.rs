@@ -291,7 +291,7 @@ pub(crate) fn build_body(kind: &str, f: &Flags, s: &Skill, stdin: &mut dyn Read)
     let rails = s.rails();
     if rails.is_empty() {
         return Err(Error::usage(
-            "AllowIt published no rails for this policy; send a plain USDC request with --amount and --action, without --rail and --op",
+            "Allowit published no rails for this policy; send a plain USDC request with --amount and --action, without --rail and --op",
         ));
     }
     let assets = rails.get(rail).ok_or_else(|| {
@@ -539,7 +539,7 @@ impl<'de> Visitor<'de> for Scan<'_> {
             }
             if self.top && key == "allowitExecution" {
                 return Err(de::Error::custom(
-                    "must not contain allowitExecution; AllowIt supplies it",
+                    "must not contain allowitExecution; Allowit supplies it",
                 ));
             }
             *self.count += 1;

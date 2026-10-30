@@ -1,4 +1,4 @@
-//! Native agent launchers. Payments stay in the remote AllowIt MCP service.
+//! Native agent launchers. Payments stay in the remote Allowit MCP service.
 use crate::{
     error::{Error, Result},
     gateway_args::Common,
@@ -43,7 +43,7 @@ pub(crate) fn run(program: &str, args: &[String], common: &Common) -> Result<i32
     }
     validate_auth_args(program, args)?;
     let executable = std::env::current_exe()
-        .map_err(|_| Error::config("cannot locate the AllowIt executable"))?;
+        .map_err(|_| Error::config("cannot locate the Allowit executable"))?;
     let mcp_args = mcp_args(common);
     let mcp = json!({"mcpServers":{"allowit":{
         "command":executable,"args":mcp_args

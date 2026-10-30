@@ -17,7 +17,7 @@ class GitLicenseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.revision = 'a' * 40
-        self.repository = 'https://github.com/AllowIt-hq/example.git'
+        self.repository = 'https://github.com/allowit-hq/example.git'
         self.source = f'git+{self.repository}?rev={self.revision}#{self.revision}'
         directory = self.root / 'licenses/dependencies'
         directory.mkdir(parents=True)
@@ -54,7 +54,7 @@ class GitLicenseTests(unittest.TestCase):
         self.assertEqual(self.validate(), 1)
 
     def test_foreign_repository_and_unknown_revision_fail(self):
-        for source in [self.source.replace('AllowIt-hq', 'foreign'), self.source.replace(self.revision, 'b' * 40)]:
+        for source in [self.source.replace('allowit-hq', 'foreign'), self.source.replace(self.revision, 'b' * 40)]:
             self.write_lock(source)
             with self.assertRaisesRegex(ValueError, 'explicit license coverage'):
                 self.validate()
@@ -76,7 +76,7 @@ class GitLicenseTests(unittest.TestCase):
             self.validate()
 
     def test_input_source_must_match_the_exact_pinned_repository_path(self):
-        self.entry['files'][0]['source'] = self.entry['files'][0]['source'].replace('AllowIt-hq', 'foreign')
+        self.entry['files'][0]['source'] = self.entry['files'][0]['source'].replace('allowit-hq', 'foreign')
         self.write_catalog()
         with self.assertRaisesRegex(ValueError, 'pinned source path'):
             self.validate()

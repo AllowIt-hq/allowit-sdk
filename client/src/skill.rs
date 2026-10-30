@@ -44,14 +44,14 @@ impl Skill {
     fn check(&self, cfg: &Config) -> Result<()> {
         validate_schema(&self.0).map_err(|e| {
             Error::unsupported(format!(
-                "AllowIt returned a policy description this CLI cannot read: {e}"
+                "Allowit returned a policy description this CLI cannot read: {e}"
             ))
         })?;
         let owner = self.get("owner");
         let policy = self.get("policyId");
         if !owner.is_empty() && owner != cfg.owner || !policy.is_empty() && policy != cfg.policy {
             return Err(Error::config(format!(
-                "AllowIt described policy {} of owner {}, not the policy in ALLOWIT_TOKEN",
+                "Allowit described policy {} of owner {}, not the policy in ALLOWIT_TOKEN",
                 unset(policy),
                 unset(owner)
             )));
@@ -61,7 +61,7 @@ impl Skill {
                 let raw = text(v);
                 if !cfg.is_route(action, raw) {
                     return Err(Error::config(format!(
-                        "AllowIt reported the {action} endpoint {}, which is not {}; check ALLOWIT_URL",
+                        "Allowit reported the {action} endpoint {}, which is not {}; check ALLOWIT_URL",
                         quoted(raw),
                         cfg.route(action)
                     )));
@@ -71,13 +71,13 @@ impl Skill {
         let network = self.get("network");
         if network.is_empty() {
             return Err(Error::unsupported(
-                "AllowIt did not report the policy's network",
+                "Allowit did not report the policy's network",
             ));
         }
         let net = self.net();
         if net == Network::Unknown {
             return Err(Error::unsupported(format!(
-                "AllowIt reports network {}, which this CLI does not support",
+                "Allowit reports network {}, which this CLI does not support",
                 quoted(network)
             )));
         }
@@ -105,7 +105,7 @@ impl Skill {
             let version = c["version"].as_i64().unwrap_or_default();
             if version != 1 {
                 return Err(Error::unsupported(format!(
-                    "AllowIt published skill contract version {version}; this CLI supports version 1"
+                    "Allowit published skill contract version {version}; this CLI supports version 1"
                 )));
             }
             let bound = text(&c["binding"]["sourceHash"]);
@@ -114,7 +114,7 @@ impl Skill {
                 && bound != self.get("sourceHash")
             {
                 return Err(Error::unsupported(format!(
-                    "AllowIt published a contract bound to source {} for policy source {}",
+                    "Allowit published a contract bound to source {} for policy source {}",
                     short(bound),
                     short(self.get("sourceHash"))
                 )));
@@ -135,7 +135,7 @@ impl Skill {
         for (name, value, local, wallet) in labels {
             if !value.is_empty() && value != if net == Network::Local { local } else { wallet } {
                 return Err(Error::unsupported(format!(
-                    "AllowIt reports {name} {} for network {}, which this CLI does not support",
+                    "Allowit reports {name} {} for network {}, which this CLI does not support",
                     quoted(value),
                     quoted(network)
                 )));
@@ -202,11 +202,11 @@ impl Skill {
         if let Some(c) = self.contract() {
             let caps = &c["capabilities"];
             let msg = if caps["executionPlans"] != true {
-                "AllowIt does not accept execution plans for this policy; send a plain request with --amount and --action"
+                "Allowit does not accept execution plans for this policy; send a plain request with --amount and --action"
             } else if memo && caps["memoData"] != true {
-                "AllowIt does not accept --memo or --data for this policy"
+                "Allowit does not accept --memo or --data for this policy"
             } else if calls && caps["contractCalls"] != true {
-                "AllowIt does not accept --before or --after contract calls for this policy"
+                "Allowit does not accept --before or --after contract calls for this policy"
             } else {
                 return Ok(());
             };
@@ -220,19 +220,19 @@ impl Skill {
         } else {
             let n = self
                 .get("name")
-                .strip_prefix("AllowIt policy ")
+                .strip_prefix("Allowit policy ")
                 .unwrap_or(self.get("name"));
             if n.is_empty() { "(untitled)" } else { n }
         }
     }
     pub fn show(&self, policy: &str, source: bool) -> String {
-        let mut out = format!("AllowIt policy: {}\n", self.title());
+        let mut out = format!("Allowit policy: {}\n", self.title());
         let revision = self.0["revision"].as_i64().unwrap_or_default();
         let hash = self.get("sourceHash");
         let id = self.get("policyId");
         if id.is_empty() {
             out += &format!(
-                "Policy:     {policy} (from ALLOWIT_TOKEN; AllowIt did not report the policy ID)\n"
+                "Policy:     {policy} (from ALLOWIT_TOKEN; Allowit did not report the policy ID)\n"
             );
         } else if revision > 0 || !hash.is_empty() {
             out += &format!(

@@ -1,4 +1,4 @@
-# AllowIt client SDK
+# Allowit client SDK
 
 The CLI calls this facade. Rail adapters live in vendor repositories and depend on shared SDK core packages.
 `allowit-client-core` provides errors, configuration and private storage. The compiler/evaluator remains `allowit-sdk`.

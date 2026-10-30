@@ -1066,7 +1066,7 @@ impl Parser {
             _ => {
                 return Err(error(
                     expr.span(),
-                    "This Rust construct is outside the AllowIt policy subset.",
+                    "This Rust construct is outside the Allowit policy subset.",
                 ));
             }
         })

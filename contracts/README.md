@@ -1,6 +1,6 @@
-# AllowIt contract rails
+# Allowit contract rails
 
-These adapters enforce a compiled AllowIt mandate and perform a bounded token transfer in the same chain transaction. They use the SDK's deterministic `evaluate_ir` implementation with `Profile::Contract`. A reached `require_user_input` always returns `UserInputRequired`; there is no answer or oracle-receipt bypass in either contract API.
+These adapters enforce a compiled Allowit mandate and perform a bounded token transfer in the same chain transaction. They use the SDK's deterministic `evaluate_ir` implementation with `Profile::Contract`. A reached `require_user_input` always returns `UserInputRequired`; there is no answer or oracle-receipt bypass in either contract API.
 
 `common` owns the mandate envelope, artifact checks, exact request binding, budget/nonce accounting, evidence checks and host-side artifact command. `solana` is a native Rust program using classic SPL Token `transfer_checked`. Each package has a separate Cargo lockfile and build root.
 
@@ -65,7 +65,7 @@ Prepend `required_compute_budget_instructions()` to program transactions: the co
 
 ## Stellar custody
 
-Stellar uses the owner-controlled ODC and shared veto engine in [allowit-contracts-stellar](https://github.com/AllowIt-hq/allowit-contracts-stellar). The [Stellar wallet SDK](../stellar-rust/README.md) maps canonical execution requests to native-account or ODC custody. Its static source generator emits the private policy checks used by the ODC `execute` wrapper. Persistent token allowances are outside that custody profile.
+Stellar uses the owner-controlled ODC and shared veto engine in [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar). The [Stellar wallet SDK](../stellar-rust/README.md) maps canonical execution requests to native-account or ODC custody. Its static source generator emits the private policy checks used by the ODC `execute` wrapper. Persistent token allowances are outside that custody profile.
 
 ## Verification and deployment boundary
 

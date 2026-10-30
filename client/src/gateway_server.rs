@@ -279,7 +279,7 @@ fn write_reply(
     headers: &[(String, String)],
     body: &[u8],
 ) -> Result<()> {
-    write!(stream, "HTTP/1.1 {status} AllowIt\r\n")
+    write!(stream, "HTTP/1.1 {status} Allowit\r\n")
         .map_err(|_| Error::config("cannot write seller response"))?;
     for (k, v) in headers {
         if [

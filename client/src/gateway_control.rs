@@ -317,7 +317,7 @@ pub(crate) fn run(inv: &Invocation, stdout: &mut String, stderr: &mut String) ->
             input["source"] = json!(pos[0]);
             ("/api/gateway/skills", "add", false)
         }
-        _ => return Err(Error::usage("unknown AllowIt control command")),
+        _ => return Err(Error::usage("unknown Allowit control command")),
     };
     if inv.common.policy_selector.is_some()
         && (matches!(
@@ -369,7 +369,7 @@ pub(crate) fn run(inv: &Invocation, stdout: &mut String, stderr: &mut String) ->
     let value = Gateway::new(&inv.common)?.send("POST", route, Some(&request))?;
     if value.get("operationId").and_then(Value::as_str) != Some(id.as_str()) {
         return Err(Error::uncertain(
-            "AllowIt control response has a different operationId",
+            "Allowit control response has a different operationId",
         ));
     }
     if value.get("state").is_some() {

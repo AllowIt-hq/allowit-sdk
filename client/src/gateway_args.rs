@@ -1,4 +1,4 @@
-//! Public AllowIt command input. Vendor payment protocols remain on the backend.
+//! Public Allowit command input. Vendor payment protocols remain on the backend.
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -209,7 +209,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
             group = Some(arg.clone());
         } else if group.is_none() {
             return Err(Error::usage(
-                "expected an AllowIt command after global flags",
+                "expected an Allowit command after global flags",
             ));
         } else {
             rest.push(arg.clone());
@@ -220,7 +220,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation> {
         return Err(Error::usage("provide --rail and the exact --rpc together"));
     }
     Ok(Invocation {
-        group: group.ok_or_else(|| Error::usage("expected an AllowIt command"))?,
+        group: group.ok_or_else(|| Error::usage("expected an Allowit command"))?,
         args: rest,
         common,
         help,
@@ -477,7 +477,7 @@ pub(crate) fn http_request(inv: &mut Invocation) -> Result<HttpRequest> {
         if body.is_some() {
             return Err(Error::usage("form fields and --body cannot be combined"));
         }
-        let boundary = format!("AllowItBoundary{}", std::process::id());
+        let boundary = format!("AllowitBoundary{}", std::process::id());
         let mut encoded = String::new();
         for (k, v) in forms {
             encoded += &format!(

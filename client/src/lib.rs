@@ -201,7 +201,7 @@ fn action(command: &str, argv: &[String], stdout: &mut String, stderr: &mut Stri
         if parsed.json {
             let mut raw = s.0;
             let map = raw.as_object_mut().ok_or_else(|| {
-                Error::unsupported("AllowIt returned an empty policy description")
+                Error::unsupported("Allowit returned an empty policy description")
             })?;
             map.remove("authorization");
             map.remove("accessUrl");
@@ -255,7 +255,7 @@ fn action(command: &str, argv: &[String], stdout: &mut String, stderr: &mut Stri
         Err(e) => {
             if e.code == 5 {
                 return Err(Error::uncertain(format!(
-                    "{e}\nThe request may have reached AllowIt. Do not retry with a new request ID. Retry only by rerunning the same command with --request-id {}: AllowIt applies a request ID at most once",
+                    "{e}\nThe request may have reached Allowit. Do not retry with a new request ID. Retry only by rerunning the same command with --request-id {}: Allowit applies a request ID at most once",
                     b.request_id
                 )));
             }
@@ -277,7 +277,7 @@ fn action(command: &str, argv: &[String], stdout: &mut String, stderr: &mut Stri
         let id = text(&r["requestId"]).to_string();
         if !request_id_valid(&id) {
             return Err(unknown(
-                Error::uncertain("AllowIt returned a pending result without a valid requestId"),
+                Error::uncertain("Allowit returned a pending result without a valid requestId"),
                 command,
                 &b.request_id,
                 policy,
@@ -332,7 +332,7 @@ fn unknown(e: Error, kind: &str, client_id: &str, policy: &str, r: &Value) -> Er
         (String::new(), String::new())
     };
     Error::uncertain(format!(
-        "{e}\nAllowIt accepted {kind} request {client_id}{label}, but its result is unknown. Do not retry with a new request ID. Check it with {next}rerun the same command with --request-id {client_id}"
+        "{e}\nAllowit accepted {kind} request {client_id}{label}, but its result is unknown. Do not retry with a new request ID. Check it with {next}rerun the same command with --request-id {client_id}"
     ))
 }
 fn check_status(r: &Value, id: &str, net: Network) -> Result<()> {
@@ -340,12 +340,12 @@ fn check_status(r: &Value, id: &str, net: Network) -> Result<()> {
     let got = text(&r["requestId"]);
     if got.is_empty() {
         return Err(Error::uncertain(
-            "AllowIt returned a status without its requestId",
+            "Allowit returned a status without its requestId",
         ));
     }
     if got != id && text(&r["clientRequestId"]) != id {
         return Err(Error::uncertain(format!(
-            "AllowIt returned the status of a different request ({got})"
+            "Allowit returned the status of a different request ({got})"
         )));
     }
     Ok(())
@@ -395,7 +395,7 @@ fn status(
         ) {
             Err(e) if e.status == Some(404) => {
                 return Err(Error::uncertain(format!(
-                    "AllowIt has no request {id} for this policy yet. If an exec with --request-id {id} may have been sent, rerun that identical command: AllowIt applies a request ID at most once"
+                    "Allowit has no request {id} for this policy yet. If an exec with --request-id {id} may have been sent, rerun that identical command: Allowit applies a request ID at most once"
                 )));
             }
             x => x?,
@@ -417,7 +417,7 @@ fn status(
     }
     if net == Network::Unknown && output::needs_network(&r) {
         return Err(Error::uncertain(format!(
-            "AllowIt reported outcome {} with status {} for request {id}, but the policy's network could not be established, so the CLI cannot tell a Local dev mock recording from a wallet transfer. Nothing is confirmed as recorded, signed or paid. Check again with allowit status once allowit show works",
+            "Allowit reported outcome {} with status {} for request {id}, but the policy's network could not be established, so the CLI cannot tell a Local dev mock recording from a wallet transfer. Nothing is confirmed as recorded, signed or paid. Check again with allowit status once allowit show works",
             error::quoted(text(&r["outcome"])),
             error::quoted(text(&r["status"]))
         )));

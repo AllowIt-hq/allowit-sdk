@@ -1,4 +1,4 @@
-//! Shared transport validation and output primitives for AllowIt clients.
+//! Shared transport validation and output primitives for Allowit clients.
 pub mod config;
 pub mod error;
 pub mod journal;

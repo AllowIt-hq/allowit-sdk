@@ -17,7 +17,7 @@ use std::{
 pub(crate) const ACCOUNT_TOKEN_ENV: &str = "ALLOWIT_ACCOUNT_TOKEN";
 const MAX_REPLY: usize = 2 << 20;
 type RawHttpReply = (u16, Vec<(String, String)>, Vec<u8>);
-pub(crate) const HELP: &str = "AllowIt service commands:\n  allowit call SERVICE_OR_URL [--input JSON] [--policy version@addr] [--sandbox]\n  allowit curl|wget|http|fetch URL [HTTP options]\n  allowit claude|codex -- [native arguments]\n  allowit whoami\n  allowit account [list|default|remove]\n  allowit setup | topup | send | subscriptions\n  allowit gate|server demo|api|inference|scaffold\n  allowit catalog | skills | install | mcp\n\nCommon flags: --policy version@addr, --sandbox, --account NAME,\n  --request-id ID, --rail RAIL, --rpc URL, --max-payment AMOUNT [--currency USDC], --json.\nPlain calls use the selected account through ALLOWIT_ACCOUNT_TOKEN.\nExplicit --policy uses ALLOWIT_TOKEN and backend policy authorization.\nProduction requires an actively deployed policy revision. Sandbox does not authorize a production RPC.\nA quote is not a payment or a delivery receipt. Agent blockchain keys are generated and retained locally through allowit wallet.\n";
+pub(crate) const HELP: &str = "Allowit service commands:\n  allowit call SERVICE_OR_URL [--input JSON] [--policy version@addr] [--sandbox]\n  allowit curl|wget|http|fetch URL [HTTP options]\n  allowit claude|codex -- [native arguments]\n  allowit whoami\n  allowit account [list|default|remove]\n  allowit setup | topup | send | subscriptions\n  allowit gate|server demo|api|inference|scaffold\n  allowit catalog | skills | install | mcp\n\nCommon flags: --policy version@addr, --sandbox, --account NAME,\n  --request-id ID, --rail RAIL, --rpc URL, --max-payment AMOUNT [--currency USDC], --json.\nPlain calls use the selected account through ALLOWIT_ACCOUNT_TOKEN.\nExplicit --policy uses ALLOWIT_TOKEN and backend policy authorization.\nProduction requires an actively deployed policy revision. Sandbox does not authorize a production RPC.\nA quote is not a payment or a delivery receipt. Agent blockchain keys are generated and retained locally through allowit wallet.\n";
 
 pub(crate) struct Gateway {
     origin: String,
@@ -39,7 +39,7 @@ impl Gateway {
         }
         if token.is_empty() {
             return Err(Error::config(format!(
-                "set {name} to the {} capability issued by the AllowIt owner app",
+                "set {name} to the {} capability issued by the Allowit owner app",
                 if common.policy_selector.is_some() {
                     "policy"
                 } else {
@@ -97,14 +97,14 @@ impl Gateway {
             token,
             http: builder
                 .build()
-                .map_err(|_| Error::config("cannot configure the AllowIt HTTP client"))?,
+                .map_err(|_| Error::config("cannot configure the Allowit HTTP client"))?,
         })
     }
     /// One request. A payment-bearing POST is never resent after uncertainty.
     pub(crate) fn send(&self, method: &str, route: &str, body: Option<&Value>) -> Result<Value> {
         if !route.starts_with("/api/gateway/") {
             return Err(Error::unsupported(
-                "gateway route is outside the AllowIt API",
+                "gateway route is outside the Allowit API",
             ));
         }
         let mut r = self
@@ -123,12 +123,12 @@ impl Gateway {
         if let Some(b) = body {
             let raw = serde_json::to_vec(b).map_err(|_| Error::usage("cannot encode request"))?;
             if raw.len() > 64 << 10 {
-                return Err(Error::usage("AllowIt request exceeds 65536 bytes"));
+                return Err(Error::usage("Allowit request exceeds 65536 bytes"));
             }
             r = r.header("Content-Type", "application/json").body(raw);
         }
         let mut response = r.send().map_err(|_| {
-            Error::uncertain("connection to AllowIt failed; no automatic retry was made")
+            Error::uncertain("connection to Allowit failed; no automatic retry was made")
         })?;
         let status = response.status().as_u16();
         let mut bytes = Vec::new();
@@ -136,20 +136,20 @@ impl Gateway {
             .take(MAX_REPLY as u64 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| {
-                Error::uncertain("cannot read AllowIt response; no automatic retry was made")
+                Error::uncertain("cannot read Allowit response; no automatic retry was made")
             })?;
         if bytes.len() > MAX_REPLY {
-            return Err(Error::uncertain("AllowIt response exceeds the 2 MB limit"));
+            return Err(Error::uncertain("Allowit response exceeds the 2 MB limit"));
         }
         if (300..400).contains(&status) {
             return Err(Error::uncertain(
-                "AllowIt returned a redirect; the capability was not forwarded",
+                "Allowit returned a redirect; the capability was not forwarded",
             ));
         }
         let value: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::uncertain("AllowIt returned invalid JSON"))?;
+            .map_err(|_| Error::uncertain("Allowit returned invalid JSON"))?;
         if !value.is_object() {
-            return Err(Error::uncertain("AllowIt response must be a JSON object"));
+            return Err(Error::uncertain("Allowit response must be a JSON object"));
         }
         if !(200..300).contains(&status) {
             let code = value.get("code").and_then(Value::as_str).unwrap_or("");
@@ -159,7 +159,7 @@ impl Gateway {
                 .unwrap_or("request rejected");
             if matches!(code, "PAYMENT_UNCERTAIN" | "OPERATION_PENDING") || status >= 500 {
                 return Err(Error::uncertain(format!(
-                    "AllowIt returned HTTP {status}; operation outcome requires status lookup"
+                    "Allowit returned HTTP {status}; operation outcome requires status lookup"
                 )));
             }
             if matches!(
@@ -196,7 +196,7 @@ impl Gateway {
             || query.contains(['#', '\r', '\n'])
         {
             return Err(Error::usage(
-                "use one exact registered AllowIt resource path",
+                "use one exact registered Allowit resource path",
             ));
         }
         let exact_url = format!("{}{path}", self.origin);
@@ -372,20 +372,20 @@ pub(crate) fn purchase(
         || response.get("state").and_then(Value::as_str) != Some("quoted")
     {
         return Err(Error::uncertain(
-            "AllowIt quote does not match the requested operation",
+            "Allowit quote does not match the requested operation",
         ));
     }
     let quote_id = response
         .get("quoteId")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty() && s.len() <= 256)
-        .ok_or_else(|| Error::uncertain("AllowIt quote lacks a valid quoteId"))?;
+        .ok_or_else(|| Error::uncertain("Allowit quote lacks a valid quoteId"))?;
     if response
         .get("requestDigest")
         .and_then(Value::as_str)
         .is_none_or(str::is_empty)
     {
-        return Err(Error::uncertain("AllowIt quote lacks its request binding"));
+        return Err(Error::uncertain("Allowit quote lacks its request binding"));
     }
     let expires = response
         .get("expiresAt")
@@ -396,7 +396,7 @@ pub(crate) fn purchase(
         .filter(|t| *t > time::OffsetDateTime::now_utc());
     if expires.is_none() {
         return Err(Error::uncertain(
-            "AllowIt quote is expired or lacks a valid expiration",
+            "Allowit quote is expired or lacks a valid expiration",
         ));
     }
     let mut call = gateway_args::context(common);
@@ -420,7 +420,7 @@ pub(crate) fn purchase(
         })?;
     if value.get("operationId").and_then(Value::as_str) != Some(&id) {
         return Err(Error::uncertain(format!(
-            "AllowIt response does not match operation {id}; check its status"
+            "Allowit response does not match operation {id}; check its status"
         )));
     }
     if response.get("payment").is_some_and(Value::is_object)
@@ -455,7 +455,7 @@ pub(crate) fn render_operation(
     let state = value
         .get("state")
         .and_then(Value::as_str)
-        .ok_or_else(|| Error::uncertain("AllowIt operation lacks a known state"))?;
+        .ok_or_else(|| Error::uncertain("Allowit operation lacks a known state"))?;
     let exit = match state {
         "delivered" => 0,
         "denied" => 20,
@@ -465,7 +465,7 @@ pub(crate) fn render_operation(
         "unknown" => 5,
         _ => {
             return Err(Error::uncertain(
-                "AllowIt returned an unknown operation state",
+                "Allowit returned an unknown operation state",
             ));
         }
     };

@@ -1,4 +1,4 @@
-# AllowIt-sdk
+# allowit-sdk
 
 ## Artifact storage
 

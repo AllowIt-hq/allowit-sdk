@@ -1,4 +1,4 @@
-# AllowIt verification
+# Allowit verification
 
 This space owns Lean specifications, completeness obligations, independent expected outcomes and assurance reports. Contract, SDK, gateway, CLI and frontend agents own their implementations. The verification owner reviews those implementations against independently stated requirements and records remaining gaps; implementation tests alone do not define the expected behavior.
 

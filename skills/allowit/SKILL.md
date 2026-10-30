@@ -1,9 +1,9 @@
 ---
 name: allowit
-description: Compile, inspect and evaluate AllowIt Rust policies with structured runtime JSON, including preference questions and deterministic spending limits.
+description: Compile, inspect and evaluate Allowit Rust policies with structured runtime JSON, including preference questions and deterministic spending limits.
 ---
 
-# AllowIt policies
+# Allowit policies
 
 This is the Rust SDK developer skill. Use this repository's `cargo run --locked --` commands. The separate native Rust `allowit` action client uses `show/eval/exec/status`; generated consumer skills target that client. Compile the exact policy source before evaluating it. A valid compilation does not approve a transaction.
 

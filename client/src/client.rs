@@ -37,7 +37,7 @@ impl Client {
         }
         let http = builder
             .build()
-            .map_err(|_| Error::config("could not configure the AllowIt HTTP client"))?;
+            .map_err(|_| Error::config("could not configure the Allowit HTTP client"))?;
         Ok(Self {
             cfg,
             http,
@@ -66,7 +66,7 @@ impl Client {
             if text.contains("certificate") || text.contains("Certificate") {
                 Error::config("TLS certificate for ALLOWIT_URL is not trusted")
             } else {
-                Error::uncertain(format!("network error talking to AllowIt: {e}"))
+                Error::uncertain(format!("network error talking to Allowit: {e}"))
             }
         })?;
         let status = response.status().as_u16();
@@ -75,10 +75,10 @@ impl Client {
             .take((2 << 20) + 1)
             .read_to_end(&mut data)
             .map_err(|e| {
-                Error::uncertain(format!("network error reading the AllowIt response: {e}"))
+                Error::uncertain(format!("network error reading the Allowit response: {e}"))
             })?;
         if data.len() > 2 << 20 {
-            return Err(Error::uncertain("AllowIt response exceeded the 2 MB limit"));
+            return Err(Error::uncertain("Allowit response exceeded the 2 MB limit"));
         }
         Ok((status, data))
     }
@@ -86,7 +86,7 @@ impl Client {
         if body.is_some_and(|b| b.len() > MAX_REQUEST) {
             return Err(Error::unsupported("request is larger than the 64 KB limit"));
         }
-        let mut last = Error::uncertain("network error talking to AllowIt");
+        let mut last = Error::uncertain("network error talking to Allowit");
         let mut processed = false;
         self.resent = false;
         for attempt in 0..=2 {
@@ -111,7 +111,7 @@ impl Client {
             }
             if (300..400).contains(&status) {
                 let msg =
-                    format!("AllowIt answered with a redirect (HTTP {status}); check ALLOWIT_URL");
+                    format!("Allowit answered with a redirect (HTTP {status}); check ALLOWIT_URL");
                 return Err(if method != "GET" {
                     Error::uncertain(msg)
                 } else {
@@ -127,11 +127,11 @@ impl Client {
                 });
             }
             let value: Value = serde_json::from_slice(&data).map_err(|_| {
-                Error::uncertain("AllowIt returned a response that is not valid JSON")
+                Error::uncertain("Allowit returned a response that is not valid JSON")
             })?;
             if !value.is_object() && !value.is_null() {
                 return Err(Error::uncertain(
-                    "AllowIt returned a response that is not valid JSON",
+                    "Allowit returned a response that is not valid JSON",
                 ));
             }
             self.resent = processed;
@@ -156,20 +156,20 @@ impl Client {
                 e
             } else {
                 Error::uncertain(format!(
-                    "network error talking to AllowIt; {UNKNOWN_OUTCOME}"
+                    "network error talking to Allowit; {UNKNOWN_OUTCOME}"
                 ))
             }
         })?;
         if status != 200 {
             let mut e =
-                Error::uncertain(format!("AllowIt returned HTTP {status}; {UNKNOWN_OUTCOME}"));
+                Error::uncertain(format!("Allowit returned HTTP {status}; {UNKNOWN_OUTCOME}"));
             e.status = Some(status);
             return Err(e);
         }
         match serde_json::from_slice::<Value>(&data) {
             Ok(value) if value.is_object() => Ok(value),
             _ => Err(Error::uncertain(format!(
-                "AllowIt returned a response that is not a JSON object; {UNKNOWN_OUTCOME}"
+                "Allowit returned a response that is not a JSON object; {UNKNOWN_OUTCOME}"
             ))),
         }
     }
@@ -368,7 +368,7 @@ pub(crate) mod tests {
             assert_eq!((e.code, e.status), (5, Some(status)));
             assert!(
                 e.message
-                    .starts_with(&format!("AllowIt returned HTTP {status};"))
+                    .starts_with(&format!("Allowit returned HTTP {status};"))
             );
             assert_private(&e);
             assert_eq!(server.finish().len(), 1);

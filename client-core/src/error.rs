@@ -24,7 +24,7 @@ impl Error {
     pub fn api(status: u16, message: impl Into<String>) -> Self {
         let mut e = Self::new(
             if status == 401 || status == 403 { 3 } else { 4 },
-            format!("AllowIt returned HTTP {status}: {}", message.into()),
+            format!("Allowit returned HTTP {status}: {}", message.into()),
         );
         e.status = Some(status);
         e
