@@ -26,7 +26,7 @@ fn range(span: Span) -> SourceSpan {
 // Namespace paths are bounded and resolved against the exact registry spelling.
 pub(crate) fn registered_path(path: &syn::Path) -> Option<String> {
     if path.leading_colon.is_some()
-        || path.segments.len() > 2
+        || path.segments.len() > 4
         || path
             .segments
             .iter()
@@ -128,9 +128,6 @@ impl Parser {
         call: &syn::ExprCall,
         depth: usize,
     ) -> Result<Option<Expr>, CompileError> {
-        if self.params.is_none() {
-            return Ok(None);
-        }
         let SynExpr::Path(path) = &*call.func else {
             return Ok(None);
         };
@@ -150,7 +147,10 @@ impl Parser {
         {
             return Ok(None);
         }
-        if path.path.segments.len() != 2 || !path.attrs.is_empty() || !call.attrs.is_empty() {
+        if path.path.segments.len() != 2 {
+            return Ok(None);
+        }
+        if !path.attrs.is_empty() || !call.attrs.is_empty() {
             return Err(error(
                 call.span(),
                 "Use the namespaced primitive guard signature.",
@@ -277,7 +277,9 @@ impl Parser {
         if p.qself.is_some() || registered_path(&p.path).as_deref() != Some("check_preference") {
             return Ok(None);
         }
-        if p.path.segments.len() == 2 && c.args.len() != 4 {
+        if (p.path.segments.len() == 2 || p.path.segments.len() == 4) && c.args.len() != 4
+            || p.path.segments.len() == 3 && c.args.len() != 6
+        {
             return Err(error(
                 c.span(),
                 "Use the four-argument namespaced preference check.",
@@ -295,7 +297,7 @@ impl Parser {
                 "Use check_preference(ctx, question, auto_approve, approve_percent, auto_deny, deny_percent).await?; with literal settings.",
             ));
         }
-        let context_arg = if self.params.is_some() {
+        let context_arg = if p.path.segments.len() == 2 {
             if p.path.segments.len() != 2 || c.args.len() != 4 {
                 return Err(error(
                     c.span(),
@@ -464,12 +466,6 @@ impl Parser {
         let SynExpr::Path(path) = &*call.func else {
             return Ok(None);
         };
-        if self.params.is_some() && path.path.segments.len() != 2 {
-            return Err(error(
-                path.span(),
-                "Use the exact namespaced system function.",
-            ));
-        }
         if path.qself.is_none() && registered_path(&path.path).as_deref() == Some("stored_limit") {
             if self.params.is_none()
                 || path.path.segments.len() != 2
@@ -887,6 +883,28 @@ impl Parser {
             SynExpr::Path(p)
                 if p.qself.is_none()
                     && p.path.leading_colon.is_none()
+                    && p.path.segments.len() == 2
+                    && p.path.segments[0].ident == "grant"
+                    && p.path.segments.iter().all(|s| s.arguments.is_empty()) =>
+            {
+                let name = p.path.segments[1].ident.to_string();
+                if !crate::rule_values::RULES.contains(&name.as_str()) {
+                    return Err(error(p.span(), "Use a declared grant reference."));
+                }
+                Expr::Call {
+                    name: "__grant_ref".into(),
+                    args: vec![Expr::String { value: name }],
+                    span: range(p.span()),
+                }
+            }
+            SynExpr::Path(p) if p.qself.is_none() && simple_path(&p.path, "None") => Expr::Call {
+                name: "__null".into(),
+                args: vec![],
+                span: range(p.span()),
+            },
+            SynExpr::Path(p)
+                if p.qself.is_none()
+                    && p.path.leading_colon.is_none()
                     && p.path.segments.len() == 1
                     && p.path.segments[0].arguments.is_empty() =>
             {
@@ -1034,7 +1052,9 @@ impl Parser {
                         "Only direct predefined function calls are supported.",
                     ));
                 };
-                let name = if p.qself.is_none() && simple_path(&p.path, "Ok") {
+                let name = if p.qself.is_none() && simple_path(&p.path, "Err") {
+                    "Err".into()
+                } else if p.qself.is_none() && simple_path(&p.path, "Ok") {
                     "Ok".into()
                 } else if p.qself.is_none() {
                     registered_path(&p.path).ok_or_else(|| {
@@ -1043,7 +1063,11 @@ impl Parser {
                 } else {
                     return Err(error(p.span(), "Qualified type calls are not supported."));
                 };
-                if self.params.is_some() && name != "Ok" && p.path.segments.len() != 2 {
+                if self.params.is_some()
+                    && name != "Ok"
+                    && name != "Err"
+                    && p.path.segments.len() != 2
+                {
                     return Err(error(p.span(), "Use the exact namespaced system function."));
                 }
                 let name = if self.native_entry && name == "Ok" {
@@ -1107,7 +1131,11 @@ fn direct_call(expr: &Expr) -> Option<(&str, &[Expr])> {
             args.first().and_then(direct_call)
         }
         Expr::Call { name, args, .. } if name == "native_fail" => Some(("fail", args)),
-        Expr::Call { name, args, .. } if name != "Ok" => Some((name, args)),
+        Expr::Call { name, args, .. }
+            if name != "Ok" && name != "Err" && name != "__grant_ref" && name != "__null" =>
+        {
+            Some((name, args))
+        }
         _ => None,
     }
 }
@@ -1131,7 +1159,15 @@ fn argument(expr: &Expr) -> String {
 fn walk_expr(expr: &Expr, calls: &mut Vec<(String, SourceSpan)>) {
     match expr {
         Expr::Call { name, args, span } => {
-            if !["Ok", "native_ok", "__native_return"].contains(&name.as_str()) {
+            if ![
+                "Ok",
+                "native_ok",
+                "__native_return",
+                "__grant_ref",
+                "__null",
+            ]
+            .contains(&name.as_str())
+            {
                 calls.push((
                     if name == "native_fail" {
                         "fail".into()
@@ -1205,7 +1241,7 @@ pub fn compile(source: &str) -> Result<CompiledPolicy, CompileError> {
     compile_inner(source)
 }
 
-fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
+pub(crate) fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
     if source.chars().any(|c| matches!(c,'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}'|'\u{200e}'|'\u{200f}'|'\u{061c}')) {
         return Err(CompileError::new("INVALID_POLICY","Bidirectional text controls are not allowed in policy source."));
     }
@@ -1225,6 +1261,7 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         .parse::<proc_macro2::TokenStream>()
         .map_err(|e| error(e.span(), e.to_string()))?;
     validate_token_budget(&tokens)?;
+    let tokens = crate::source_syntax::errors(tokens)?;
     let (tokens, params) = crate::params::extract(&tokens)?;
     validate_signature(&tokens)?;
     validate_block_shapes(&tokens)?;
@@ -1255,6 +1292,12 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
             "Define async fn _execute(ctx: &Context) -> PolicyResult.",
         )
     })?;
+    if f.sig.inputs.len() == 3 {
+        return Err(error(
+            f.span(),
+            "Authored policies use _execute(ctx: &Context) -> PolicyResult. Rule context and state are supplied internally.",
+        ));
+    }
     let sig = &f.sig;
     let native_entry = params.is_none() && sig.inputs.len() == 3 && sig.ident == "_execute";
     let valid_entry = (sig.ident == "_execute" && matches!(f.vis, syn::Visibility::Inherited))
@@ -1451,6 +1494,12 @@ fn compile_inner(source: &str) -> Result<CompiledPolicy, CompileError> {
         })
         .collect();
     Ok(CompiledPolicy {
+        native_prefix: crate::source_updates::prefix_from_function(f),
+        offchain_required: {
+            let prefix = crate::source_updates::prefix_from_function(f).len();
+            let remaining = &f.block.stmts[prefix..];
+            !matches!(remaining,[syn::Stmt::Expr(syn::Expr::Call(call),None)]if matches!(&*call.func,syn::Expr::Path(p)if p.path.is_ident("Ok"))&&call.args.len()==1&&matches!(&call.args[0],syn::Expr::Tuple(t)if t.elems.is_empty()))
+        },
         language: LANGUAGE.into(),
         source_hash,
         ir_hash,
@@ -1742,6 +1791,7 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                 }
                 TokenTree::Ident(ident)
                     if ident == "let"
+                        || ident == "Err"
                         || ident == "if"
                         || ident == "for"
                         || ident == "return"
@@ -1810,6 +1860,20 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                 stack.push(frame(group.stream(), scope, depth));
             }
             TokenTree::Ident(ident) => {
+                if current.scope != Scope::File && ident == "grant" {
+                    let mut ahead = current.iter.clone();
+                    if matches!(ahead.next(),Some(TokenTree::Punct(p))if p.as_char()==':'&&p.spacing()==proc_macro2::Spacing::Joint)
+                        && matches!(ahead.next(),Some(TokenTree::Punct(p))if p.as_char()==':')
+                    {
+                        let Some(TokenTree::Ident(key)) = ahead.next() else {
+                            return Err(error(ident.span(), "Use a declared Grant reference."));
+                        };
+                        if !crate::rule_values::RULES.contains(&key.to_string().as_str()) {
+                            return Err(error(key.span(), "Use a declared Grant reference."));
+                        }
+                        current.iter = ahead;
+                    }
+                }
                 if current.scope != Scope::File
                     && ["allowit", "engine", "self"].contains(&ident.to_string().as_str())
                 {
@@ -1823,7 +1887,25 @@ fn validate_block_shapes(tokens: &proc_macro2::TokenStream) -> Result<(), Compil
                                 "Use an exact registered policy function name.",
                             ));
                         };
-                        let name = format!("{ident}::{operation}");
+                        let mut name = format!("{ident}::{operation}");
+                        for _ in 0..2 {
+                            let mut next = lookahead.clone();
+                            if matches!(next.next(),Some(TokenTree::Punct(p))if p.as_char()==':'&&p.spacing()==proc_macro2::Spacing::Joint)
+                                && matches!(next.next(),Some(TokenTree::Punct(p))if p.as_char()==':')
+                            {
+                                let Some(TokenTree::Ident(segment)) = next.next() else {
+                                    return Err(error(
+                                        ident.span(),
+                                        "Use an exact registered namespace path.",
+                                    ));
+                                };
+                                name.push_str("::");
+                                name.push_str(&segment.to_string());
+                                lookahead = next;
+                            } else {
+                                break;
+                            }
+                        }
                         if crate::registry::canonical_function(&name).is_none()
                             || !matches!(lookahead.clone().next(), Some(TokenTree::Group(group)) if group.delimiter() == Delimiter::Parenthesis)
                         {

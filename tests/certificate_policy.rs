@@ -15,14 +15,14 @@ fn context() -> Context {
 }
 fn source(body: &str) -> String {
     format!(
-        "use allowit::v1::prelude::*; pub async fn exec(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"10\", \"USDC\")?; {body} Ok(()) }}"
+        "use allowit::v1::prelude::*; pub async fn exec(ctx: &Context) -> PolicyResult {{ {body} Ok(()) }}"
     )
 }
 #[test]
 fn compact_preference_and_versioned_exec_preserve_outcomes() {
     for (deny, approve) in [("0.40", "0.85"), ("auto(\"deny\")", "auto(\"approve\")")] {
         let p = compile(&source(&format!(
-            "check_preference(ctx, \"Primary evidence?\", {deny}, {approve}).await?;"
+            "allowit::v1::prelude::check_preference(ctx, \"Primary evidence?\", {deny}, {approve}).await?;"
         )))
         .unwrap();
         assert_eq!(
@@ -54,7 +54,7 @@ fn compact_preference_and_versioned_exec_preserve_outcomes() {
         }
     }
     let p = compile(&source(
-        "check_preference(ctx, \"Ask\", None, None).await?;",
+        "allowit::v1::prelude::check_preference(ctx, \"Ask\", None, None).await?;",
     ))
     .unwrap();
     assert_eq!(
@@ -72,7 +72,7 @@ fn compact_preference_and_versioned_exec_preserve_outcomes() {
     ] {
         assert!(
             compile(&source(&format!(
-                "check_preference(ctx, \"Ask\", {bad}, 0.85).await?;"
+                "allowit::v1::prelude::check_preference(ctx, \"Ask\", {bad}, 0.85).await?;"
             )))
             .is_err(),
             "{bad}"
@@ -84,7 +84,7 @@ fn compact_preference_and_versioned_exec_preserve_outcomes() {
 }
 #[test]
 fn price_bands_include_boundaries_without_a_minimum_and_need_trusted_counts() {
-    let body = "cap_purchase_tiers(ctx, \"1\", 2, \"USDC\")?;";
+    let body = "allowit::prelude::cap_purchase_tiers(ctx, \"1\", 2, \"USDC\")?;";
     let p = compile(&source(body)).unwrap();
     let mut c = context();
     c.purchase_counts.as_mut().unwrap()[0] = 2;
@@ -129,10 +129,10 @@ fn early_returns_and_earlier_questions_cannot_bypass_purchase_tiers() {
     for before in [
         "return Ok(());",
         "if ctx.amount_units > 0 { return Ok(()); }",
-        "require_user_input(ctx, \"Ask first\").await?;",
+        "allowit::require_user_input(ctx, \"Ask first\").await?;",
     ] {
         let p = compile(&source(&format!(
-            "{before} cap_purchase_tiers(ctx, \"1\", 2, \"USDC\")?;"
+            "{before} allowit::prelude::cap_purchase_tiers(ctx, \"1\", 2, \"USDC\")?;"
         )))
         .unwrap();
         let mut c = context();
@@ -151,10 +151,10 @@ extern crate allowit_sdk as allowit;
 mod typecheck {
     use allowit::v1::prelude::*;
     pub async fn exec(ctx: &Context) -> PolicyResult {
-        cap_purchase_tiers(ctx, "1", 2, "USDC")?;
-        check_preference(ctx, "Ask", 0.40, 0.85).await?;
-        check_preference(ctx, "Ask", None, auto("approve")).await?;
-        check_preference(ctx, "Ask", 0, 1).await?;
+        allowit::prelude::cap_purchase_tiers(ctx, "1", 2, "USDC")?;
+        allowit::v1::prelude::check_preference(ctx, "Ask", 0.40, 0.85).await?;
+        allowit::v1::prelude::check_preference(ctx, "Ask", None, auto("approve")).await?;
+        allowit::v1::prelude::check_preference(ctx, "Ask", 0, 1).await?;
         Ok(())
     }
 }

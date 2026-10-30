@@ -149,39 +149,31 @@ pub fn authorize_server(
         return Err("Configured policy service signer required".into());
     }
     validate_prepared(p, now)?;
-    if p.config.policy_engine == Some(PolicyEngine::SimplePolicyEngine) {
-        let usage =
-            accounting.ok_or("SimplePolicyEngine requires authoritative service accounting")?;
-        if usage.nonce != p.state.nonce || usage.deployment_version != p.state.deployment_version {
-            return Err("Service accounting differs from active policy ordering".into());
-        }
-        let policy =
-            allowit_policy_sdk::compile_stellar_policy(&p.config.policy_source).map_err(err)?;
-        let transfer = transfer_from_request(&p.config, &p.request)?;
-        let pass_through = policy.engine_recommendations().iter().any(|choice| {
-            choice.engine == PolicyEngine::SimplePolicyEngine && choice.onchain_policy
-        });
-        if !pass_through
-            && (policy.uses_named_state()
-                || !policy.explicit_engine_checks.is_empty()
-                || !policy.evaluate_classic(&allowit_policy_sdk::StellarPolicyContext {
-                    asset: p.config.asset.clone(),
-                    recipient: transfer.recipient,
-                    token: p.config.asset_symbol.clone(),
-                    decimals: 7,
-                    amount: transfer.amount,
-                    spent_daily: usage.spent_daily,
-                    spent_total: usage.spent_total,
-                    spent_day: usage.spent_day,
-                    calls: usage.calls,
-                    now,
-                }))
-        {
-            return Err("SimplePolicyEngine service policy denied the exact transfer".into());
-        }
-    } else if accounting.is_some() {
-        return Err("Contract policy accounting cannot be replaced by service counters".into());
+    let policy = allowit_policy_sdk::compile(&p.config.policy_source).map_err(err)?;
+    if policy.offchain_required {
+        return Err("Full policy context is required before service authorization".into());
     }
+    if p.config.policy_engine == Some(PolicyEngine::SimplePolicyEngine) && accounting.is_none() {
+        return Err("Authoritative service accounting is required".into());
+    }
+    attach_service_signature(p, seed)
+}
+/// Authorize only after the full source passes against exact host-only request, owner Grant and actual Spent.
+pub fn authorize_server_with_policy_context(
+    p: &PreparedOperation,
+    seed: &[u8; 32],
+    now: u64,
+    _accounting: Option<rpc::NativeAccounting>,
+    context: &allowit_policy_sdk::Context,
+) -> Result<PreparedOperation> {
+    if p.config.route != WalletRoute::PolicyWallet || account_for_seed(seed) != p.config.server {
+        return Err("Configured policy service signer required".into());
+    }
+    validate_prepared(p, now)?;
+    crate::evaluate_policy_context(p, context)?;
+    attach_service_signature(p, seed)
+}
+fn attach_service_signature(p: &PreparedOperation, seed: &[u8; 32]) -> Result<PreparedOperation> {
     if server_signature(p, false)? != ScVal::Void {
         return Err("Service authorization is already signed".into());
     }

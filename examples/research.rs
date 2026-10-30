@@ -1,10 +1,10 @@
 use allowit::prelude::*;
 
 pub async fn evaluate(ctx: &Context) -> PolicyResult {
-    set_cap_per_day(ctx, "100", "USDC")?;
-    cap_per_transaction(ctx, "10", "USDC")?;
-    require_merchant(ctx, "research.example")?;
-    check_preference(
+    allowit::day_total_cap(100000000)?;
+    allowit::transaction_cap(10000000)?;
+    if ctx.merchant != "research.example" { return Err(PolicyError { code: "MERCHANT_DENIED".into(), reason: "Merchant is not allowed.".into() }); }
+    allowit::prelude::check_preference(
         ctx,
         "Does this purchase count as research under the user's stated purpose and definitions?",
         true,

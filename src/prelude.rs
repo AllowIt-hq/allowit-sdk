@@ -1,10 +1,11 @@
 //! Rust type-checking facade for policy source. Authoritative execution uses the validated IR.
 //! The async approval facade fails closed; the oracle interpreter supplies authenticated answers.
-pub use crate::engine::{
-    call_cap, daily_cap, expiry, recipient, token, total_cap, transaction_cap,
-};
 pub use crate::primitives::OwnerLimit;
-pub use crate::{ConfidenceInterval, Context, Grant, Spent, State, engine};
+pub use crate::rule_values::{
+    GrantRef, RuleValue, call_cap, day_spent_cap, day_total_cap, expiry, grant, recipients,
+    spent_cap, tokens, transaction_cap,
+};
+pub use crate::{ConfidenceInterval, Context, Grant, Spent, State};
 use alloc::string::String;
 pub type PolicyResult = Result<(), PolicyError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +19,7 @@ fn error(code: &str, reason: &str) -> PolicyError {
         reason: reason.into(),
     }
 }
-pub fn fail(reason: &str) -> PolicyResult {
+pub(crate) fn fail(reason: &str) -> PolicyResult {
     Err(error("POLICY_REJECTED", reason))
 }
 /// Convert an exact six-decimal USDC amount to policy units. Zero is allowed for comparisons.
@@ -29,13 +30,7 @@ pub fn usdc(amount: &str) -> Result<u64, PolicyError> {
 pub fn percent(value: &str) -> Result<u64, PolicyError> {
     crate::readability::percentage_bps(value).map_err(|e| error(&e.code, &e.message))
 }
-/// Inclusive comparison in the policy's six-decimal USDC unit.
-pub fn amount_at_most(ctx: &Context, amount: &str) -> Result<bool, PolicyError> {
-    if ctx.token != "USDC" {
-        return Err(error("TOKEN_MISMATCH", "Token does not match."));
-    }
-    Ok(ctx.amount_units <= usdc(amount)?)
-}
+
 /// Whether a return is no more than the specified percentage points below the benchmark.
 pub fn within_percentage_points(
     candidate: u64,
@@ -45,75 +40,7 @@ pub fn within_percentage_points(
     let gap = percent(gap)?;
     Ok(candidate >= benchmark || benchmark - candidate <= gap)
 }
-pub fn set_cap_per_day(ctx: &Context, amount: &str, token: &str) -> PolicyResult {
-    let cap =
-        crate::validation::amount_units(amount).map_err(|e| error("INVALID_AMOUNT", &e.message))?;
-    if token != "USDC" || ctx.token != token {
-        return Err(error("TOKEN_MISMATCH", "Token does not match."));
-    }
-    if crate::primitives::daily_spend(ctx.daily_spent_units, ctx.spent_day, ctx.now)
-        .map_err(|(code, reason)| error(code, reason))?
-        .checked_add(ctx.amount_units)
-        .is_none_or(|n| n > cap)
-    {
-        return Err(error(
-            "DAILY_CAP_EXCEEDED",
-            "Daily spending limit exceeded.",
-        ));
-    }
-    Ok(())
-}
-pub fn cap_per_transaction(ctx: &Context, amount: &str, token: &str) -> PolicyResult {
-    let cap =
-        crate::validation::amount_units(amount).map_err(|e| error("INVALID_AMOUNT", &e.message))?;
-    if token != "USDC" || ctx.token != token {
-        return Err(error("TOKEN_MISMATCH", "Token does not match."));
-    }
-    if ctx.amount_units > cap {
-        return Err(error("PURCHASE_CAP_EXCEEDED", "Purchase limit exceeded."));
-    }
-    Ok(())
-}
-#[cfg(feature = "oracle-ledger")]
-pub fn cap_purchase_tiers(
-    ctx: &Context,
-    maximum: &str,
-    first_count: u64,
-    token: &str,
-) -> PolicyResult {
-    if token != "USDC" || ctx.token != token {
-        return Err(error("TOKEN_MISMATCH", "Token does not match."));
-    }
-    let maximum = crate::validation::amount_units(maximum)
-        .map_err(|e| error("INVALID_AMOUNT", &e.message))?;
-    crate::spending::check_tiers(ctx, maximum, first_count).map_err(|e| error(&e.code, &e.reason))
-}
-#[cfg(not(feature = "oracle-ledger"))]
-pub fn cap_purchase_tiers(
-    _ctx: &Context,
-    _maximum: &str,
-    _first_count: u64,
-    _token: &str,
-) -> PolicyResult {
-    Err(error(
-        "LEDGER_REQUIRED",
-        "Purchase tiers require the oracle ledger feature.",
-    ))
-}
-pub fn allow_actions(ctx: &Context, actions: &[&str]) -> PolicyResult {
-    if actions.contains(&ctx.action.as_str()) {
-        Ok(())
-    } else {
-        Err(error("ACTION_NOT_ALLOWED", "Action is not permitted."))
-    }
-}
-pub fn require_merchant(ctx: &Context, merchant: &str) -> PolicyResult {
-    if ctx.merchant == merchant {
-        Ok(())
-    } else {
-        Err(error("MERCHANT_NOT_ALLOWED", "Merchant is not permitted."))
-    }
-}
+
 /// Exact recipient match, except that two `0x` + 40-hex EVM addresses compare
 /// case-insensitively: EIP-55 checksum casing is presentation, not identity, and
 /// hosts pass EVM recipients lowercased. Base58 and Stellar strkeys contain no
@@ -126,16 +53,7 @@ pub(crate) fn recipient_matches(actual: &str, required: &str) -> bool {
     }
     actual == required || (evm(actual) && evm(required) && actual.eq_ignore_ascii_case(required))
 }
-pub fn require_recipient(ctx: &Context, recipient: &str) -> PolicyResult {
-    if recipient_matches(&ctx.recipient, recipient) {
-        Ok(())
-    } else {
-        Err(error(
-            "RECIPIENT_NOT_ALLOWED",
-            "Recipient is not permitted.",
-        ))
-    }
-}
+
 pub fn confidence(ctx: &Context, name: &str) -> Result<ConfidenceInterval, PolicyError> {
     let value = ctx
         .confidence
@@ -220,7 +138,36 @@ pub async fn require_user_input(_ctx: &Context, _prompt: &str) -> PolicyResult {
         "Use the trusted oracle to obtain an authenticated answer.",
     ))
 }
-
-pub fn require_asset(ctx: &Context, required: &str) -> PolicyResult {
-    crate::primitives::require_asset(&ctx.token, required)
+#[cfg(feature = "oracle-ledger")]
+pub fn cap_purchase_tiers(
+    ctx: &Context,
+    maximum: &str,
+    first_count: u64,
+    token: &str,
+) -> PolicyResult {
+    if token != "USDC" || ctx.token != token {
+        return Err(error("TOKEN_MISMATCH", "Token does not match."));
+    }
+    let maximum = crate::validation::amount_units(maximum)
+        .map_err(|e| error("INVALID_AMOUNT", &e.message))?;
+    crate::spending::check_tiers(ctx, maximum, first_count).map_err(|e| error(&e.code, &e.reason))
+}
+#[cfg(not(feature = "oracle-ledger"))]
+pub fn cap_purchase_tiers(
+    _ctx: &Context,
+    _maximum: &str,
+    _first_count: u64,
+    _token: &str,
+) -> PolicyResult {
+    Err(error(
+        "LEDGER_REQUIRED",
+        "Purchase tiers require the oracle ledger feature.",
+    ))
+}
+pub fn require_merchant(ctx: &Context, merchant: &str) -> PolicyResult {
+    if ctx.merchant == merchant {
+        Ok(())
+    } else {
+        Err(error("MERCHANT_NOT_ALLOWED", "Merchant is not permitted."))
+    }
 }

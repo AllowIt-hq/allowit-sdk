@@ -32,7 +32,7 @@ name = "core"
 required-features = ["compiler"]
 
 [[test]]
-name = "daily_cap"
+name = "expense_caps"
 required-features = ["compiler"]
 
 [[test]]

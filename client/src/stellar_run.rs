@@ -30,7 +30,19 @@ struct Bundle {
     policy_id: String,
     source_hash: String,
     ir_hash: String,
-    module_digest: String,
+    #[serde(default)]
+    module_digest: Option<String>,
+    #[serde(default)]
+    prefix_digest: Option<String>,
+    #[serde(default)]
+    prefix_rules: Option<Vec<String>>,
+    #[serde(default)]
+    source_instance: Option<String>,
+    #[serde(default)]
+    source_revision: Option<u64>,
+    /// Reviewable public proof. It never replaces the locally approved config pin.
+    #[serde(default)]
+    source_approval: Option<serde_json::Value>,
     wallet: String,
     route: WalletRoute,
     config: WalletConfig,
@@ -107,6 +119,15 @@ fn clock() -> Result<u64> {
         .map(|v| v.as_secs())
         .map_err(|_| Error::config("System clock precedes the Unix epoch"))
 }
+/// The backend may add only signed accounting facts to the original caller intent.
+/// Exact prepared bytes remain pinned separately and require trusted native revalidation before signing.
+fn same_execution_intent(a: &ExecutionRequest, b: &ExecutionRequest) -> bool {
+    let mut a = a.clone();
+    let mut b = b.clone();
+    a.expense = None;
+    b.expense = None;
+    a == b
+}
 fn checked<T>(v: sdk::Result<T>) -> Result<T> {
     v.map_err(Error::config)
 }
@@ -133,7 +154,14 @@ fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
         || bundle.wallet != bundle.config.wallet
         || bundle.route != bundle.config.route
         || checked(sdk::unhex::<32>(&bundle.source_hash))? != bundle.config.source_hash
-        || checked(sdk::unhex::<32>(&bundle.module_digest))? != bundle.config.module_digest
+        || (bundle.config.route == WalletRoute::PolicyWallet
+            && bundle
+                .module_digest
+                .as_deref()
+                .map(sdk::unhex::<32>)
+                .transpose()
+                .map_err(|error| Error::config(&error))?
+                != Some(bundle.config.module_digest))
         || sdk::unhex::<32>(&bundle.ir_hash).is_err()
         || bundle.endpoints.execute != "/api/native/execute"
         || bundle.endpoints.status != "/api/native/execute/status"
@@ -142,6 +170,63 @@ fn validate_bundle(policy: &str, bundle: &Bundle) -> Result<()> {
             "The Stellar bundle does not match the installed policy profile",
         ));
     }
+    if let Some(instance) = &bundle.source_instance {
+        if checked(sdk::unhex::<32>(instance))?
+            != bundle
+                .config
+                .source_instance
+                .unwrap_or(bundle.config.policy_instance)
+        {
+            return Err(Error::config(
+                "Public source scope differs from the approved local configuration",
+            ));
+        }
+    }
+    if bundle
+        .source_revision
+        .is_some_and(|revision| revision > 9_007_199_254_740_991)
+    {
+        return Err(Error::config("Source revision exceeds the supported range"));
+    }
+    if let Some(prefix) = &bundle.prefix_digest {
+        let rules = if bundle.config.route == WalletRoute::PolicyWallet
+            && bundle.config.policy_engine != Some(sdk::PolicyEngine::CustomPolicy)
+        {
+            let actual = checked(
+                allowit_policy_sdk::source_updates::initial_rule_prefix(
+                    &bundle.config.policy_source,
+                )
+                .map_err(|error| error.message),
+            )?;
+            if bundle
+                .prefix_rules
+                .as_ref()
+                .is_some_and(|rules| *rules != actual)
+            {
+                return Err(Error::config(
+                    "Public prefix rules differ from the approved source",
+                ));
+            }
+            actual
+        } else {
+            Vec::new()
+        };
+        let expected = if bundle.config.policy_engine == Some(sdk::PolicyEngine::CustomPolicy) {
+            bundle.config.source_hash
+        } else {
+            checked(sdk::source_updates::source_binding_digest(
+                &bundle.config,
+                &rules,
+            ))?
+        };
+        if checked(sdk::unhex::<32>(prefix))? != expected {
+            return Err(Error::config(
+                "Public source binding differs from the approved configuration",
+            ));
+        }
+    }
+    // The owner explicitly refreshes this local bundle. Backend proof data never changes its pin.
+    let _ = &bundle.source_approval;
     checked(sdk::validate_config(&bundle.config))
 }
 fn read_public_bundle(path: &Path) -> Result<Bundle> {
@@ -174,10 +259,19 @@ fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
         "policyId":bundle.policy_id,"profile":bundle.profile,"network":bundle.network,
         "wallet":bundle.wallet,"route":bundle.route,"owner":bundle.config.owner,
         "agent":bundle.config.agent,"server":bundle.config.server,
-        "sourceHash":bundle.source_hash,"irHash":bundle.ir_hash,"moduleDigest":bundle.module_digest,
+        "sourceHash":bundle.source_hash,"sourceInstance":bundle.config.source_instance.map(|instance|sdk::hex(&instance)),"irHash":bundle.ir_hash,
         "asset":bundle.config.asset,"assetSymbol":bundle.config.asset_symbol,"assetIssuer":bundle.config.asset_issuer,
         "maxFeeStroops":bundle.config.max_fee_stroops
     });
+    if bundle.config.route == WalletRoute::PolicyWallet {
+        value["moduleDigest"] = json!(bundle.module_digest);
+    }
+    if let Some(prefix) = &bundle.prefix_digest {
+        value["prefixDigest"] = json!(prefix);
+    }
+    if let Some(revision) = bundle.source_revision {
+        value["sourceRevision"] = json!(revision);
+    }
     if source {
         value["policy"] = json!(bundle.config.policy_source);
     }
@@ -333,13 +427,13 @@ impl Client {
             || p.request.operation.nonce != operation_nonce(&self.bundle.policy_id, id)
             || r.operation.transaction_hash != sdk::hex(&p.transaction_hash)
             || record.is_some_and(|old| {
-                old.request != p.request
+                !same_execution_intent(&old.request, &p.request)
                     || !config_matches(&old.config, &p.config)
                     || old.prepared.as_ref().is_some_and(|v| v != p)
             })
         {
             return Err(Error::uncertain(
-                "Stellar response changed the original operation identity",
+                "Stellar response changed the approved operation or source. Refresh the owner-approved public bundle before using an updated policy.",
             ));
         }
         if terminal(&r.operation.status) && r.receipt.is_none() {
@@ -449,6 +543,11 @@ fn run_locked(
             "The Stellar profile accepts only execution-request input",
         ));
     };
+    if request.expense.is_some() {
+        return Err(Error::usage(
+            "Expense facts are derived by the server, not supplied in the customer request",
+        ));
+    }
     let id = typed.request_id;
     if !args.flags.get("request-id").is_empty() && args.flags.get("request-id") != id {
         return Err(Error::usage("--request-id differs from the request file"));
@@ -458,14 +557,14 @@ fn run_locked(
             "The operation nonce does not bind this policy and request ID",
         ));
     }
-    checked(sdk::transfer_from_request(&c.bundle.config, &request))?;
+    checked(sdk::operation_from_request(&c.bundle.config, &request))?;
     let name = sdk::hex(&request.operation.nonce);
     let old = journal.load::<Record>(&name).map_err(journal_error)?;
     let (mut record, resumed) = if let Some(old) = old {
         if old.policy_id != args.pos[0]
             || old.request_id != id
             || !same_retained_policy_config(&c.bundle.config, &old.config)
-            || old.request != request
+            || !same_execution_intent(&old.request, &request)
         {
             return Err(Error::config(
                 "The original request ID already binds different input",
@@ -607,6 +706,8 @@ mod public_bundle_tests {
             serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap();
         let policy = &f["policy"];
         let config = WalletConfig {
+            source_instance: None,
+            prefix_digest: None,
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
             wallet: f["intent"]["owner"].as_str().unwrap().into(),
@@ -792,7 +893,12 @@ mod native_revalidation_tests {
                 policy_id: "policy-current".into(),
                 source_hash: sdk::hex(&config.source_hash),
                 ir_hash: String::new(),
-                module_digest: sdk::hex(&config.module_digest),
+                module_digest: None,
+                prefix_digest: None,
+                prefix_rules: None,
+                source_instance: None,
+                source_revision: None,
+                source_approval: None,
                 wallet: config.wallet.clone(),
                 route: config.route.clone(),
                 config,

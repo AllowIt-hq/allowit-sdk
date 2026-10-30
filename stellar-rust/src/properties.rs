@@ -165,6 +165,8 @@ mod tests {
         };
         let policy_source="use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { Ok(()) }".to_owned();
         let mut config = WalletConfig {
+            source_instance: Some([21; 32]),
+            prefix_digest: None,
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
             wallet: Contract([4; 32]).to_string(),
@@ -222,6 +224,7 @@ mod tests {
             expected
         );
         let other = WalletConfig {
+            prefix_digest: None,
             policy_instance: [8; 32],
             ..rpc.config.clone()
         };
@@ -257,6 +260,7 @@ mod tests {
         rpc.entries = vec![bad];
         assert!(query(&rpc, &source).is_err());
         let other = WalletConfig {
+            prefix_digest: None,
             policy_instance: [99; 32],
             ..rpc.config.clone()
         };

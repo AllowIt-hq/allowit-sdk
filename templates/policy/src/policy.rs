@@ -1,11 +1,8 @@
-use allowit::v1::prelude::*;
+use allowit::prelude::*;
 
-struct PolicyParams {}
-
-fn new() -> PolicyParams {
-    PolicyParams {}
-}
-
-async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
-    allowit::fail("Policy is not configured")
+async fn _execute(ctx: &Context) -> PolicyResult {
+    return Err(PolicyError {
+        code: "POLICY_NOT_CONFIGURED".into(),
+        reason: "Configure the policy before execution.".into(),
+    });
 }

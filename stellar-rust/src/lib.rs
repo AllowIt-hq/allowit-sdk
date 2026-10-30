@@ -14,12 +14,21 @@ pub use allowit_policy_sdk::PolicyEngine;
 pub mod admin;
 mod authorization;
 pub mod owner;
-pub use authorization::authorize_server;
+pub use authorization::{authorize_server, authorize_server_with_policy_context};
+mod full_policy;
+pub use full_policy::{evaluate_policy_context, policy_grant_values, sign_with_policy_context};
 pub mod properties;
 mod values;
 pub use values::NativeValues;
+pub mod expenses;
+mod prefix;
+pub mod source_updates;
+pub use prefix::prefix_digest;
+use prefix::{native_policy_digest, retained_binding};
 pub mod rpc;
+pub mod vaults;
 pub mod x402;
+pub use vaults::{StellarOperation, VaultDeposit, operation_from_request, vault_deposit_request};
 pub type Result<T> = std::result::Result<T, String>;
 
 pub const PROFILE: &str = "allowit-stellar-wallet-v1";
@@ -160,6 +169,9 @@ pub enum WalletRoute {
 pub struct WalletConfig {
     pub network: String,
     pub policy_instance: [u8; 32],
+    /// Logical offchain source scope. Std contract policies require a distinct explicit identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_instance: Option<[u8; 32]>,
     pub wallet: String,
     pub owner: String,
     pub agent: String,
@@ -174,6 +186,9 @@ pub struct WalletConfig {
     pub asset_issuer: Option<String>,
     pub policy_source: String,
     pub source_hash: [u8; 32],
+    /// Standard onchain rule-prefix binding. Full source identity remains source_hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_digest: Option<[u8; 32]>,
     pub module_digest: [u8; 32],
     pub max_fee_stroops: u32,
 }
@@ -277,6 +292,18 @@ impl AccountState {
         Ok(())
     }
 }
+/// Protected accounting history records successful operations even when selected Grant inputs are Null.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativePolicyHistory {
+    pub calls: u64,
+    pub spent: i128,
+    pub unpriced: bool,
+    pub day: u64,
+    pub day_spent: i128,
+    pub day_total: i128,
+    pub day_unpriced: bool,
+}
 /// Complete native policy inputs. Both maps preserve arbitrary ScVal values.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -287,6 +314,9 @@ pub struct PolicyStateSnapshot {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrustedState {
+    /// Conservative native history; server actual-settlement accounting remains separate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<NativePolicyHistory>,
     /// Executable release metadata. Legacy code has no advertised release version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_version: Option<u32>,
@@ -381,6 +411,20 @@ pub struct Transfer {
 }
 
 pub fn validate_config(c: &WalletConfig) -> Result<()> {
+    validate_config_inner(c, true)
+}
+fn validate_config_inner(c: &WalletConfig, fresh: bool) -> Result<()> {
+    if c.source_instance == Some([0; 32])
+        || (fresh
+            && c.route == WalletRoute::PolicyWallet
+            && c.policy_engine != Some(PolicyEngine::CustomPolicy)
+            && c.source_instance.is_none())
+    {
+        return Err(
+            "Fresh standard policies require an explicit owner-approved logical source instance"
+                .into(),
+        );
+    }
     passphrase(&c.network)?;
     if c.policy_instance == [0; 32]
         || c.source_hash != hash(c.policy_source.as_bytes())
@@ -429,7 +473,7 @@ pub fn transfer_from_request(c: &WalletConfig, r: &ExecutionRequest) -> Result<T
     decode_transfer(c, r, false)
 }
 fn decode_transfer(c: &WalletConfig, r: &ExecutionRequest, retained: bool) -> Result<Transfer> {
-    validate_config(c)?;
+    validate_config_inner(c, !retained)?;
     if r.operation.policy_instance != c.policy_instance || r.operation.nonce == [0; 32] {
         return Err("Operation installation or identity differs".into());
     }
@@ -567,14 +611,33 @@ pub fn sac_address(network: &str, asset: &Asset) -> Result<String> {
     });
     Ok(Contract(hash(preimage.to_xdr(limits()).map_err(err)?)).to_string())
 }
+fn native_source_memo(c: &WalletConfig, r: &ExecutionRequest) -> Result<[u8; 32]> {
+    let mut bytes = b"allowit-native-source-memo-v1".to_vec();
+    bytes.extend(c.source_hash);
+    bytes.extend(hash(serde_json::to_vec(r).map_err(err)?));
+    Ok(hash(bytes))
+}
+fn compile_operation_policy(
+    source: &str,
+    operation: &StellarOperation,
+) -> Result<allowit_policy_sdk::StellarPolicy> {
+    match operation {
+        StellarOperation::Transfer(_) => allowit_policy_sdk::compile_stellar_policy(source),
+        StellarOperation::VaultDeposit(_) => {
+            allowit_policy_sdk::compile_stellar_deposit_policy(source)
+        }
+    }
+    .map_err(err)
+}
 pub fn verify_policy(
     c: &WalletConfig,
     r: &ExecutionRequest,
     state: &TrustedState,
     now: u64,
 ) -> Result<()> {
-    let t = transfer_from_request(c, r)?;
-    let policy = allowit_policy_sdk::compile_stellar_policy(&c.policy_source).map_err(err)?;
+    let operation = operation_from_request(c, r)?;
+    let t = operation.movement();
+    let policy = compile_operation_policy(&c.policy_source, &operation)?;
     if c.route == WalletRoute::Native
         && (policy.uses_named_state() || !policy.explicit_engine_checks.is_empty())
     {
@@ -587,18 +650,21 @@ pub fn verify_policy(
         return Err("Native policy requires authoritative execution preflight".into());
     }
     if policy.source_hash != c.source_hash
-        || !policy.evaluate(&allowit_policy_sdk::StellarPolicyContext {
-            asset: c.asset.clone(),
-            recipient: t.recipient,
-            token: c.asset_symbol.clone(),
-            decimals: 7,
-            amount: t.amount,
-            spent_daily: state.spent_daily,
-            spent_total: state.spent_total,
-            calls: state.calls,
-            now,
-            spent_day: state.spent_day,
-        })
+        || !policy.evaluate_operation(
+            &allowit_policy_sdk::StellarPolicyContext {
+                asset: c.asset.clone(),
+                recipient: t.recipient,
+                token: c.asset_symbol.clone(),
+                decimals: 7,
+                amount: t.amount,
+                spent_daily: state.spent_daily,
+                spent_total: state.spent_total,
+                calls: state.calls,
+                now,
+                spent_day: state.spent_day,
+            },
+            operation.name(),
+        )
     {
         return Err("Authored policy rejected this exact Stellar operation".into());
     }
@@ -629,21 +695,22 @@ fn policy_wallet_request(
     c: &WalletConfig,
     r: &ExecutionRequest,
     state: &TrustedState,
-    t: &Transfer,
+    operation: &StellarOperation,
     expires: u64,
     legacy_revision: bool,
+    include_expense: bool,
 ) -> Result<ScVal> {
-    let args = transfer_args(c, t)?.to_xdr(limits()).map_err(err)?;
+    let args = operation.arguments(c)?.to_xdr(limits()).map_err(err)?;
     let invocation = value_map(vec![
         ("module_digest", value_bytes(&c.module_digest)?),
         ("entrypoint", value_symbol("_execute")?),
         (
             "argument_schema_digest",
-            value_bytes(&hash(ARGUMENT_SCHEMA))?,
+            value_bytes(&hash(operation.argument_schema()))?,
         ),
         ("arguments", value_bytes(&args)?),
     ])?;
-    value_map(vec![
+    let mut fields = vec![
         ("policy_instance", value_bytes(&c.policy_instance)?),
         ("operation_id", value_bytes(&r.operation.nonce)?),
         ("nonce", ScVal::U64(state.nonce)),
@@ -657,14 +724,21 @@ fn policy_wallet_request(
         ),
         ("expires_at", ScVal::U64(expires)),
         ("invocation", invocation),
-    ])
+    ];
+    if include_expense {
+        fields.push(("source_hash", value_bytes(&c.source_hash)?));
+        fields.push(("expense", expenses::value(c, r, operation)?));
+    }
+    value_map(fields)
 }
 #[derive(Clone, Copy)]
 enum PacketUse {
     Current,
     Retained,
+    RetainedWithoutExpense,
     RetainedRevision,
     NativePreflight,
+    FeeQuote,
 }
 fn build(
     c: &WalletConfig,
@@ -691,11 +765,28 @@ fn build(
             return Err("Unsupported policy contract version".into());
         }
     }
-    let t = decode_transfer(
+    let operation = vaults::decode_operation(
         c,
         r,
-        matches!(packet, PacketUse::Retained | PacketUse::RetainedRevision),
+        matches!(
+            packet,
+            PacketUse::Retained | PacketUse::RetainedWithoutExpense | PacketUse::RetainedRevision
+        ),
     )?;
+    expenses::validate(c, r, &operation)?;
+    if let Some(e) = &r.expense {
+        if e.day != now / 86400 || e.observed_ledger > state.ledger {
+            return Err("Expense observation day or ledger differs from native preparation".into());
+        }
+        if matches!(packet, PacketUse::Current | PacketUse::NativePreflight)
+            && (e.max_fee_stroops < 100 || e.max_fee_stroops > c.max_fee_stroops)
+        {
+            return Err(
+                "Direct execution expense gas must fit the approved agent fee ceiling".into(),
+            );
+        }
+    }
+    let t = operation.movement();
     if admit_policy {
         verify_policy(c, r, state, now)?;
     }
@@ -711,7 +802,7 @@ fn build(
     if expires <= now || expires > now.checked_add(300).ok_or("Expiry overflow")? {
         return Err("Operation expiry must be within 300 seconds".into());
     }
-    if state.source_hash != c.source_hash {
+    if state.source_hash != retained_binding(c) {
         return Err("Installed authored source identity differs".into());
     }
     if state.policy_instance != c.policy_instance
@@ -753,9 +844,13 @@ fn build(
                         c,
                         r,
                         state,
-                        &t,
+                        &operation,
                         expires,
                         legacy_revision,
+                        !matches!(
+                            packet,
+                            PacketUse::RetainedWithoutExpense | PacketUse::RetainedRevision
+                        ),
                     )?]
                     .try_into()
                     .map_err(err)?,
@@ -770,9 +865,13 @@ fn build(
                                 c,
                                 r,
                                 state,
-                                &t,
+                                &operation,
                                 expires,
                                 legacy_revision,
+                                !matches!(
+                                    packet,
+                                    PacketUse::RetainedWithoutExpense | PacketUse::RetainedRevision
+                                ),
                             )?]
                             .try_into()
                             .map_err(err)?,
@@ -800,7 +899,14 @@ fn build(
     }
     let tx = Transaction {
         source_account: muxed(&state.source.address)?,
-        fee: c.max_fee_stroops,
+        fee: if matches!(packet, PacketUse::FeeQuote) {
+            c.max_fee_stroops
+        } else {
+            r.expense
+                .as_ref()
+                .map(|e| e.max_fee_stroops)
+                .unwrap_or(c.max_fee_stroops)
+        },
         seq_num: SequenceNumber(
             state
                 .source
@@ -819,7 +925,16 @@ fn build(
             max_time: TimePoint(expires),
         }),
         memo: if c.route == WalletRoute::Native {
-            Memo::Hash(Hash(r.operation.nonce))
+            Memo::Hash(Hash(
+                if matches!(
+                    packet,
+                    PacketUse::RetainedWithoutExpense | PacketUse::RetainedRevision
+                ) {
+                    r.operation.nonce
+                } else {
+                    native_source_memo(c, r)?
+                },
+            ))
         } else {
             Memo::None
         },
@@ -907,10 +1022,11 @@ pub(crate) fn prepare_for_native_preflight(
     if c.source_hash != compiled.source_hash {
         return Err("Compiled policy source identity differs".into());
     }
-    if c.route != WalletRoute::PolicyWallet {
-        return prepare(c, r, state, now, expires_at);
+    native_policy_digest(c)?;
+    if c.route != WalletRoute::PolicyWallet && c.route != WalletRoute::Native {
+        return Err("Historical wallets cannot prepare new operations".into());
     }
-    if state.policy_state.is_none() {
+    if c.route == WalletRoute::PolicyWallet && state.policy_state.is_none() {
         return Err("Trusted native Grant and spent observations are required".into());
     }
     prepare_with_bounds(
@@ -923,8 +1039,8 @@ pub(crate) fn prepare_for_native_preflight(
         PacketUse::NativePreflight,
     )
 }
-fn validate_signing_policy(p: &PreparedOperation, now: u64) -> Result<()> {
-    transfer_from_request(&p.config, &p.request)?;
+fn validate_signing_policy(p: &PreparedOperation, _now: u64) -> Result<()> {
+    operation_from_request(&p.config, &p.request)?;
     if needs_native_preflight(&p.config)? {
         let marker = p
             .native_preflight
@@ -935,7 +1051,14 @@ fn validate_signing_policy(p: &PreparedOperation, now: u64) -> Result<()> {
         }
         Ok(())
     } else {
-        verify_policy(&p.config, &p.request, &p.state, now)
+        // The native transaction binds the complete owner-approved source in its memo.
+        // The server's signing API separately requires full-policy evaluation.
+        validate_config(&p.config)?;
+        let policy = allowit_policy_sdk::compile(&p.config.policy_source).map_err(err)?;
+        if policy.source_hash != hex(&p.config.source_hash) || !packet_has_expense(p)? {
+            return Err("Native full-source binding differs".into());
+        }
+        Ok(())
     }
 }
 /// Rebuild every authorization field before signing. Caller-supplied prepared metadata is not trusted.
@@ -950,7 +1073,13 @@ pub fn validate_prepared(p: &PreparedOperation, now: u64) -> Result<()> {
     if p.version != 1 || p.created_at > now || now >= p.expires_at {
         return Err("Prepared operation is stale".into());
     }
+    if !packet_has_expense(p)? {
+        return Err(
+            "Historical packets without complete source and expense binding are read-only".into(),
+        );
+    }
     validate_signing_policy(p, p.created_at)?;
+    validate_expense_fee(p)?;
     validate_retained_prepared(p)
 }
 /// Verify retained transport and effect identity for read-only history or recovery.
@@ -978,6 +1107,11 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
         retained_native_lower_bound,
         if retained_revision_packet(p)? {
             PacketUse::RetainedRevision
+        } else if !packet_has_expense(p)? {
+            if p.request.expense.is_some() {
+                return Err("Retained packet omits its declared expense facts".into());
+            }
+            PacketUse::RetainedWithoutExpense
         } else {
             PacketUse::Retained
         },
@@ -992,6 +1126,58 @@ pub fn validate_retained_prepared(p: &PreparedOperation) -> Result<()> {
         return Err("Prepared operation changed".into());
     }
     Ok(())
+}
+/// Private original-byte decoder. It never creates a fresh legacy preparation route.
+pub fn operation_fee(p: &PreparedOperation) -> Result<u32> {
+    let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+        return Err("Expected a Stellar transaction envelope".into());
+    };
+    Ok(env.tx.fee)
+}
+fn validate_expense_fee(p: &PreparedOperation) -> Result<()> {
+    if let Some(expense) = &p.request.expense {
+        if expense.max_fee_stroops < 100
+            || expense.max_fee_stroops > p.config.max_fee_stroops
+            || operation_fee(p)? != expense.max_fee_stroops
+        {
+            return Err("Final attributable expense gas must equal the exact outer transaction fee within its approved ceiling".into());
+        }
+    }
+    Ok(())
+}
+fn packet_has_expense(p: &PreparedOperation) -> Result<bool> {
+    if p.config.route == WalletRoute::Native {
+        let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+            return Err("Expected retained native envelope".into());
+        };
+        return Ok(env.tx.memo == Memo::Hash(Hash(native_source_memo(&p.config, &p.request)?)));
+    }
+    let TransactionEnvelope::Tx(env) = read(&p.transaction_xdr)? else {
+        return Err("Expected retained policy packet".into());
+    };
+    let Some(Operation {
+        body: OperationBody::InvokeHostFunction(op),
+        ..
+    }) = env.tx.operations.first()
+    else {
+        return Err("Expected retained policy invocation".into());
+    };
+    let HostFunction::InvokeContract(call) = &op.host_function else {
+        return Err("Expected retained policy call".into());
+    };
+    let Some(ScVal::Map(Some(fields))) = call.args.first() else {
+        return Err("Expected retained policy request".into());
+    };
+    let expense = fields
+        .iter()
+        .any(|field| field.key == value_symbol("expense").unwrap());
+    let source = fields
+        .iter()
+        .any(|field| field.key == value_symbol("source_hash").unwrap());
+    if expense != source {
+        return Err("Partial native source or expense header is unsupported".into());
+    }
+    Ok(expense && source)
 }
 // Canonical main emitted revision packets before contract release metadata existed.
 // This private decoder permits only original-byte status/recovery verification.
@@ -1057,6 +1243,19 @@ pub fn sign(p: &PreparedOperation, seed: &[u8; 32], now: u64) -> Result<Detached
     if p.config.route == WalletRoute::PolicyWallet {
         authorization::server_signature(p, true)?;
     }
+    let signer = account_for_seed(seed);
+    if p.config.route == WalletRoute::Native && signer == p.config.server {
+        let policy = allowit_policy_sdk::compile(&p.config.policy_source).map_err(err)?;
+        if policy.offchain_required || !policy.native_prefix.is_empty() {
+            return Err("Full policy context is required for native service signing".into());
+        }
+    }
+    sign_unchecked_role(p, seed)
+}
+pub(crate) fn sign_unchecked_role(
+    p: &PreparedOperation,
+    seed: &[u8; 32],
+) -> Result<DetachedSignature> {
     let signer = account_for_seed(seed);
     let allowed = if p.config.route == WalletRoute::Native {
         signer == p.config.agent || signer == p.config.server
@@ -1188,7 +1387,11 @@ pub fn authorize(
     })
 }
 pub fn validate_signed(s: &SignedOperation, now: u64) -> Result<()> {
-    transfer_from_request(&s.prepared.config, &s.prepared.request)?;
+    if !packet_has_expense(&s.prepared)? {
+        return Err("Historical packets are read-only".into());
+    }
+    validate_expense_fee(&s.prepared)?;
+    operation_from_request(&s.prepared.config, &s.prepared.request)?;
     if s.prepared.state.contract_version == Some(1) && needs_native_preflight(&s.prepared.config)? {
         if s.prepared.created_at > now || now >= s.prepared.expires_at {
             return Err("Signed operation is stale".into());
@@ -1266,7 +1469,12 @@ pub fn attach_simulation(p: &PreparedOperation, data: &str) -> Result<PreparedOp
         return Err("Unsupported transaction envelope".into());
     };
     env.tx.ext = TransactionExt::V1(resource);
-    env.tx.fee = required;
+    env.tx.fee = p
+        .request
+        .expense
+        .as_ref()
+        .map(|expense| expense.max_fee_stroops.max(required))
+        .unwrap_or(required);
     let mut out = p.clone();
     out.transaction_hash = transaction_hash(&p.config.network, &env.tx)?;
     out.transaction_xdr = xdr(&TransactionEnvelope::Tx(env))?;

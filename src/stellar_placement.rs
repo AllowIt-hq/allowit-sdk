@@ -1,5 +1,4 @@
 //! Deterministic authoring-time placement for eligible owner-controlled rules.
-use crate::CompileError;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,90 +97,5 @@ impl PlacementManifest {
             checks,
             possible_shared_spent_writer,
         }
-    }
-}
-/// Closed native-rule eligibility registry. New rules require an explicit authority assessment.
-pub(crate) fn authority(rule_id: &str) -> Option<RuleAuthority> {
-    [
-        "daily_cap",
-        "transaction_cap",
-        "total_cap",
-        "call_cap",
-        "recipient",
-        "expiry",
-        "token",
-        "cap_per_transaction",
-        "cap_per_day",
-        "amount_at_most",
-        "recipient_is",
-        "asset_label",
-        "actions",
-    ]
-    .contains(&rule_id)
-    .then_some(RuleAuthority::OwnerPure)
-}
-fn invalid(message: &str) -> CompileError {
-    CompileError::new("INVALID_RULE_PLACEMENT", message)
-}
-pub(crate) fn plan(
-    rule_id: &str,
-    authority: RuleAuthority,
-    requested: RulePlacement,
-    options: &StellarCompileOptions,
-) -> Result<CheckPlacement, CompileError> {
-    if authority == RuleAuthority::System
-        || requested == RulePlacement::Shared
-        || options.default_placement == RulePlacement::Shared
-        || options.expected_transactions.is_some()
-        || options.cost_context.is_some()
-        || !options.cost_estimates.is_empty()
-    {
-        return Err(invalid(
-            "Hybrid and cost-based rule placement is deferred. Use a fixed policy engine or local CustomPolicy mixins.",
-        ));
-    }
-    Ok(CheckPlacement {
-        rule_id: rule_id.into(),
-        authority,
-        requested,
-        selected: RulePlacement::Local,
-        reason: "Owner-controlled policy implementation uses local rule mixins".into(),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn only_local_rules_are_available() {
-        assert_eq!(
-            plan(
-                "daily_cap",
-                RuleAuthority::OwnerPure,
-                RulePlacement::Auto,
-                &StellarCompileOptions::default()
-            )
-            .unwrap()
-            .selected,
-            RulePlacement::Local
-        );
-        assert!(
-            plan(
-                "daily_cap",
-                RuleAuthority::OwnerPure,
-                RulePlacement::Shared,
-                &StellarCompileOptions::default()
-            )
-            .is_err()
-        );
-        assert!(
-            plan(
-                "daily_cap",
-                RuleAuthority::System,
-                RulePlacement::Local,
-                &StellarCompileOptions::default()
-            )
-            .is_err()
-        );
     }
 }

@@ -1,7 +1,7 @@
 use allowit_sdk::{ConfidenceInterval, Context, Profile, compile, evaluate, semantic_evidence_key};
 fn source(approve: bool, deny: bool) -> String {
     format!(
-        "pub async fn evaluate(ctx: &Context) -> PolicyResult {{ set_cap_per_day(ctx, \"500\", \"USDC\")?; check_preference(ctx, \"Avoid hype 🌱\", {approve}, \"85\", {deny}, \"40\").await?; Ok(()) }}"
+        "pub async fn evaluate(ctx: &Context) -> PolicyResult {{ if ctx.amount_units > 500_000_000 {{ return Err(PolicyError {{code: \"TRANSACTION_CAP_EXCEEDED\".into(),reason: \"Amount exceeds its limit.\".into()}}); }} allowit::prelude::check_preference(ctx, \"Avoid hype 🌱\", {approve}, \"85\", {deny}, \"40\").await?; Ok(()) }}"
     )
 }
 fn context(score: u64) -> Context {
@@ -57,14 +57,18 @@ fn workflow_and_call_spans_are_exact_and_nested_steps_stay_conditional() {
     }
     for c in &p.calls {
         assert_eq!(
-            String::from_utf16(&s.encode_utf16().collect::<Vec<_>>()[c.start..c.end]).unwrap(),
+            String::from_utf16(&s.encode_utf16().collect::<Vec<_>>()[c.start..c.end])
+                .unwrap()
+                .rsplit("::")
+                .next()
+                .unwrap(),
             c.name
         );
     }
     let nested = s
         .replace(
-            "check_preference",
-            "if ctx.amount_units > 1 { check_preference",
+            "allowit::prelude::check_preference",
+            "if ctx.amount_units > 1 { allowit::prelude::check_preference",
         )
         .replace(".await?;", ".await?; }");
     let p = compile(&nested).unwrap();
@@ -74,7 +78,7 @@ fn workflow_and_call_spans_are_exact_and_nested_steps_stay_conditional() {
             .iter()
             .any(|w| w.kind == "custom" && w.source.contains("check_preference"))
     );
-    let s = "pub async fn evaluate(ctx: &Context) -> PolicyResult { let fit = semantic(ctx, \"Avoid hype\")?; if fit.lower_bps < 8500 { return fail(\"No\"); } Ok(()) }";
+    let s = "pub async fn evaluate(ctx: &Context) -> PolicyResult { let fit = allowit::semantic(ctx, \"Avoid hype\")?; if fit.lower_bps < 8500 { return Err(PolicyError { code: \"POLICY_REJECTED\".into(), reason: \"No\".into() }); } Ok(()) }";
     assert_eq!(compile(s).unwrap().workflow[0].name, "semantic");
 }
 #[test]
@@ -93,7 +97,10 @@ fn invalid_settings_cannot_compile_or_bypass_hard_rules() {
     let mut c = context(10000);
     c.amount_units = 501_000_000;
     c.allocation_units = 1_000_000_000;
-    assert_eq!(evaluate(&p, Profile::Oracle, &c).code, "DAILY_CAP_EXCEEDED");
+    assert_eq!(
+        evaluate(&p, Profile::Oracle, &c).code,
+        "TRANSACTION_CAP_EXCEEDED"
+    );
     let mut c = context(10000);
     c.network = "local:dev".into();
     assert_eq!(evaluate(&p, Profile::Oracle, &c).outcome, "pass");

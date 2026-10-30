@@ -11,7 +11,7 @@ pub struct FunctionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed_signature: Option<crate::typed_workflow::WorkflowSignature>,
 }
-pub fn registry() -> Vec<FunctionInfo> {
+fn registry_impl() -> Vec<FunctionInfo> {
     let functions: Vec<FunctionInfo> = [
         ("set_cap_per_day", "Daily spending limit", "Sets the amount this policy can spend per UTC day. Authenticated daily spending and the new request must fit within this limit.", "set_cap_per_day(ctx: &Context, amount: &str, token: &str) -> PolicyResult", "config"),
         ("cap_per_transaction", "Limit per purchase", "Rejects a purchase above this amount, even when money remains in the total allowance.", "cap_per_transaction(ctx: &Context, amount: &str, token: &str) -> PolicyResult", "context"),
@@ -59,17 +59,72 @@ pub fn registry() -> Vec<FunctionInfo> {
         };
         result.push(qualified);
     }
+    for (name, path) in [
+        ("check_preference", "allowit::prelude::check_preference"),
+        ("check_preference", "allowit::v1::prelude::check_preference"),
+        ("require_merchant", "allowit::prelude::require_merchant"),
+        ("cap_purchase_tiers", "allowit::prelude::cap_purchase_tiers"),
+    ] {
+        let mut entry = result
+            .iter()
+            .find(|entry| entry.name == name)
+            .unwrap()
+            .clone();
+        entry.name = path.into();
+        entry.signature = if path == "allowit::prelude::check_preference" {
+            "async allowit::prelude::check_preference(ctx: &Context, question: &str, auto_approve: bool, above: &str, auto_deny: bool, below: &str) -> PolicyResult".into()
+        } else {
+            entry.signature.replace(name, path)
+        };
+        result.push(entry);
+    }
     for method in [
-        "daily_cap",
+        "spent_cap",
+        "day_spent_cap",
+        "day_total_cap",
         "transaction_cap",
-        "total_cap",
         "call_cap",
-        "recipient",
+        "recipients",
+        "tokens",
         "expiry",
-        "token",
     ] {
         for prefix in ["", "allowit::", "engine::", "self::"] {
-            result.push(FunctionInfo{name:alloc::format!("{prefix}{method}"),title:"Selected policy rule".into(),description:"Returns updated spent from one selected rule. Placement is fixed during authoring.".into(),signature:alloc::format!("{prefix}{method}(request: &Context, state: &State) -> Result<Spent, PolicyError>"),effect:"native_rule".into(),typed_signature:None});
+            let (title, description) = match method {
+                "spent_cap" => (
+                    "Cumulative spent limit",
+                    "Caps irreversible payment expenses plus fees and conversion loss. Swap and deposit principal and temporary redeemable loss are not spent. Native enforcement charges authenticated conservative expense ceilings; the server records actual settled expenses separately.",
+                ),
+                "day_spent_cap" => (
+                    "Daily spent limit",
+                    "Caps the same irreversible expenses per UTC day. Native enforcement uses conservative signed expense ceilings and atomically commits the selected spent map.",
+                ),
+                "day_total_cap" => (
+                    "Daily transaction total",
+                    "Caps gross transaction amount plus separately attributable gas per UTC day. Swap and deposit principal counts. Conversion costs already included in the gross amount are not added twice.",
+                ),
+                "recipients" => (
+                    "Allowed recipients",
+                    "Checks the exact native destination against the owner-selected address list. A deposit's destination is its vault.",
+                ),
+                "tokens" => (
+                    "Allowed tokens",
+                    "Checks the exact authenticated token contract address against the owner-selected address list. A token symbol does not establish asset identity.",
+                ),
+                _ => (
+                    "Selected policy rule",
+                    "Returns updated spent from one selected rule. Placement is fixed during authoring.",
+                ),
+            };
+            result.push(FunctionInfo {
+                name: alloc::format!("{prefix}{method}"),
+                title: title.into(),
+                description: description.into(),
+                signature: alloc::format!(
+                    "{prefix}{method}(value: impl Into<RuleValue>) -> PolicyResult"
+                ),
+                effect: "native_rule".into(),
+                typed_signature: None,
+            });
         }
     }
     result.push(FunctionInfo {
@@ -118,18 +173,85 @@ pub fn registry() -> Vec<FunctionInfo> {
         effect: "native_effect".into(),
         typed_signature: None,
     });
+    for (name, title, signature, description) in [
+        (
+            "stellar::sep56_deposit",
+            "Deposit vault assets",
+            "stellar::sep56_deposit(vault: AccountId, assets: i128, receiver: AccountId, from: AccountId, operator: AccountId) -> Result<i128>",
+            "Deposits exact underlying units and receives vault shares through the admitted policy-wallet wrapper. The request also binds a positive minimum share credit. The server accounts for fees and slippage as expenses and retains redeemable principal as temporary loss until verified redemption.",
+        ),
+        (
+            "stellar::sep56_redeem",
+            "Redeem vault shares",
+            "stellar::sep56_redeem(vault: AccountId, shares: i128, receiver: AccountId, owner: AccountId, operator: AccountId) -> Result<i128>",
+            "Describes an exact share redemption with a bound minimum underlying credit. Authenticated settled redemption reconciles temporary loss. Delegated policy-wallet redemption is not admitted by the deposit kernel.",
+        ),
+    ] {
+        result.push(FunctionInfo {
+            name: name.into(),
+            title: title.into(),
+            description: description.into(),
+            signature: signature.into(),
+            effect: "native_effect".into(),
+            typed_signature: None,
+        });
+    }
     result
+}
+
+fn public_name(name: &str) -> bool {
+    if !name.contains("::") {
+        return false;
+    }
+    let suffix = name.rsplit("::").next().unwrap_or(name);
+    if [
+        "daily_cap",
+        "total_cap",
+        "recipient",
+        "token",
+        "state_remove",
+        "fail",
+        "set_cap_per_day",
+        "cap_per_transaction",
+        "amount_at_most",
+        "require_recipient",
+        "require_asset",
+        "allow_actions",
+    ]
+    .contains(&suffix)
+    {
+        return false;
+    }
+    if crate::rule_values::RULES.contains(&suffix) {
+        return name == alloc::format!("allowit::{suffix}");
+    }
+    true
+}
+pub fn registry() -> Vec<FunctionInfo> {
+    registry_impl()
+        .into_iter()
+        .filter(|function| public_name(&function.name))
+        .collect()
 }
 
 #[cfg(feature = "compiler")]
 pub(crate) fn function(name: &str) -> Option<FunctionInfo> {
-    registry().into_iter().find(|f| f.name == name)
+    registry_impl().into_iter().find(|f| f.name == name).or_else(|| {
+        // Preserve already approved source meanings without advertising old names as new choices.
+        let (prefix, method) = name.rsplit_once("::").unwrap_or(("", name));
+        if !["", "allowit", "engine", "self"].contains(&prefix)
+            || !["daily_cap", "total_cap", "recipient", "token"].contains(&method) { return None; }
+        Some(FunctionInfo { name:name.into(), title:"Compatibility policy rule".into(), description:"Preserves the original approved rule meaning. daily_cap and total_cap charge gross amounts. recipient checks the address list; token checks the original authenticated label. New source uses day_total_cap, spent_cap, day_spent_cap, recipients and tokens as appropriate.".into(), signature:alloc::format!("{name}(request: &Context, state: &State) -> Result<Spent, PolicyError>"), effect:"native_rule".into(), typed_signature:None })
+    })
 }
 
 /// Resolve only registered source spellings to the existing policy operation.
 /// Vendor operations need their own implementation before registration.
 #[cfg(feature = "compiler")]
 pub(crate) fn canonical_function(name: &str) -> Option<String> {
+    if !public_name(name) {
+        return None;
+    }
     if function(name)?.effect == "native_effect" {
         return None;
     }

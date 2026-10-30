@@ -14,6 +14,8 @@ use alloc::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Value {
+    GrantRef(String),
+    RuleNull,
     String(String),
     Integer(u64),
     Boolean(bool),
@@ -380,6 +382,26 @@ impl Evaluator<'_> {
                     .map(|a| self.expr(a, env))
                     .collect::<Result<Vec<_>, _>>()?;
                 match name.as_str() {
+                    "__grant_ref" => match values.as_slice() {
+                        [Value::String(key)] => Value::GrantRef(key.clone()),
+                        _ => return Err(invalid()),
+                    },
+                    "__null" => Value::RuleNull,
+                    "Err" => return Err(failure(&string(&values, 0)?, string(&values, 1)?)),
+                    name if crate::rule_values::RULES.contains(&name) => {
+                        let input = match values.as_slice() {
+                            [Value::GrantRef(key)] => crate::rule_values::Input::Grant(key.clone()),
+                            [Value::Integer(value)] => crate::rule_values::Input::Units(*value),
+                            [Value::Strings(value)] => {
+                                crate::rule_values::Input::Addresses(value.clone())
+                            }
+                            [Value::RuleNull] => crate::rule_values::Input::Null,
+                            _ => return Err(invalid()),
+                        };
+                        crate::rule_values::check(self.context, name, input)
+                            .map_err(|e| failure(&e.code, &e.reason))?;
+                        Value::Unit
+                    }
                     #[cfg(feature = "typed-workflow")]
                     "allowit::execution_request_validate" => {
                         let [
@@ -446,6 +468,7 @@ impl Evaluator<'_> {
                             })
                             || !crate::typed_workflow::native_transfers_covered(
                                 &crate::typed_workflow::ExecutionRequest {
+                                    expense: None,
                                     input: crate::typed_workflow::ExecutionInput::Instructions(
                                         result.instructions.clone(),
                                     ),
@@ -714,10 +737,15 @@ impl Evaluator<'_> {
                     name if name.starts_with("engine::")
                         || name.starts_with("self::")
                         || [
+                            "spent_cap",
+                            "day_spent_cap",
+                            "day_total_cap",
                             "daily_cap",
                             "transaction_cap",
                             "total_cap",
                             "call_cap",
+                            "recipients",
+                            "tokens",
                             "recipient",
                             "expiry",
                             "token",
@@ -762,6 +790,17 @@ impl Evaluator<'_> {
                             return Err(invalid());
                         };
                         let mut map = if name == "grant_get" {
+                            if !self
+                                .context
+                                .rule_facts
+                                .as_ref()
+                                .is_some_and(|facts| facts.grant_available)
+                            {
+                                return Err(failure(
+                                    "NATIVE_GRANT_UNAVAILABLE",
+                                    "This route has no authenticated native Grant map.",
+                                ));
+                            }
                             self.context
                                 .policy_state
                                 .as_ref()
@@ -805,7 +844,9 @@ impl Evaluator<'_> {
                                     crate::PolicyScalar::U64(v) => Value::Integer(v),
                                     crate::PolicyScalar::Bool(v) => Value::Boolean(v),
                                     crate::PolicyScalar::String(v) => Value::String(v),
-                                    crate::PolicyScalar::Unsupported => return Err(invalid()),
+                                    crate::PolicyScalar::Unsupported
+                                    | crate::PolicyScalar::Null
+                                    | crate::PolicyScalar::Strings(_) => return Err(invalid()),
                                 }
                             }
                         }
@@ -1277,6 +1318,7 @@ fn run(ir: &Program, profile: Profile, ctx: &Context, binding: String) -> Decisi
         false,
         None,
         false,
+        false,
         #[cfg(feature = "compiler")]
         None,
     )
@@ -1291,8 +1333,10 @@ fn run_inner(
     private_service_localnet: bool,
     native_payment_asset: Option<&crate::ServicePaymentAsset>,
     native_service_funding: bool,
+    server_accounting: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
+    *ctx.policy_deadline.borrow_mut() = None;
     let before = ctx
         .policy_state
         .as_ref()
@@ -1305,9 +1349,13 @@ fn run_inner(
         private_service_localnet,
         native_payment_asset,
         native_service_funding,
+        server_accounting,
         #[cfg(feature = "compiler")]
         trace,
     );
+    if result.outcome != "pass" {
+        *ctx.policy_deadline.borrow_mut() = None;
+    }
     if result.outcome != "pass"
         && let (Some(state), Some(before)) = (&ctx.policy_state, before)
     {
@@ -1325,6 +1373,7 @@ fn run_inner_scoped(
     private_service_localnet: bool,
     native_payment_asset: Option<&crate::ServicePaymentAsset>,
     native_service_funding: bool,
+    server_accounting: bool,
     #[cfg(feature = "compiler")] trace: Option<&mut crate::trace::TraceRecorder>,
 ) -> Decision {
     if let Err(error) = validate_program(ir) {
@@ -1410,7 +1459,35 @@ fn run_inner_scoped(
     let typed_only = cfg!(feature = "typed-workflow")
         && crate::typed_workflow::required(ir)
         && !crate::validation::service_call_required(ir);
-    if let Err(error) = if typed_only {
+    if let Err(error) = if server_accounting {
+        if ctx.network.len() > 128
+            || ctx.token.is_empty()
+            || ctx.token.len() > 128
+            || ctx.recipient.len() > 256
+            || ctx.action.is_empty()
+            || ctx.action.len() > 128
+            || ctx.merchant.len() > 256
+            || ctx.answers.len() > 32
+            || ctx.confidence.len() > 32
+            || ctx
+                .confidence
+                .keys()
+                .any(|key| key.is_empty() || key.len() > 128)
+            || ctx.answers.keys().any(|key| key.len() != 64)
+            || ctx.original_intent.len() > 16384
+            || ctx
+                .confidence
+                .values()
+                .any(|value| value.lower_bps > value.upper_bps || value.upper_bps > 10000)
+        {
+            Err(failure(
+                "INVALID_CONTEXT",
+                "Policy execution requires a bounded authenticated operation context.",
+            ))
+        } else {
+            validate_runtime_context(&ctx.runtime_context)
+        }
+    } else if typed_only {
         #[cfg(feature = "typed-workflow")]
         {
             validate_workflow_context(ctx)
@@ -1488,6 +1565,12 @@ fn run_inner_scoped(
     match evaluator.block(&ir.statements, &mut env) {
         Ok(true) => {
             if let Some(map) = &evaluator.returned_spent {
+                if !ctx.policy_state_writes {
+                    return Decision::fail(
+                        "NATIVE_STATE_WRITE_UNAVAILABLE",
+                        "This adapter has no persistent custom State result binding.",
+                    );
+                }
                 let Some(state) = &ctx.policy_state else {
                     return Decision::fail(
                         "POLICY_STATE_REQUIRED",
@@ -1603,10 +1686,39 @@ fn run_inner_scoped(
 /// Evaluate an already compiled policy. Persisted artifacts are hash-checked before evaluation.
 #[cfg(feature = "compiler")]
 pub fn evaluate(policy: &CompiledPolicy, profile: Profile, ctx: &Context) -> Decision {
+    *ctx.policy_deadline.borrow_mut() = None;
     if let Err(decision) = validate_artifact(policy) {
         return *decision;
     }
     run(&policy.ir, profile, ctx, policy.source_hash.clone())
+}
+
+/// Execute the complete source with host-only authenticated rule facts and owner Grant/Spent.
+/// No native custody capability or user JSON can be substituted for these trusted bindings.
+#[cfg(feature = "compiler")]
+pub fn evaluate_with_policy_rules(policy: &CompiledPolicy, ctx: &Context) -> Decision {
+    *ctx.policy_deadline.borrow_mut() = None;
+    let compiled = match validate_artifact(policy) {
+        Ok(compiled) => compiled,
+        Err(decision) => return *decision,
+    };
+    if crate::validation::service_call_required(&compiled.ir) {
+        return Decision::fail(
+            "PROVIDER_PROFILE_UNSUPPORTED",
+            "Use the authenticated native service policy adapter.",
+        );
+    }
+    run_inner(
+        &compiled.ir,
+        Profile::Oracle,
+        ctx,
+        compiled.source_hash,
+        false,
+        None,
+        false,
+        true,
+        None,
+    )
 }
 
 /// Evaluate with bounded source-bound workflow evidence, only in the oracle profile.
@@ -1618,6 +1730,43 @@ pub fn evaluate_with_trace(
     ctx: &Context,
 ) -> (Decision, Option<crate::WorkflowTrace>) {
     evaluate_with_trace_inner(policy, ctx, false, None)
+}
+
+/// Evaluate full offchain policy code with protected canonical rule facts and a source trace.
+/// Native service adapters must keep their dedicated authorization entrypoint.
+#[cfg(feature = "compiler")]
+pub fn evaluate_with_trace_policy_rules(
+    policy: &CompiledPolicy,
+    ctx: &Context,
+) -> (Decision, Option<crate::WorkflowTrace>) {
+    *ctx.policy_deadline.borrow_mut() = None;
+    let compiled = match validate_artifact(policy) {
+        Ok(compiled) => compiled,
+        Err(decision) => return (*decision, None),
+    };
+    if crate::validation::service_call_required(&compiled.ir) {
+        return (
+            Decision::fail(
+                "PROVIDER_PROFILE_UNSUPPORTED",
+                "Use the authenticated native service policy adapter.",
+            ),
+            None,
+        );
+    }
+    let mut trace = crate::trace::TraceRecorder::new(&compiled);
+    let decision = run_inner(
+        &compiled.ir,
+        Profile::Oracle,
+        ctx,
+        compiled.source_hash.clone(),
+        false,
+        None,
+        false,
+        true,
+        Some(&mut trace),
+    );
+    let trace = trace.finish(&decision);
+    (decision, Some(trace))
 }
 
 /// Explicit developer-host capability for authenticated service input on a
@@ -1662,6 +1811,7 @@ fn evaluate_with_trace_inner(
         private_service_localnet,
         native_payment_asset,
         false,
+        false,
         Some(&mut trace),
     );
     let trace = trace.finish(&decision);
@@ -1691,6 +1841,8 @@ fn validate_artifact(
     let compiled = crate::compile(&policy.source)
         .map_err(|_| failure("INVALID_ARTIFACT", "The policy source is not valid."))?;
     if compiled.ir_hash != policy.ir_hash
+        || compiled.native_prefix != policy.native_prefix
+        || compiled.offchain_required != policy.offchain_required
         || compiled.limit != policy.limit
         || compiled.token != policy.token
         || compiled.execution_requirements != policy.execution_requirements
@@ -1966,6 +2118,7 @@ pub fn evaluate_with_trace_native_service_policy(
         private_localnet,
         None,
         true,
+        false,
         Some(&mut trace),
     );
     let trace = trace.finish(&decision);

@@ -7,126 +7,14 @@ fn denied(code: &str, reason: &str) -> PolicyError {
         reason: reason.into(),
     }
 }
-fn denomination(token: &str, currency: &str, decimals: u64) -> PolicyResult {
-    if currency != "USDC" || token != currency || decimals != 6 {
-        return Err(denied(
-            "TOKEN_MISMATCH",
-            "Use the bound six-decimal USDC asset.",
-        ));
-    }
-    Ok(())
-}
+
 // Keep each authenticated accounting field explicit in the policy ABI.
-#[allow(clippy::too_many_arguments)]
-pub fn set_cap_per_day(
-    daily_spent_units: Option<u64>,
-    spent_day: Option<u64>,
-    now: u64,
-    amount_units: u64,
-    token: &str,
-    limit_units: u64,
-    currency: &str,
-    decimals: u64,
-) -> PolicyResult {
-    denomination(token, currency, decimals)?;
-    if limit_units == 0 {
-        return Err(denied("INVALID_AMOUNT", "The limit must be positive."));
-    }
-    if daily_spend(daily_spent_units, spent_day, now)
-        .map_err(|(code, reason)| denied(code, reason))?
-        .checked_add(amount_units)
-        .is_none_or(|n| n > limit_units)
-    {
-        return Err(denied(
-            "DAILY_CAP_EXCEEDED",
-            "Daily spending limit exceeded.",
-        ));
-    }
-    Ok(())
-}
-pub fn cap_per_transaction(
-    amount_units: u64,
-    token: &str,
-    limit_units: u64,
-    currency: &str,
-    decimals: u64,
-) -> PolicyResult {
-    denomination(token, currency, decimals)?;
-    if limit_units == 0 {
-        return Err(denied("INVALID_AMOUNT", "The limit must be positive."));
-    }
-    if amount_units > limit_units {
-        return Err(denied("PURCHASE_CAP_EXCEEDED", "Purchase limit exceeded."));
-    }
-    Ok(())
-}
-/// Compare the authenticated purchase amount; authored policies must pass ctx.amount_units.
-pub fn amount_at_most(amount_units: u64, amount: &str) -> Result<bool, PolicyError> {
-    Ok(amount_units <= crate::prelude::usdc(amount)?)
-}
-pub fn allow_actions(action: &str, actions: &[&str]) -> PolicyResult {
-    if is_one_of(action, actions)? {
-        Ok(())
-    } else {
-        Err(denied("ACTION_NOT_ALLOWED", "Action is not permitted."))
-    }
-}
-pub fn require_merchant(merchant: &str, required: &str) -> PolicyResult {
-    if merchant == required {
-        Ok(())
-    } else {
-        Err(denied("MERCHANT_NOT_ALLOWED", "Merchant is not permitted."))
-    }
-}
-pub fn require_recipient(recipient: &str, required: &str) -> PolicyResult {
-    if crate::prelude::recipient_matches(recipient, required) {
-        Ok(())
-    } else {
-        Err(denied(
-            "RECIPIENT_NOT_ALLOWED",
-            "Recipient is not permitted.",
-        ))
-    }
-}
+
 pub fn is_one_of(value: &str, allowed: &[&str]) -> Result<bool, PolicyError> {
     if allowed.is_empty() || allowed.len() > 32 {
         return Err(denied("INVALID_POLICY", "Use a list of 1 to 32 strings."));
     }
     Ok(allowed.contains(&value))
-}
-#[cfg(feature = "oracle-ledger")]
-pub fn cap_purchase_tiers(
-    amount_units: u64,
-    token: &str,
-    purchase_counts: &Option<Vec<u64>>,
-    maximum_units: u64,
-    first_count: u64,
-    currency: &str,
-    decimals: u64,
-) -> PolicyResult {
-    denomination(token, currency, decimals)?;
-    crate::spending::check_tier_values(
-        amount_units,
-        purchase_counts.as_deref(),
-        maximum_units,
-        first_count,
-    )
-    .map_err(|e| denied(&e.code, &e.reason))
-}
-#[cfg(not(feature = "oracle-ledger"))]
-pub fn cap_purchase_tiers(
-    _amount_units: u64,
-    _token: &str,
-    _purchase_counts: &Option<Vec<u64>>,
-    _maximum_units: u64,
-    _first_count: u64,
-    _currency: &str,
-    _decimals: u64,
-) -> PolicyResult {
-    Err(denied(
-        "LEDGER_REQUIRED",
-        "Purchase tiers require the oracle ledger feature.",
-    ))
 }
 
 /// Read only the named trusted numeric evidence. An absent value is not an approval.
@@ -243,15 +131,54 @@ pub(crate) fn daily_spend(
     }
     Ok(if day == spent_day { spent } else { 0 })
 }
-
-/// Bind the authenticated payment asset without declaring a monetary limit.
-pub fn require_asset(token: &str, required: &str) -> PolicyResult {
-    if token == required && !required.is_empty() {
+pub fn require_merchant(merchant: &str, required: &str) -> PolicyResult {
+    if merchant == required {
         Ok(())
     } else {
-        Err(denied(
-            "TOKEN_MISMATCH",
-            "The payment asset does not match the policy.",
-        ))
+        Err(denied("MERCHANT_NOT_ALLOWED", "Merchant is not permitted."))
     }
+}
+#[cfg(feature = "oracle-ledger")]
+pub fn cap_purchase_tiers(
+    amount_units: u64,
+    token: &str,
+    purchase_counts: &Option<Vec<u64>>,
+    maximum_units: u64,
+    first_count: u64,
+    currency: &str,
+    decimals: u64,
+) -> PolicyResult {
+    denomination(token, currency, decimals)?;
+    crate::spending::check_tier_values(
+        amount_units,
+        purchase_counts.as_deref(),
+        maximum_units,
+        first_count,
+    )
+    .map_err(|e| denied(&e.code, &e.reason))
+}
+#[cfg(not(feature = "oracle-ledger"))]
+pub fn cap_purchase_tiers(
+    _amount_units: u64,
+    _token: &str,
+    _purchase_counts: &Option<Vec<u64>>,
+    _maximum_units: u64,
+    _first_count: u64,
+    _currency: &str,
+    _decimals: u64,
+) -> PolicyResult {
+    Err(denied(
+        "LEDGER_REQUIRED",
+        "Purchase tiers require the oracle ledger feature.",
+    ))
+}
+#[cfg(feature = "oracle-ledger")]
+fn denomination(token: &str, currency: &str, decimals: u64) -> PolicyResult {
+    if currency != "USDC" || token != currency || decimals != 6 {
+        return Err(denied(
+            "TOKEN_MISMATCH",
+            "Use the bound six-decimal USDC asset.",
+        ));
+    }
+    Ok(())
 }
