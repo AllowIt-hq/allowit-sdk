@@ -1,7 +1,8 @@
 //! Bounded JSON-RPC transport. Submission never retries an uncertain transaction.
 pub use crate::vaults::{
-    VaultPositionObservation, VerifiedVaultDeposit, VerifiedVaultRedemption, vault_deposit_receipt,
-    vault_position_observation, vault_redemption_receipt,
+    VaultPositionObservation, VerifiedVaultDeposit, VerifiedVaultRedemption,
+    vault_deposit_expense_observation, vault_deposit_receipt, vault_position_observation,
+    vault_redemption_receipt,
 };
 use crate::*;
 use serde_json::{Value, json};
@@ -142,6 +143,25 @@ pub fn prepare(
     let intent = prepare_for_native_preflight(c, request, &state, now, expires_at)?;
     simulate(rpc, &intent)
 }
+/// Evaluate the complete source against host-only facts before preparing its exact transaction.
+pub fn prepare_with_policy_context(
+    rpc: &dyn Rpc,
+    c: &WalletConfig,
+    request: &ExecutionRequest,
+    accounting: Option<NativeAccounting>,
+    now: u64,
+    expires_at: u64,
+    context: &allowit_policy_sdk::Context,
+) -> Result<PreparedOperation> {
+    let state = trusted_state(rpc, c, accounting)?;
+    let intent = prepare_for_native_preflight(c, request, &state, now, expires_at)?;
+    crate::evaluate_policy_context(&intent, context)?;
+    if c.route == WalletRoute::Native {
+        Ok(intent)
+    } else {
+        simulate(rpc, &intent)
+    }
+}
 pub(crate) fn reject_restoration(value: &Value) -> Result<()> {
     if value
         .get("restorePreamble")
@@ -182,7 +202,8 @@ pub fn simulate(rpc: &dyn Rpc, p: &PreparedOperation) -> Result<PreparedOperatio
         let binding = readonly_result(&binding)?;
         if digest_field(map_field(&binding, "policy_instance")?)? != p.config.policy_instance
             || digest_field(map_field(&binding, "module_digest")?)? != p.config.module_digest
-            || digest_field(map_field(&binding, "source_digest")?)? != p.config.source_hash
+            || digest_field(map_field(&binding, "source_digest")?)?
+                != native_policy_digest(&p.config)?
             || digest_field(map_field(&binding, "argument_schema_digest")?)?
                 != hash(vaults::DEPOSIT_ARGUMENT_SCHEMA)
             || map_field(&binding, "entrypoint")? != &value_symbol("_execute")?
@@ -459,6 +480,92 @@ pub struct VerifiedReceipt {
     pub envelope_xdr: String,
     pub result_xdr: String,
 }
+/// Configured-RPC settlement facts. JSON callers cannot construct this proof.
+#[derive(Clone, Debug)]
+pub struct VerifiedTransactionAccounting {
+    transaction_hash: [u8; 32],
+    ledger: u32,
+    closed_at: u64,
+    fee_stroops: u64,
+    payer: String,
+    status: OperationStatus,
+}
+impl VerifiedTransactionAccounting {
+    pub fn transaction_hash(&self) -> [u8; 32] {
+        self.transaction_hash
+    }
+    pub fn ledger(&self) -> u32 {
+        self.ledger
+    }
+    pub fn closed_at(&self) -> u64 {
+        self.closed_at
+    }
+    pub fn fee_stroops(&self) -> u64 {
+        self.fee_stroops
+    }
+    pub fn payer(&self) -> &str {
+        &self.payer
+    }
+    pub fn status(&self) -> &OperationStatus {
+        &self.status
+    }
+}
+/// Read actual gas and settlement day from the original confirmed or failed transaction.
+/// A failed transaction may still consume gas. Absence never releases reservations.
+pub fn transaction_accounting_receipt(
+    rpc: &dyn Rpc,
+    network: &str,
+    transaction_hash: &[u8; 32],
+) -> Result<Option<VerifiedTransactionAccounting>> {
+    if rpc.call("getNetwork", json!({}))?["passphrase"] != passphrase(network)? {
+        return Err("Accounting RPC network differs".into());
+    }
+    let value = rpc.call("getTransaction", json!({"hash":hex(transaction_hash)}))?;
+    let status = verify_settlement(&value, network, transaction_hash)?;
+    if !matches!(status, OperationStatus::Confirmed | OperationStatus::Failed) {
+        return Ok(None);
+    }
+    let ledger = value["ledger"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
+        .ok_or("Settlement ledger is required")?;
+    // Stellar-RPC getTransaction encodes createdAt as a decimal string (the plural method differs).
+    let time = value["createdAt"]
+        .as_str()
+        .ok_or("Settlement close time is required")?;
+    let closed_at = time
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n > 0 && n.to_string() == time)
+        .ok_or("Invalid settlement close time")?;
+    let TransactionEnvelope::Tx(envelope) = read(
+        value["envelopeXdr"]
+            .as_str()
+            .ok_or("Missing settlement envelope")?,
+    )?
+    else {
+        return Err("Fee-bump accounting needs its own attribution adapter".into());
+    };
+    let payer = match &envelope.tx.source_account {
+        MuxedAccount::Ed25519(key) => ed25519::PublicKey(key.0).to_string(),
+        _ => return Err("Multiplexed fee attribution is unsupported".into()),
+    };
+    let result: TransactionResult = read(
+        value["resultXdr"]
+            .as_str()
+            .ok_or("Missing settlement result")?,
+    )?;
+    let fee_stroops = u64::try_from(result.fee_charged).map_err(|_| "Negative settlement fee")?;
+    Ok(Some(VerifiedTransactionAccounting {
+        transaction_hash: *transaction_hash,
+        ledger,
+        closed_at,
+        fee_stroops,
+        payer,
+        status,
+    }))
+}
 /// Recheck a retained receipt before projecting it through another interface.
 pub fn validate_receipt(
     receipt: &VerifiedReceipt,
@@ -567,7 +674,7 @@ pub(crate) fn verify_policy_engine(c: &WalletConfig, state: &ScVal, binding: &Sc
         .policy_engine
         .ok_or("Selected policy engine is required")?;
     if map_field(binding, "engine_kind")? != &value_symbol(kind.symbol())?
-        || digest_field(map_field(state, "source_digest")?)? != c.source_hash
+        || digest_field(map_field(state, "source_digest")?)? != native_policy_digest(c)?
         || addr(map_field(state, "server")?)? != c.server
     {
         return Err("Installed policy engine, source or service signer differs".into());
@@ -814,7 +921,11 @@ fn trusted_state_inner(
                 calls: a.calls,
                 ledger,
                 module_digest: c.module_digest,
-                source_hash: c.source_hash,
+                source_hash: if c.route == WalletRoute::PolicyWallet {
+                    native_policy_digest(c)?
+                } else {
+                    c.source_hash
+                },
                 owner: c.owner.clone(),
                 agent: c.agent.clone(),
                 server: c.server.clone(),
@@ -892,7 +1003,7 @@ fn trusted_state_inner(
     }
     if digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
         || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
-        || digest_field(map_field(&binding, "source_digest")?)? != c.source_hash
+        || digest_field(map_field(&binding, "source_digest")?)? != native_policy_digest(c)?
         || ![hash(ARGUMENT_SCHEMA), hash(vaults::DEPOSIT_ARGUMENT_SCHEMA)].contains(&digest_field(
             map_field(&binding, "argument_schema_digest")?,
         )?)
@@ -951,7 +1062,11 @@ fn trusted_state_inner(
         },
         ledger,
         module_digest: module.0,
-        source_hash: c.source_hash,
+        source_hash: if c.route == WalletRoute::PolicyWallet {
+            native_policy_digest(c)?
+        } else {
+            c.source_hash
+        },
         owner: addr(map_field(state, "owner")?)?,
         agent: addr(map_field(state, "agent")?)?,
         server: addr(map_field(

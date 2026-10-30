@@ -3,18 +3,26 @@
 extern crate alloc;
 
 pub mod admin;
-pub mod engine;
-pub use engine::{call_cap, daily_cap, expiry, recipient, token, total_cap, transaction_cap};
+
 mod policy_state;
+pub mod rule_values;
+pub use rule_values::{
+    GrantRef, PolicyRuleFacts, RuleExpense, RuleValue, call_cap, day_spent_cap, day_total_cap,
+    expiry, grant, recipients, spent_cap, tokens, transaction_cap,
+};
+#[cfg(feature = "compiler")]
+pub mod source_updates;
 pub use policy_state::{
     Grant, PolicyDefault, PolicyKey, PolicyScalar, ScalarType, Spent, State, TrustedPolicyState,
-    grant_get, spent, state_get, state_remove, state_set, with_spent,
+    grant_get, spent, state_get, state_set, with_spent,
 };
 
 #[cfg(feature = "compiler")]
 mod compiler;
 #[cfg(feature = "compiler")]
 mod policy_engines;
+#[cfg(feature = "compiler")]
+mod source_syntax;
 #[cfg(feature = "compiler")]
 mod stellar_codegen;
 #[cfg(feature = "compiler")]
@@ -29,8 +37,7 @@ pub use stellar_placement::{
     CheckPlacement, CostContext, PlacementManifest, RuleAuthority, RuleCostEstimate, RulePlacement,
     StellarCompileOptions,
 };
-#[cfg(feature = "compiler")]
-mod stellar_functional;
+// Standard kernels enforce the explicit initial rule prefix.
 #[cfg(feature = "compiler")]
 pub use stellar_codegen::{
     STELLAR_ARGUMENT_SCHEMA, STELLAR_SOURCE_PROFILE, StellarEvaluation, StellarPolicy,
@@ -69,8 +76,6 @@ mod registry;
 #[cfg(feature = "compiler")]
 mod requirements;
 mod runtime;
-#[cfg(feature = "compiler")]
-pub mod server_policy;
 #[cfg(feature = "oracle-ledger")]
 pub mod spending;
 pub mod stellar_vault;
@@ -95,25 +100,21 @@ mod params;
 pub use params::native_storage_initializers;
 mod primitives;
 pub use prelude::{
-    confidence, context_u64, fail, percent, require_user_input, semantic, usdc,
-    within_percentage_points,
+    confidence, context_u64, percent, require_user_input, semantic, usdc, within_percentage_points,
 };
-pub use primitives::{
-    allow_actions, amount_at_most, cap_per_transaction, cap_purchase_tiers, is_one_of,
-    require_asset, require_merchant, require_recipient, set_cap_per_day,
-};
+pub use primitives::is_one_of;
 
 #[cfg(feature = "std")]
 pub use primitives::check_preference;
 pub use primitives::{OwnerLimit, owner_limit, preference_evidence, stored_limit};
 
-#[cfg(feature = "compiler")]
-pub use runtime::evaluate;
 pub use runtime::evaluate_ir;
 #[cfg(feature = "compiler")]
 pub use runtime::evaluate_with_trace;
 #[cfg(all(feature = "compiler", feature = "std"))]
 pub use runtime::evaluate_with_trace_native_payment;
+#[cfg(feature = "compiler")]
+pub use runtime::{evaluate, evaluate_with_policy_rules};
 #[cfg(all(feature = "compiler", feature = "typed-workflow", feature = "std"))]
 pub use runtime::{
     evaluate_with_trace_native_service_policy, evaluate_with_trace_private_service_localnet,

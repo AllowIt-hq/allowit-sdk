@@ -55,6 +55,7 @@ fn fee() -> WorkflowFeeBound {
 }
 fn request(b: &WorkflowBinding) -> ExecutionRequest {
     ExecutionRequest {
+        expense: None,
         operation: b.operation.clone(),
         input: ExecutionInput::Instructions(vec![NativeInstruction::SolanaNativeTransfer {
             source: account(7),
@@ -792,6 +793,7 @@ impl WorkflowHost for MessageHost {
         binding: &WorkflowBinding,
     ) -> Result<ValidatedExecutionRequest, WorkflowError> {
         let decoded = ExecutionRequest {
+            expense: None,
             input: ExecutionInput::Instructions(vec![NativeInstruction::SolanaNativeTransfer {
                 source: account(7),
                 destination: account(8),

@@ -53,23 +53,11 @@ impl PolicyDeployment {
 }
 
 fn rule_values(rules: &[String]) -> Result<ScVal> {
-    let mut seen = std::collections::BTreeSet::new();
     let values = rules
         .iter()
         .map(|name| {
-            if ![
-                "daily_cap",
-                "transaction_cap",
-                "total_cap",
-                "call_cap",
-                "recipient",
-                "expiry",
-                "token",
-            ]
-            .contains(&name.as_str())
-                || !seen.insert(name)
-            {
-                return Err("Unknown or duplicate Common rule".into());
+            if !allowit_policy_sdk::rule_values::RULES.contains(&name.as_str()) {
+                return Err("Unknown canonical Common rule".into());
             }
             value_symbol(name)
         })
@@ -116,7 +104,7 @@ impl PolicyConfig {
             server: c.server.clone(),
             asset: c.asset.clone(),
             policy_instance: c.policy_instance,
-            source_digest: c.source_hash,
+            source_digest: native_policy_digest(c)?,
             rules: selected.rules,
             grant,
             x402_enabled,
@@ -229,9 +217,10 @@ impl OwnerAdmin<'_> {
         if rpc::current_contract_version(&binding)? != contract_version
             || digest_field(map_field(&binding, "policy_instance")?)? != c.policy_instance
             || digest_field(map_field(&binding, "module_digest")?)? != c.module_digest
-            || digest_field(map_field(&binding, "source_digest")?)? != c.source_hash
-            || digest_field(map_field(&binding, "argument_schema_digest")?)?
-                != hash(ARGUMENT_SCHEMA)
+            || digest_field(map_field(&binding, "source_digest")?)? != native_policy_digest(c)?
+            || ![hash(ARGUMENT_SCHEMA), hash(vaults::DEPOSIT_ARGUMENT_SCHEMA)].contains(
+                &digest_field(map_field(&binding, "argument_schema_digest")?)?,
+            )
             || map_field(&binding, "entrypoint")? != &value_symbol("_execute")?
         {
             return Err("Owner contract release or policy binding differs".into());

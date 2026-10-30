@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 
 pub const LANGUAGE: &str = "allowit-rust-v1";
 /// Source registry version. Explicit namespaces are available from 1.1.0.
-pub const REGISTRY_VERSION: &str = "1.7.0";
+pub const REGISTRY_VERSION: &str = "1.8.0";
 /// Canonical expression schema. New registered host operations use the source registry
 /// version and explicit target-profile admission without changing the expression encoding.
 pub const IR_VERSION: &str = "1.0.0";
 pub const TYPED_IR_VERSION: &str = "1.1.0";
 /// Daily caps require new authenticated accounting; older artifacts require recompilation.
 pub fn supported_registry_version(version: &str) -> bool {
-    matches!(version, "1.6.0" | REGISTRY_VERSION)
+    matches!(version, "1.6.0" | "1.7.0" | REGISTRY_VERSION)
 }
 pub const MAX_SOURCE_BYTES: usize = 32768;
 pub const MAX_NODES: usize = 2048;
@@ -203,6 +203,10 @@ pub struct CallSite {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompiledPolicy {
+    #[serde(default)]
+    pub native_prefix: Vec<String>,
+    #[serde(default)]
+    pub offchain_required: bool,
     pub language: String,
     pub source_hash: String,
     pub ir_hash: String,
@@ -240,6 +244,7 @@ pub struct ExecutionRequirements {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionFeature {
+    PolicyRules,
     NativePolicyStorage,
     ConfidenceEvidence,
     OwnerInput,
@@ -361,6 +366,8 @@ pub struct ServiceCallPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
+    #[serde(skip)]
+    pub rule_facts: Option<crate::rule_values::PolicyRuleFacts>,
     /// Trusted adapter capability. Public Context JSON cannot populate this field.
     #[serde(skip)]
     pub policy_state: Option<crate::TrustedPolicyState>,
@@ -429,6 +436,7 @@ impl Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
+            rule_facts: None,
             #[cfg(feature = "typed-workflow")]
             workflow: None,
             #[cfg(feature = "typed-workflow")]

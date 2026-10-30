@@ -9,6 +9,8 @@ use alloc::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Type {
+    GrantRef,
+    RuleNull,
     String,
     ContextString,
     Integer,
@@ -175,7 +177,9 @@ impl Validator<'_> {
                         | Type::Boolean
                         | Type::Interval
                         | Type::Spent
-                        | Type::State => true,
+                        | Type::State
+                        | Type::GrantRef
+                        | Type::RuleNull => true,
                         #[cfg(feature = "typed-workflow")]
                         Type::Workflow(_) => true,
                         _ => false,
@@ -532,11 +536,50 @@ impl Validator<'_> {
                     .iter()
                     .map(|a| self.expr(a, env, depth + 1, false))
                     .collect::<Result<Vec<_>, _>>()?;
+                if name == "__grant_ref" {
+                    if !matches!(args.as_slice(),[Expr::String{value}]if crate::rule_values::RULES.contains(&value.as_str()))
+                    {
+                        return Err(bad("Invalid Grant reference."));
+                    }
+                    return Ok(Type::GrantRef);
+                }
+                if name == "__null" {
+                    if !args.is_empty() {
+                        return Err(bad("Invalid Null value."));
+                    }
+                    return Ok(Type::RuleNull);
+                }
+                if name == "Err" {
+                    if !matches!(args.as_slice(),[Expr::String{value:code},Expr::String{value:reason}]if !code.is_empty()&&code.len()<=128&&!reason.is_empty()&&reason.len()<=4096)
+                    {
+                        return Err(bad("Use a bounded PolicyError literal."));
+                    }
+                    return Ok(result(Type::Unit));
+                }
+                if crate::rule_values::RULES.contains(&name.as_str()) {
+                    let value_type = if ["recipients", "tokens"].contains(&name.as_str()) {
+                        Type::Strings
+                    } else {
+                        Type::Integer
+                    };
+                    if types.len() != 1
+                        || ![Type::GrantRef, Type::RuleNull, value_type].contains(&types[0])
+                    {
+                        return Err(bad(
+                            "A canonical rule accepts exactly one typed value or Grant reference.",
+                        ));
+                    }
+                    return Ok(result(Type::Unit));
+                }
                 if name == "native_ok" || name == "__native_return" || name == "native_fail" {
                     let expected = if name == "native_ok" {
                         Type::Spent
                     } else if name == "__native_return" {
-                        result(Type::Spent)
+                        if matches!(args.first(),Some(Expr::Call{name,..})if name=="Err") {
+                            result(Type::Unit)
+                        } else {
+                            result(Type::Spent)
+                        }
                     } else {
                         Type::String
                     };
@@ -548,10 +591,15 @@ impl Validator<'_> {
                     return Ok(result(Type::Spent));
                 }
                 if [
+                    "spent_cap",
+                    "day_spent_cap",
+                    "day_total_cap",
                     "daily_cap",
                     "transaction_cap",
                     "total_cap",
                     "call_cap",
+                    "recipients",
+                    "tokens",
                     "recipient",
                     "expiry",
                     "token",
@@ -1326,7 +1374,7 @@ pub(crate) fn registry_program_compatible(version: &str, program: &Program) -> b
     if version == crate::REGISTRY_VERSION {
         return true;
     }
-    if version != "1.6.0" {
+    if !["1.6.0", "1.7.0"].contains(&version) {
         return false;
     }
     let mut blocks = alloc::vec![program.statements.as_slice()];
@@ -1369,34 +1417,58 @@ pub(crate) fn registry_program_compatible(version: &str, program: &Program) -> b
     while let Some(expr) = expressions.pop() {
         match expr {
             Expr::Call { name, args, .. } => {
-                if name.starts_with("engine::")
-                    || name.starts_with("self::")
-                    || [
-                        "spent",
-                        "with_spent",
-                        "state_get",
-                        "state_set",
-                        "state_remove",
-                        "grant_get",
-                        "native_ok",
-                        "native_fail",
-                        "__native_return",
-                        "daily_cap",
-                        "transaction_cap",
-                        "total_cap",
-                        "call_cap",
-                        "recipient",
-                        "expiry",
-                        "token",
-                    ]
-                    .contains(&name.as_str())
+                let plain = name.rsplit("::").next().unwrap_or(name);
+                if ["Err", "__grant_ref", "__null"].contains(&plain)
+                    || (crate::rule_values::RULES.contains(&plain) && args.len() == 1)
+                {
+                    return false;
+                }
+                if [
+                    "spent_cap",
+                    "day_spent_cap",
+                    "day_total_cap",
+                    "recipients",
+                    "tokens",
+                ]
+                .contains(&plain)
+                {
+                    return false;
+                }
+                if version == "1.6.0"
+                    && (name.starts_with("engine::")
+                        || name.starts_with("self::")
+                        || [
+                            "spent",
+                            "with_spent",
+                            "state_get",
+                            "state_set",
+                            "state_remove",
+                            "grant_get",
+                            "native_ok",
+                            "native_fail",
+                            "__native_return",
+                            "spent_cap",
+                            "day_spent_cap",
+                            "day_total_cap",
+                            "daily_cap",
+                            "transaction_cap",
+                            "total_cap",
+                            "call_cap",
+                            "recipients",
+                            "tokens",
+                            "recipient",
+                            "expiry",
+                            "token",
+                        ]
+                        .contains(&name.as_str()))
                 {
                     return false;
                 }
                 expressions.extend(args);
             }
             Expr::Variable { name }
-                if ["__allowit_grant", "__allowit_state"].contains(&name.as_str()) =>
+                if version == "1.6.0"
+                    && ["__allowit_grant", "__allowit_state"].contains(&name.as_str()) =>
             {
                 return false;
             }

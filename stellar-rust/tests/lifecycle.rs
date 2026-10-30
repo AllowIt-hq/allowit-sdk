@@ -39,6 +39,7 @@ fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, T
         "use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { Ok(()) }"
             .to_string();
     let mut c = WalletConfig {
+        prefix_digest: None,
         network: "stellar:testnet".into(),
         policy_instance: [7; 32],
         wallet,
@@ -91,6 +92,7 @@ fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, T
         &c.agent
     };
     let request = ExecutionRequest {
+        expense: None,
         operation: OperationRef {
             policy_instance: c.policy_instance,
             nonce: [8; 32],

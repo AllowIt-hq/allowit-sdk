@@ -98,12 +98,12 @@ impl StellarPolicy {
                 },
                 rail: StellarRail::PolicyWallet,
                 reason: if rules.is_empty() {
-                    "The policy permits every valid authenticated transfer."
+                    "The standard wallet enforces custody and authorization. The full policy runs offchain."
                 } else {
-                    "The complete policy is one ordered sequence of supported rules."
+                    "The standard wallet enforces the explicit initial Grant-rule prefix. Remaining policy code runs offchain."
                 }
                 .into(),
-                onchain_policy: true,
+                onchain_policy: !self.source_profile.offchain_required,
                 rules,
             });
         }
@@ -116,7 +116,7 @@ impl StellarPolicy {
                 rail: StellarRail::PolicyWallet,
                 reason: "The pass-through policy is compatible with an empty Common rule list."
                     .into(),
-                onchain_policy: true,
+                onchain_policy: !self.source_profile.offchain_required,
                 rules: Vec::new(),
             });
         }
@@ -124,13 +124,13 @@ impl StellarPolicy {
             engine: PolicyEngine::CustomPolicy,
             rail: StellarRail::PolicyWallet,
             reason:
-                "Compile the complete policy and selected rule mixins into owner-controlled code."
+                "Compile only the declared standard prefix into owner-controlled code. Remaining policy code runs offchain."
                     .into(),
-            onchain_policy: true,
+            onchain_policy: !self.source_profile.offchain_required,
             rules: Vec::new(),
         });
-        if !self.uses_named_state() && self.explicit_engine_checks.is_empty() {
-            for rail in [StellarRail::Classic, StellarRail::PolicyWallet] {
+        if self.source_profile.native_prefix.is_empty() {
+            for rail in [StellarRail::Classic] {
                 if choices
                     .iter()
                     .any(|c| c.engine == PolicyEngine::SimplePolicyEngine && c.rail == rail)

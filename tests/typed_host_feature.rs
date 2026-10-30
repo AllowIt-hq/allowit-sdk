@@ -89,6 +89,7 @@ fn fixture() -> (Program, Context) {
         },
     };
     let request = ExecutionRequest {
+        expense: None,
         operation: binding.operation.clone(),
         input: ExecutionInput::Instructions(vec![NativeInstruction::SolanaNativeTransfer {
             source: account(7),

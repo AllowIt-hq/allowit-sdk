@@ -155,6 +155,25 @@ pub struct ExecutionRequest {
     pub effect_bounds: Vec<WorkflowEffectBound>,
     pub fee_bounds: Option<Vec<WorkflowFeeBound>>,
     pub evidence: Vec<EvidenceRef>,
+    /// Authenticated Stellar accounting ceilings. The host replaces caller claims before signing.
+    /// Omission preserves older request identities and does not enable an expense-based cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expense: Option<ExpenseBounds>,
+}
+/// Native accounting facts bound by both Stellar authorizations and exact operation effects.
+/// Amounts use the installed SAC's base units and seven-decimal scale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExpenseBounds {
+    pub asset: AccountId,
+    pub decimals: u32,
+    pub gas_units: i128,
+    pub conversion_units: i128,
+    pub spent_units: i128,
+    /// Policy-attributable native gas ceiling, excluding unrelated sponsor fees.
+    pub max_fee_stroops: u32,
+    pub observed_ledger: u32,
+    pub day: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

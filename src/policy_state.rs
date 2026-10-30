@@ -1,6 +1,6 @@
 //! Typed named values supplied by a trusted native adapter.
 use crate::prelude::PolicyError;
-use alloc::{collections::BTreeMap, string::String};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::cell::RefCell;
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +15,8 @@ pub enum ScalarType {
 /// Exact source scalar. Integer values never pass through floating-point numbers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolicyScalar {
+    Null,
+    Strings(Vec<String>),
     U64(u64),
     Bool(bool),
     String(String),
@@ -27,7 +29,7 @@ impl PolicyScalar {
             Self::U64(_) => ScalarType::U64,
             Self::Bool(_) => ScalarType::Bool,
             Self::String(_) => ScalarType::String,
-            Self::Unsupported => ScalarType::Unsupported,
+            Self::Unsupported | Self::Null | Self::Strings(_) => ScalarType::Unsupported,
         }
     }
 }
@@ -187,10 +189,5 @@ pub fn state_set(
         return Err(mismatch());
     }
     spent.0.insert(name.into(), value);
-    Ok(spent)
-}
-/// Return a new spent map without `name`; removing an absent name is unchanged.
-pub fn state_remove(mut spent: Spent, name: &str) -> Result<Spent, PolicyError> {
-    spent.0.remove(name);
     Ok(spent)
 }

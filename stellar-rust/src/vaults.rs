@@ -96,6 +96,7 @@ pub fn vault_deposit_request(
     let network = network_id(&c.network)?;
     let asset = |token| WorkflowAsset::Token(AssetId { network, token });
     let request = ExecutionRequest {
+        expense: None,
         operation: OperationRef {
             policy_instance: c.policy_instance,
             nonce: operation_id,
@@ -144,7 +145,9 @@ pub fn vault_deposit_request(
 }
 /// Decode the entire admitted operation. Unsupported redemption fails before signing.
 pub fn operation_from_request(c: &WalletConfig, r: &ExecutionRequest) -> Result<StellarOperation> {
-    decode_operation(c, r, false)
+    let operation = decode_operation(c, r, false)?;
+    expenses::validate(c, r, &operation)?;
+    Ok(operation)
 }
 pub(crate) fn decode_operation(
     c: &WalletConfig,
@@ -736,6 +739,53 @@ pub fn vault_position_observation(
         ledger,
     })
 }
+/// Obtain a net conversion floor for a future deposit without pretending shares are already held.
+pub fn vault_deposit_expense_observation(
+    rpc: &dyn rpc::Rpc,
+    c: &WalletConfig,
+    state: &TrustedState,
+    vault: &str,
+    min_shares: i128,
+    min_ledger: u32,
+) -> Result<VaultPositionObservation> {
+    network(rpc, c)?;
+    if c.route != WalletRoute::PolicyWallet || min_shares <= 0 {
+        return Err("Positive policy-wallet deposit share bound is required".into());
+    }
+    Contract::from_string(vault).map_err(err)?;
+    let (asset, asset_ledger) =
+        observed_query(rpc, c, state, vault, "query_asset", vec![], min_ledger)?;
+    if asset != ScVal::Address(address(&c.asset)?) {
+        return Err("Vault underlying differs from installed accounting asset".into());
+    }
+    let (preview, preview_ledger) = observed_query(
+        rpc,
+        c,
+        state,
+        vault,
+        "preview_redeem",
+        vec![i128_value(min_shares)],
+        min_ledger,
+    )?;
+    let redeemable = rpc::wide(&preview)?;
+    if redeemable < 0 {
+        return Err("Negative vault redemption preview".into());
+    }
+    let (decimals, decimal_ledger) =
+        observed_query(rpc, c, state, vault, "decimals", vec![], min_ledger)?;
+    let ScVal::U32(share_decimals) = decimals else {
+        return Err("Invalid vault share decimal scale".into());
+    };
+    Ok(VaultPositionObservation {
+        vault: vault.into(),
+        asset: c.asset.clone(),
+        holder: c.wallet.clone(),
+        shares: min_shares,
+        redeemable,
+        share_decimals,
+        ledger: asset_ledger.min(preview_ledger).min(decimal_ledger),
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -759,6 +809,7 @@ mod tests {
             "use allowit::v1::prelude::*; async fn _execute(ctx:&Context)->PolicyResult { Ok(()) }"
                 .to_owned();
         let mut c = WalletConfig {
+            prefix_digest: None,
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
             wallet: Contract([4; 32]).to_string(),

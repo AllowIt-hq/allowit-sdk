@@ -16,6 +16,10 @@ impl Collector {
         match expr {
             Expr::Call { name, args, .. } => {
                 let feature = match name.as_str() {
+                    name if crate::rule_values::RULES.contains(&name) => {
+                        Some(ExecutionFeature::PolicyRules)
+                    }
+                    "__grant_ref" | "__null" | "Err" => None,
                     "allowit::service_call" => {
                         let [
                             Expr::String { value: service_id },

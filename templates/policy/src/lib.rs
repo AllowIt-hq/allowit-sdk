@@ -1,19 +1,17 @@
-//! Replace only policy.rs. This host template compiles authored Rust and evaluates checked IR.
+//! Replace policy.rs. The template checks authored Rust and the restricted compiler.
 #![allow(dead_code, unused_variables)]
 include!("policy.rs");
 
-/// Authenticated adapters supply Context. Mandatory allocation checks run in the evaluator.
+/// Trusted adapters supply the native operation, owner Grant and authoritative Spent.
 pub fn execute(ctx: &Context) -> Result<allowit::Decision, allowit::CompileError> {
     let policy = allowit::compile(include_str!("policy.rs"))?;
-    Ok(allowit::evaluate(&policy, allowit::Profile::Contract, ctx))
+    Ok(allowit::evaluate_with_policy_rules(&policy, ctx))
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn complete_policy_is_valid_rust_and_checked_policy_source() {
-        let config = super::new();
-        let _ = config;
+    fn policy_is_valid_rust_and_checked_source() {
         let _ = super::_execute;
         allowit::compile(include_str!("policy.rs")).unwrap();
     }

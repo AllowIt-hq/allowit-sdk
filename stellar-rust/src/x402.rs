@@ -96,6 +96,7 @@ fn checked(
         &StellarOperation::Transfer(transfer.clone()),
         request.expires_at,
         false,
+        true,
     )?;
     let host_payload = authorization::payload(&c.network, &entry)?;
     let domain = ScVal::Vec(Some(

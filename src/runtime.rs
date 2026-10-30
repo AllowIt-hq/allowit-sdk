@@ -14,6 +14,8 @@ use alloc::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Value {
+    GrantRef(String),
+    RuleNull,
     String(String),
     Integer(u64),
     Boolean(bool),
@@ -380,6 +382,26 @@ impl Evaluator<'_> {
                     .map(|a| self.expr(a, env))
                     .collect::<Result<Vec<_>, _>>()?;
                 match name.as_str() {
+                    "__grant_ref" => match values.as_slice() {
+                        [Value::String(key)] => Value::GrantRef(key.clone()),
+                        _ => return Err(invalid()),
+                    },
+                    "__null" => Value::RuleNull,
+                    "Err" => return Err(failure(&string(&values, 0)?, string(&values, 1)?)),
+                    name if crate::rule_values::RULES.contains(&name) => {
+                        let input = match values.as_slice() {
+                            [Value::GrantRef(key)] => crate::rule_values::Input::Grant(key.clone()),
+                            [Value::Integer(value)] => crate::rule_values::Input::Units(*value),
+                            [Value::Strings(value)] => {
+                                crate::rule_values::Input::Addresses(value.clone())
+                            }
+                            [Value::RuleNull] => crate::rule_values::Input::Null,
+                            _ => return Err(invalid()),
+                        };
+                        crate::rule_values::check(self.context, name, input)
+                            .map_err(|e| failure(&e.code, &e.reason))?;
+                        Value::Unit
+                    }
                     #[cfg(feature = "typed-workflow")]
                     "allowit::execution_request_validate" => {
                         let [
@@ -446,6 +468,7 @@ impl Evaluator<'_> {
                             })
                             || !crate::typed_workflow::native_transfers_covered(
                                 &crate::typed_workflow::ExecutionRequest {
+                                    expense: None,
                                     input: crate::typed_workflow::ExecutionInput::Instructions(
                                         result.instructions.clone(),
                                     ),
@@ -714,10 +737,15 @@ impl Evaluator<'_> {
                     name if name.starts_with("engine::")
                         || name.starts_with("self::")
                         || [
+                            "spent_cap",
+                            "day_spent_cap",
+                            "day_total_cap",
                             "daily_cap",
                             "transaction_cap",
                             "total_cap",
                             "call_cap",
+                            "recipients",
+                            "tokens",
                             "recipient",
                             "expiry",
                             "token",
@@ -805,7 +833,9 @@ impl Evaluator<'_> {
                                     crate::PolicyScalar::U64(v) => Value::Integer(v),
                                     crate::PolicyScalar::Bool(v) => Value::Boolean(v),
                                     crate::PolicyScalar::String(v) => Value::String(v),
-                                    crate::PolicyScalar::Unsupported => return Err(invalid()),
+                                    crate::PolicyScalar::Unsupported
+                                    | crate::PolicyScalar::Null
+                                    | crate::PolicyScalar::Strings(_) => return Err(invalid()),
                                 }
                             }
                         }
@@ -1415,7 +1445,7 @@ fn run_inner_scoped(
         && crate::typed_workflow::required(ir)
         && !crate::validation::service_call_required(ir);
     if let Err(error) = if server_accounting {
-        if !ctx.network.starts_with("stellar:")
+        if ctx.network.len() > 128
             || ctx.token.is_empty()
             || ctx.token.len() > 128
             || ctx.recipient.len() > 256
@@ -1424,7 +1454,7 @@ fn run_inner_scoped(
         {
             Err(failure(
                 "INVALID_CONTEXT",
-                "Server accounting requires the exact Stellar asset and operation context.",
+                "Policy execution requires a bounded authenticated operation context.",
             ))
         } else {
             validate_runtime_context(&ctx.runtime_context)
@@ -1628,22 +1658,14 @@ pub fn evaluate(policy: &CompiledPolicy, profile: Profile, ctx: &Context) -> Dec
     run(&policy.ir, profile, ctx, policy.source_hash.clone())
 }
 
-/// Server-only integer accounting uses the adapter's explicit denomination.
-/// This path cannot evaluate native guards, mutate policy state or prepare effects.
+/// Execute the complete source with host-only authenticated rule facts and owner Grant/Spent.
+/// No native custody capability or user JSON can be substituted for these trusted bindings.
 #[cfg(feature = "compiler")]
-pub(crate) fn evaluate_server_accounting(policy: &CompiledPolicy, ctx: &Context) -> Decision {
+pub fn evaluate_with_policy_rules(policy: &CompiledPolicy, ctx: &Context) -> Decision {
     let compiled = match validate_artifact(policy) {
         Ok(compiled) => compiled,
         Err(decision) => return *decision,
     };
-    if compiled.calls.iter().any(|call| {
-        !["context_u64", "fail", "is_one_of"].contains(&call.name.rsplit("::").next().unwrap_or(""))
-    }) {
-        return Decision::fail(
-            "INVALID_SERVER_POLICY",
-            "Server accounting cannot execute native or external effects.",
-        );
-    }
     run_inner(
         &compiled.ir,
         Profile::Oracle,

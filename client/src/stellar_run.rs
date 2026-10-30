@@ -107,6 +107,15 @@ fn clock() -> Result<u64> {
         .map(|v| v.as_secs())
         .map_err(|_| Error::config("System clock precedes the Unix epoch"))
 }
+/// The backend may add only signed accounting facts to the original caller intent.
+/// Exact prepared bytes remain pinned separately and require trusted native revalidation before signing.
+fn same_execution_intent(a: &ExecutionRequest, b: &ExecutionRequest) -> bool {
+    let mut a = a.clone();
+    let mut b = b.clone();
+    a.expense = None;
+    b.expense = None;
+    a == b
+}
 fn checked<T>(v: sdk::Result<T>) -> Result<T> {
     v.map_err(Error::config)
 }
@@ -333,7 +342,7 @@ impl Client {
             || p.request.operation.nonce != operation_nonce(&self.bundle.policy_id, id)
             || r.operation.transaction_hash != sdk::hex(&p.transaction_hash)
             || record.is_some_and(|old| {
-                old.request != p.request
+                !same_execution_intent(&old.request, &p.request)
                     || !config_matches(&old.config, &p.config)
                     || old.prepared.as_ref().is_some_and(|v| v != p)
             })
@@ -449,6 +458,11 @@ fn run_locked(
             "The Stellar profile accepts only execution-request input",
         ));
     };
+    if request.expense.is_some() {
+        return Err(Error::usage(
+            "Expense facts are derived by the server, not supplied in the customer request",
+        ));
+    }
     let id = typed.request_id;
     if !args.flags.get("request-id").is_empty() && args.flags.get("request-id") != id {
         return Err(Error::usage("--request-id differs from the request file"));
@@ -465,7 +479,7 @@ fn run_locked(
         if old.policy_id != args.pos[0]
             || old.request_id != id
             || !same_retained_policy_config(&c.bundle.config, &old.config)
-            || old.request != request
+            || !same_execution_intent(&old.request, &request)
         {
             return Err(Error::config(
                 "The original request ID already binds different input",
@@ -607,6 +621,7 @@ mod public_bundle_tests {
             serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap();
         let policy = &f["policy"];
         let config = WalletConfig {
+ prefix_digest: None,
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
             wallet: f["intent"]["owner"].as_str().unwrap().into(),

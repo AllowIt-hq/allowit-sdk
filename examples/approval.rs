@@ -1,14 +1,14 @@
 use allowit::prelude::*;
 
 pub async fn evaluate(ctx: &Context) -> PolicyResult {
-    set_cap_per_day(ctx, "50", "USDC")?;
-    allow_actions(ctx, &["research"])?;
+    allowit::day_total_cap(50000000)?;
+    if ctx.action != "research" { return Err(PolicyError { code: "ACTION_DENIED".into(), reason: "Research is required.".into() }); }
     let safety = confidence(ctx, "safety")?;
     if safety.lower_bps < 8000 {
         require_user_input(ctx, "Approve this research purchase").await?;
     }
     if ctx.amount_units > 20000000 {
-        return fail("Keep each purchase within 20 USDC");
+        return Err(PolicyError { code: "POLICY_REJECTED".into(), reason: "Keep each purchase within 20 USDC".into() });
     }
     Ok(())
 }
