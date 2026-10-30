@@ -1,7 +1,7 @@
 //! Native agent launchers. Payments stay in the remote Allowit MCP service.
 use crate::{
     error::{Error, Result},
-    gateway_args::Common,
+    gateway::args::Common,
 };
 use serde_json::{Value, json};
 use std::process::{Command, Stdio};

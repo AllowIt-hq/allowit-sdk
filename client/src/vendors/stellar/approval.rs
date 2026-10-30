@@ -272,7 +272,10 @@ pub(crate) fn run(args: &[String], stdout: &mut String) -> Result<i32> {
 mod tests {
     use super::*;
     fn fixture() -> serde_json::Value {
-        serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap()
+        serde_json::from_str(include_str!(
+            "../../../tests/fixtures/stellar-approval.json"
+        ))
+        .unwrap()
     }
     #[test]
     fn public_approval_binds_original_source_and_filters_secret_fields() {

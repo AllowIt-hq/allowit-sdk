@@ -52,7 +52,6 @@ Local agent wallets:
   allowit wallet approve --network stellar:testnet --policy-file PUBLIC_POLICY_JSON --owner G_ADDRESS --request-id ID
   Generation writes a new local 0600 signer file. Output contains public metadata only.
   setup registers public {network,address,publicKey,keyType} metadata with the server.
-  Remote account key creation, secret import and secret export are refused.
   Stellar configure prints an owner signing link for a fresh funded native account.
   Stellar approve prints a source approval link for an existing owner-configured policy.
 
