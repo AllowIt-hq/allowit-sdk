@@ -235,6 +235,9 @@ mod tests {
         binding.current_revision = 1;
         binding.prefix_digest = "04".repeat(32);
         assert!(update.validate_binding(&binding).is_err());
+        binding.prefix_digest = update.prefix_digest.clone();
+        binding.policy_instance = "05".repeat(32);
+        assert!(update.validate_binding(&binding).is_err());
     }
     #[test]
     fn native_prefix_stops_at_first_other_statement_and_preserves_order() {

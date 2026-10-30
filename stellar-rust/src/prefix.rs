@@ -73,6 +73,7 @@ mod tests {
     fn canonical_prefix_xdr_matches_independent_stellar_sdk_vector() {
         let source = "use allowit::prelude::*; async fn _execute(ctx:&Context)->PolicyResult {allowit::spent_cap(grant::spent_cap)?;allowit::recipients(grant::recipients)?;Ok(())}";
         let mut config = WalletConfig {
+            source_instance: Some([21; 32]),
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
             wallet: Contract([4; 32]).to_string(),

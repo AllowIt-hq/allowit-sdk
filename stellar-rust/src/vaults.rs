@@ -177,7 +177,7 @@ pub(crate) fn decode_operation(
     if function != "deposit" {
         return decode_transfer(c, r, retained).map(StellarOperation::Transfer);
     }
-    validate_config(c)?;
+    validate_config_inner(c, !retained)?;
     if c.route != WalletRoute::PolicyWallet {
         return Err("SEP-56 deposit requires policy-wallet atomic share bounds".into());
     }
@@ -809,6 +809,7 @@ mod tests {
             "use allowit::v1::prelude::*; async fn _execute(ctx:&Context)->PolicyResult { Ok(()) }"
                 .to_owned();
         let mut c = WalletConfig {
+            source_instance: Some([21; 32]),
             prefix_digest: None,
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],

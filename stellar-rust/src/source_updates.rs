@@ -93,7 +93,15 @@ pub fn source_update_binding(
             owner,
             network: config.network.clone(),
             wallet: config.wallet.clone(),
-            policy_instance: hex(&config.policy_instance),
+            policy_instance: hex(&match config.route {
+                WalletRoute::PolicyWallet => config.source_instance.ok_or(
+                    "Fresh Std source approval requires an explicit logical source instance.",
+                )?,
+                WalletRoute::Native => config.source_instance.unwrap_or(config.policy_instance),
+                WalletRoute::Odc => {
+                    return Err("Historical signed wallets do not accept source approvals.".into());
+                }
+            }),
             prefix_digest: hex(&expected),
             current_revision,
             current_source_hash: hex(&current_source_hash),
@@ -199,6 +207,7 @@ mod tests {
     fn setup() -> (WalletConfig, SourceUpdate, OwnerRpc) {
         let source = "async fn _execute(ctx:&Context)->PolicyResult { Ok(()) }";
         let mut config = WalletConfig {
+            source_instance: None,
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
             wallet: account_for_seed(&[1; 32]),
@@ -223,7 +232,7 @@ mod tests {
             owner: config.wallet.clone(),
             network: config.network.clone(),
             wallet: config.wallet.clone(),
-            policy_instance: hex(&config.policy_instance),
+            policy_instance: hex(&config.source_instance.unwrap_or(config.policy_instance)),
             prefix_digest: hex(&prefix),
             source_hash: hex(&hash(source.as_bytes())),
             revision: 2,

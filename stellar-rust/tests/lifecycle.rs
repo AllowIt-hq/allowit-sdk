@@ -68,6 +68,7 @@ fn fixture(route: WalletRoute, usdc: bool) -> (WalletConfig, ExecutionRequest, T
         "use allowit::v1::prelude::*; async fn _execute(ctx: &Context) -> PolicyResult { Ok(()) }"
             .to_string();
     let mut c = WalletConfig {
+        source_instance: Some([21; 32]),
         prefix_digest: None,
         network: "stellar:testnet".into(),
         policy_instance: [7; 32],
@@ -2958,4 +2959,19 @@ fn fee_estimate_is_read_only_and_final_signed_resource_cost_must_converge() {
             assert!(sign(&checked, &[2; 32], 86401).is_ok());
         }
     }
+}
+
+#[test]
+fn logical_source_scope_is_required_for_fresh_standard_policies_only() {
+    let (mut c, request, state) = fixture(WalletRoute::PolicyWallet, false);
+    c.source_instance = None;
+    assert!(validate_config(&c).is_err());
+    assert!(prepare(&c, &request, &state, 86401, 86700).is_err());
+    let captured: SignedOperation =
+        serde_json::from_str(include_str!("fixtures/canonical-main-9682-odc-signed.json")).unwrap();
+    assert!(captured.prepared.config.source_instance.is_none());
+    validate_retained_signed(&captured).unwrap();
+    let (mut native, _, _) = fixture(WalletRoute::Native, false);
+    native.source_instance = None;
+    validate_config(&native).unwrap();
 }

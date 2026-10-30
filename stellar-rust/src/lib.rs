@@ -169,6 +169,9 @@ pub enum WalletRoute {
 pub struct WalletConfig {
     pub network: String,
     pub policy_instance: [u8; 32],
+    /// Logical offchain source scope. Std contract policies require a distinct explicit identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_instance: Option<[u8; 32]>,
     pub wallet: String,
     pub owner: String,
     pub agent: String,
@@ -408,6 +411,20 @@ pub struct Transfer {
 }
 
 pub fn validate_config(c: &WalletConfig) -> Result<()> {
+    validate_config_inner(c, true)
+}
+fn validate_config_inner(c: &WalletConfig, fresh: bool) -> Result<()> {
+    if c.source_instance == Some([0; 32])
+        || (fresh
+            && c.route == WalletRoute::PolicyWallet
+            && c.policy_engine != Some(PolicyEngine::CustomPolicy)
+            && c.source_instance.is_none())
+    {
+        return Err(
+            "Fresh standard policies require an explicit owner-approved logical source instance"
+                .into(),
+        );
+    }
     passphrase(&c.network)?;
     if c.policy_instance == [0; 32]
         || c.source_hash != hash(c.policy_source.as_bytes())
@@ -456,7 +473,7 @@ pub fn transfer_from_request(c: &WalletConfig, r: &ExecutionRequest) -> Result<T
     decode_transfer(c, r, false)
 }
 fn decode_transfer(c: &WalletConfig, r: &ExecutionRequest, retained: bool) -> Result<Transfer> {
-    validate_config(c)?;
+    validate_config_inner(c, !retained)?;
     if r.operation.policy_instance != c.policy_instance || r.operation.nonce == [0; 32] {
         return Err("Operation installation or identity differs".into());
     }

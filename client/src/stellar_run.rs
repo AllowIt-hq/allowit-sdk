@@ -183,7 +183,7 @@ fn public_description(bundle: &Bundle, source: bool) -> serde_json::Value {
         "policyId":bundle.policy_id,"profile":bundle.profile,"network":bundle.network,
         "wallet":bundle.wallet,"route":bundle.route,"owner":bundle.config.owner,
         "agent":bundle.config.agent,"server":bundle.config.server,
-        "sourceHash":bundle.source_hash,"irHash":bundle.ir_hash,"moduleDigest":bundle.module_digest,
+        "sourceHash":bundle.source_hash,"sourceInstance":bundle.config.source_instance.map(|instance|sdk::hex(&instance)),"irHash":bundle.ir_hash,"moduleDigest":bundle.module_digest,
         "asset":bundle.config.asset,"assetSymbol":bundle.config.asset_symbol,"assetIssuer":bundle.config.asset_issuer,
         "maxFeeStroops":bundle.config.max_fee_stroops
     });
@@ -621,6 +621,7 @@ mod public_bundle_tests {
             serde_json::from_str(include_str!("../tests/fixtures/stellar-approval.json")).unwrap();
         let policy = &f["policy"];
         let config = WalletConfig {
+            source_instance:None,
  prefix_digest: None,
             network: "stellar:testnet".into(),
             policy_instance: [7; 32],
