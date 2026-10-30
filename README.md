@@ -30,8 +30,10 @@ pub async fn evaluate(ctx: &Context) -> PolicyResult {
     check_preference(
         ctx,
         "Does this purchase count as research under the user's stated purpose and definitions?",
-        true, "85",
-        true, "40",
+        true,
+        "85",
+        true,
+        "40",
     )
     .await?;
     Ok(())
@@ -46,7 +48,7 @@ That is [`examples/research.rs`](examples/research.rs), and it compiles as writt
 - **A compiler that says no.** Every call must come from the function registry. No I/O, no `unsafe`, no unbounded loops, no surprises.
 - **One interpreter everywhere.** The same `no_std + alloc` core runs in the CLI, in WebAssembly, and inside the on-chain adapters, so a decision is the same wherever it is made.
 - **Two evaluation profiles.** `oracle` can pause to ask the owner a question; `contract` fails closed with `USER_INPUT_REQUIRED` because a smart contract cannot wait for a human.
-- **Deterministic money.** Daily caps, per-transaction caps, purchase tiers and recipient or merchant binding use exact integer units and host-authenticated counters. The guard runs before the policy's own control flow.
+- **Deterministic money.** Daily caps, per-transaction caps and purchase tiers use exact integer units and host-authenticated counters, and the daily cap runs before the policy's own control flow.
 - **Preference questions with thresholds.** `check_preference` turns a natural-language question into an auditable step with explicit approve and deny thresholds.
 - **Language server included.** `allowit lsp` speaks JSON-RPC over stdio with diagnostics, hover, completion and a workflow view.
 - **Chain-aware output.** `compile` reports which Stellar wallet implementation fits the source, and `stellar-native` emits the generated Rust for a custom one.
@@ -66,7 +68,7 @@ cargo run --locked -- compile examples/research.rs
 cargo run --locked -- evaluate examples/research.rs examples/context.json oracle
 ```
 
-The second command prints a decision. For this example it is `SEMANTIC_EVIDENCE_REQUIRED`: the policy asks a preference question, and nobody has answered it yet. That is the SDK doing its job. A host supplies the answer, re-evaluates, and only then does the request pass.
+The second command prints a decision (abridged below; the full output also carries the evidence key, source span and hashes). For this example it is `SEMANTIC_EVIDENCE_REQUIRED`: the policy asks a preference question, and nobody has assessed it yet. That is the SDK doing its job. A host obtains an assessment bound to this request, re-evaluates, and only then can the request pass.
 
 ```json
 {
@@ -103,6 +105,8 @@ A policy has one entrypoint and reads everything through `ctx`. Two forms are ac
 
 Guards are sequential. Each `?` stops evaluation with a reason the owner can read.
 
+The [policy language reference](docs/policy-reference.md) covers the details this page skips: source limits, owner-adjustable native limits, Stellar engine selection, workflow edits and purchase tiers.
+
 ### Money
 
 Amounts are decimal strings and the SDK keeps them exact.
@@ -111,14 +115,14 @@ Amounts are decimal strings and the SDK keeps them exact.
 | --- | --- |
 | `usdc("25.50")?` | 25.50 USDC, exactly 25,500,000 base units; up to six decimals |
 | `percent("85.25")?` | 85.25 %, exactly 8,525 basis points; 0 to 100 with up to two decimals |
-| `amount_at_most(ctx.amount_units, "25.50")?` | Is this request at or below 25.50 USDC? |
+| `amount_at_most(ctx, "25.50")?` | Is this request at or below 25.50 USDC? |
 | `within_percentage_points(candidate, benchmark, "1")?` | Is the candidate return at most one point below the benchmark? |
 
 `set_cap_per_day` and `cap_per_transaction` are the limits most policies start with. The daily cap resets at UTC midnight and uses counters the host authenticates; request JSON cannot talk its way around them.
 
 ### Questions
 
-Some rules are not arithmetic. `check_preference` asks one question in plain language, and the host brings back evidence bound to this exact request. Its deny and approve thresholds are explicit, so an owner can see at what score an agent proceeds, stops, or comes back to ask. `require_user_input(ctx, "Approve this purchase?")` skips the scoring and asks the owner directly.
+Some rules are not arithmetic. `check_preference` asks one question in plain language, and the host brings back evidence bound to this exact request. Its thresholds are explicit and inclusive: in the example above, `true, "85"` approves at a score of 85% or more, `true, "40"` denies at 40% or less, and anything in between comes back to the owner. Pass `false` to switch either outcome off. `require_user_input(ctx, "Approve this purchase?")` skips the scoring and asks the owner directly.
 
 ### Runtime context
 
@@ -206,7 +210,7 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`native-rust/`](native-rust/) | `allowit-native` | Native Solana policy lifecycle in Rust |
 | [`native/`](native/) | `@allowit/native` | The same lifecycle for Node 22+, with the owner browser handoff |
 | [`tempo-rust/`](tempo-rust/) | `allowit-tempo` | Compatibility re-export of the Tempo vendor crate |
-| [`docs/`](docs/) | | Execution requirements, native vault and Tempo vault notes |
+| [`docs/`](docs/) | | Policy language reference, execution requirements, native vault and Tempo vault notes |
 | [`skills/allowit/`](skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
 | [`verification/`](verification/) | | Lean specifications, obligations and expected outcomes |
 | [`scripts/`](scripts/) | | WebAssembly smoke test and license packaging |
