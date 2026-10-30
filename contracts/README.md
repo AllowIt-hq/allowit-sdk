@@ -1,8 +1,18 @@
 # Allowit contract rails
 
-These adapters enforce a compiled Allowit mandate and perform a bounded token transfer in the same chain transaction. They use the SDK's deterministic `evaluate_ir` implementation with `Profile::Contract`. A reached `require_user_input` always returns `UserInputRequired`; there is no answer or oracle-receipt bypass in either contract API.
+*The on-chain side of a policy: evaluate the compiled IR and move the tokens in one transaction.*
 
-`common` owns the mandate envelope, artifact checks, exact request binding, budget/nonce accounting, evidence checks and host-side artifact command. `solana` is a native Rust program using classic SPL Token `transfer_checked`. Each package has a separate Cargo lockfile and build root.
+An owner approves a policy once. These adapters make sure that is the policy that runs when an agent spends. Each one takes a compiled Allowit mandate, evaluates it with the SDK's deterministic `evaluate_ir` under `Profile::Contract`, and performs a bounded token transfer in the same chain transaction. There is no second path: a reached `require_user_input` always returns `UserInputRequired`, and neither contract API accepts an answer or an oracle receipt in its place.
+
+## What is here
+
+- [`common/`](common/) (`allowit-contract-core`) owns the mandate envelope, artifact checks, exact request binding, budget and nonce accounting, evidence checks and the host-side `allowit-contract-artifact` command.
+- [`solana/`](solana/) (`allowit-solana`) is a native Rust program that spends through classic SPL Token `transfer_checked`.
+- [`sbf-tests/`](sbf-tests/) runs the built SBF program against the real SPL Token processor.
+
+Each package has its own Cargo lockfile and build root. Stellar custody lives in [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar); see [Stellar custody](#stellar-custody) below.
+
+The rest of this page is the reference for the mandate model and the Solana program API.
 
 ## Artifact and authority boundary
 

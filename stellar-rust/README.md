@@ -1,5 +1,21 @@
 # Stellar wallet SDK
 
+*Prepare, authorize and settle a policy-bound Stellar transfer, with the agent and the service each holding their own key.*
+
+`allowit-stellar-wallet` is the Stellar adapter of the Allowit SDK. It turns a canonical execution request into an exact Stellar transaction, routes it through the custody the owner chose (a classic G-address account or a policy wallet contract), collects the two required authorizations, and keeps the signed bytes so an uncertain broadcast can be recovered instead of repeated. The custody contracts themselves live in [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar); the [client facade](../client/) calls this crate on the agent's behalf.
+
+Run its checks with:
+
+```sh
+cargo fmt --manifest-path stellar-rust/Cargo.toml --check
+cargo test --locked --manifest-path stellar-rust/Cargo.toml
+cargo clippy --locked --manifest-path stellar-rust/Cargo.toml --all-targets -- -D warnings
+```
+
+The rest of this page is the reference for how the crate behaves.
+
+## Request profile and custody
+
 This crate maps the canonical `ExecutionRequest` to the admitted `stellar::sep41_transfer` profile. Native classic custody checks the current account weights and applicable transaction and payment thresholds. The 3/1/1 weights and 2/2/3 thresholds are deployment templates, not admission requirements. Policy wallet custody calls the selected implementation’s public `execute` entrypoint with exact native arguments, installed executable, schema and source identity.
 
 `config.policy_engine` selects SimplePolicyEngine, CommonPolicyEngine or CustomPolicy. `config.server` is the independent G-address service signer. `admin::PolicyConfig::for_policy` binds the selected implementation to complete source, exact Common selectors and owner configuration. `constructor_args` emits the single `PolicyConfig` constructor packet. Custom source is emitted by `stellar-native POLICY.rs`; fixed Simple/Common artifacts use configuration instead of source-specific code. Discovery verifies the installed executable, source digest, engine kind, asset and complete selector list.

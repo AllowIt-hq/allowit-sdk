@@ -1,8 +1,22 @@
 # Native Solana policy lifecycle
 
-The JavaScript SDK links the native Rust source in allowit-contracts-solana to
-owner lifecycle commands and the Allowit browser. It is a separate adapter from
-the restricted Rust compiler/WASM and owner-signed wallet allowance profile.
+*Generate, deploy, fund, run and revoke a native Solana policy vault from Node.*
+
+`@allowit/native` is the JavaScript side of the native Solana rail. It links the
+Rust policy source in [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana)
+to the owner's lifecycle commands and to the Allowit browser signing flow. It is
+a separate adapter from the restricted Rust compiler and WebAssembly build at the
+repository root, and from the owner-signed wallet allowance profile in
+[`contracts/`](../contracts/). The Rust counterpart that the client facade uses is
+[`native-rust/`](../native-rust/).
+
+Node 22 or later is required. Install with `npm ci` in this directory and run
+the tests with `npm test`.
+
+The rest of this page is the reference for generation, the owner CLI and its
+configuration.
+
+## Generation
 
 `new NativePolicySDK(config).generate(prompt)` has exactly one generation
 argument. Network, prompt author, deployment, mint and executor are instance

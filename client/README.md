@@ -1,7 +1,8 @@
 # Allowit client SDK
 
-The CLI calls this facade. Rail adapters live in vendor repositories and depend on shared SDK core packages.
-`allowit-client-core` provides errors, configuration and private storage. The compiler/evaluator remains `allowit-sdk`.
+*The Rust facade behind the `allowit` command: local agent keys, wallet setup, owner approvals and signed requests.*
+
+This crate (`allowit-client`) is what [allowit-cli](https://github.com/allowit-hq/allowit-cli) is built on. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Rail adapters live in their vendor repositories and depend on the shared core packages: [`allowit-client-core`](../client-core/) provides errors, configuration and private storage, and the compiler and evaluator remain [`allowit-sdk`](../) at the repository root.
 
 `--network` accepts x402 CAIP-2 identifiers. Explicit networks must match the selected wallet and policy deployment.
 Solana addresses alone do not distinguish its clusters. EVM addresses alone do not identify a chain.
