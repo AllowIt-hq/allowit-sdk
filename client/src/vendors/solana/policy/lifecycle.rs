@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! allowit policy fund 10
-//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute TOKEN_ACCOUNT 0.25
+//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute RECIPIENT 0.25
 //! allowit policy tune 20
 //! allowit policy withdraw 5
 //! allowit policy close
@@ -71,25 +71,33 @@ pub(super) fn run(
                 "Import an owner-issued native executor bundle with its scoped approval capability",
             )
         })?;
-        let recipient = native(Key::parse(&pos[0]))?;
+        // Wallet recipients pay their associated token account, as the engine binds it.
+        let requested_recipient = native(Key::parse(&pos[0]))?;
         let action = configured("ALLOWIT_EXECUTION_ACTION", "transfer");
         let merchant = env_value("ALLOWIT_EXECUTION_MERCHANT");
         let context = execution_context()?;
-        let identity = native(ExecutionRequestIdentity::new(
-            policy,
-            &request_id,
-            &pos[1],
-            recipient,
-            &action,
-            &merchant,
-            &context,
+        let identity = native(execution_identity(
+            client,
+            journal,
+            requested_recipient,
+            |recipient| {
+                ExecutionRequestIdentity::new(
+                    policy,
+                    &request_id,
+                    &pos[1],
+                    recipient,
+                    &action,
+                    &merchant,
+                    &context,
+                )
+            },
         ))?;
         let executor = load_signer("ALLOWIT_EXECUTOR_KEYPAIR")?;
         native(lifecycle.submit_authorized(
             policy,
             owner,
             &identity,
-            || reporter.authorize(&identity, &context),
+            || reporter.authorize(&identity, requested_recipient, &context),
             |transaction| {
                 if transaction.payer != executor.public_key() {
                     return Err(allowit_native::error::Error::config(

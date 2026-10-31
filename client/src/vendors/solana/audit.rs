@@ -2,13 +2,13 @@
 //! Enabled by an executor bundle that carries an audit binding.
 use crate::{config::parse_origin, error::Error};
 use allowit_native::{
-    client::Binding,
+    client::{Binding, NativeClient, TOKEN_PROGRAM, associated_token_address},
     crypto::Key,
     error::Result,
     journal::FileJournal,
     lifecycle::{AuthorizedExecution, Record},
     native::{ApprovalCommitment, ApprovalRequest, ExecutionRequestIdentity, Simulation},
-    rpc::Rpc,
+    rpc::{self, Rpc},
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,24 @@ struct ExecuteResponse {
     message: String,
     partial_transaction: String,
     operation: PreparedOperation,
+    execution_binding: ExecutionBinding,
+}
+/// The engine's public binding of the execution policy that approved the request.
+/// The source hash and network are parsed to keep the exact response shape.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExecutionBinding {
+    policy_id: String,
+    revision: i64,
+    #[allow(dead_code)]
+    source_hash: String,
+    owner: String,
+    #[allow(dead_code)]
+    network: String,
+    #[serde(default)]
+    recipient_mode: Option<String>,
+    #[serde(default)]
+    recipient_mint: Option<Key>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -85,6 +103,56 @@ fn present_bool<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Option<bool>, D::Error> {
     bool::deserialize(deserializer).map(Some)
+}
+/// Return the account that the engine binds as the payment recipient.
+///
+/// A classic SPL Token account is a token-account policy recipient and is used
+/// as given. Any other recipient must be an ordinary wallet: wallet and
+/// any-wallet policies pay its associated token account for the vault mint,
+/// so the request identity binds that account. The request still sends the
+/// wallet, which the engine checks against the policy.
+pub(crate) fn execution_recipient(client: &NativeClient, requested: Key) -> Result<Key> {
+    let token_program = Key::parse(TOKEN_PROGRAM)?;
+    if rpc::account(client.rpc.as_ref(), requested, None)?
+        .is_some_and(|account| account.owner == token_program)
+    {
+        return Ok(requested);
+    }
+    client.recipient_token_account(requested, true)
+}
+/// Return the request identity for a payment to `requested`.
+///
+/// A saved request keeps the recipient it was signed with, so an identical
+/// retry recovers it even after the recipient accounts change or close. A new
+/// request binds the account from [`execution_recipient`].
+pub(crate) fn execution_identity(
+    client: &NativeClient,
+    journal: &FileJournal,
+    requested: Key,
+    identity_for: impl Fn(Key) -> Result<ExecutionRequestIdentity>,
+) -> Result<ExecutionRequestIdentity> {
+    let as_given = identity_for(requested)?;
+    let saved = journal.read::<Record>(&format!("request-{}", as_given.operation_id))?;
+    if let Some(saved) = saved.as_ref().filter(|record| record.method == "execute") {
+        let saved_digest = saved
+            .extra
+            .get("executionRequestDigest")
+            .and_then(Value::as_str);
+        let mut candidates = vec![as_given];
+        if let Some(derived) = client
+            .config
+            .mint
+            .and_then(|mint| associated_token_address(mint, requested, false).ok())
+        {
+            candidates.push(identity_for(derived)?);
+        }
+        for candidate in candidates {
+            if saved_digest == Some(candidate.digest()?.as_str()) {
+                return Ok(candidate);
+            }
+        }
+    }
+    identity_for(execution_recipient(client, requested)?)
 }
 fn unavailable() -> allowit_native::error::Error {
     allowit_native::error::Error::uncertain(
@@ -152,9 +220,13 @@ impl Reporter {
         }
         Ok(operation.clone())
     }
+    /// Request the server approval for `identity`. `requested_recipient` is
+    /// the recipient as the caller gave it; `identity.recipient` is the account
+    /// from [`execution_recipient`].
     pub fn authorize(
         &self,
         identity: &ExecutionRequestIdentity,
+        requested_recipient: Key,
         context: &Value,
     ) -> Result<AuthorizedExecution> {
         if identity.vault_policy_id != self.policy_id {
@@ -168,7 +240,7 @@ impl Reporter {
             "action": &identity.action,
             "merchant": &identity.merchant,
             "context": context,
-            "options": {"amount": &identity.amount, "recipient": identity.recipient},
+            "options": {"amount": &identity.amount, "recipient": requested_recipient},
         }))
         .map_err(|_| unavailable())?;
         if body.len() > 65_536 {
@@ -210,6 +282,25 @@ impl Reporter {
             });
         }
         let response: ExecuteResponse = serde_json::from_slice(&raw).map_err(|_| unavailable())?;
+        let execution = &response.execution_binding;
+        let recipient_mismatch = match execution.recipient_mode.as_deref() {
+            None => execution.recipient_mint.is_some(),
+            Some("wallet" | "any-wallet") => {
+                execution.recipient_mint != Some(response.binding.mint)
+                    || associated_token_address(response.binding.mint, requested_recipient, false)
+                        .ok()
+                        != Some(identity.recipient)
+            }
+            Some(_) => true,
+        };
+        if recipient_mismatch
+            || execution.policy_id != response.request.execution_policy_id
+            || execution.revision != response.request.execution_policy_revision
+            || (!execution.owner.is_empty()
+                && execution.owner != response.binding.owner.to_string())
+        {
+            return Err(unavailable());
+        }
         let operation = response.operation;
         let commitment = response.approval.digest()?;
         if operation.id != identity.operation_id
@@ -372,8 +463,13 @@ mod tests {
         }
     }
     fn check_report_before_broadcast(status: u16, mut operation: Value, expect_send: bool) {
+        // Parallel tests can read the same clock value, and a shared journal
+        // directory makes one of them fail on the other's journal lock.
+        static RUN: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "allowit-audit-{}",
+            "allowit-audit-{}-{}-{}",
+            std::process::id(),
+            RUN.fetch_add(1, Ordering::SeqCst),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -490,6 +586,137 @@ mod tests {
             check_authorization_response(case);
         }
     }
+    #[test]
+    fn engine_execution_binding_is_required_and_must_match_the_approval() {
+        for case in [
+            "missing-execution-binding",
+            "unknown-execution-binding-field",
+            "changed-execution-policy",
+            "changed-execution-revision",
+            "foreign-execution-owner",
+            "unknown-recipient-mode",
+        ] {
+            check_authorization_response(case);
+        }
+    }
+    #[test]
+    fn wallet_recipient_vaults_bind_the_derived_token_account() {
+        check_authorization_response("wallet");
+        check_authorization_response("any-wallet");
+    }
+    #[test]
+    fn wallet_recipient_vaults_reject_an_identity_bound_to_the_wallet() {
+        // The engine binds the derived token account, so a wallet-bound identity
+        // can never match its approval.
+        check_authorization_response("wallet-identity");
+        check_authorization_response("any-wallet-other-mint");
+    }
+    const WALLET: &str = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+    /// Finalized `getAccountInfo` answers; an unlisted address does not exist.
+    struct Accounts(Vec<(Key, Value)>);
+    impl Rpc for Accounts {
+        fn call(&self, method: &str, params: Value) -> Result<Value> {
+            assert_eq!(method, "getAccountInfo");
+            let value = self
+                .0
+                .iter()
+                .find(|(key, _)| params[0] == key.to_string())
+                .map_or(Value::Null, |(_, value)| value.clone());
+            Ok(json!({"context":{"slot":1},"value":value}))
+        }
+    }
+    fn account(owner: &str) -> Value {
+        json!({"owner":owner,"executable":false,"lamports":1,"data":["","base64"]})
+    }
+    fn recipient_client(accounts: Vec<(Key, Value)>) -> NativeClient {
+        NativeClient::new(
+            Config {
+                network: "solana:testnet".into(),
+                mint: Some(Key([4; 32])),
+                executor: None,
+                authority: None,
+                deployment: None,
+            },
+            Arc::new(Accounts(accounts)),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn execution_recipient_derives_wallet_token_accounts_and_keeps_token_accounts() {
+        let wallet = Key::parse(WALLET).unwrap();
+        let derived = associated_token_address(Key([4; 32]), wallet, false).unwrap();
+        // An unfunded or funded ordinary wallet pays its associated token account.
+        assert_eq!(
+            execution_recipient(&recipient_client(vec![]), wallet).unwrap(),
+            derived
+        );
+        let funded = recipient_client(vec![(wallet, account("11111111111111111111111111111111"))]);
+        assert_eq!(execution_recipient(&funded, wallet).unwrap(), derived);
+        // A token-account policy recipient is used as given.
+        let token = recipient_client(vec![(wallet, account(TOKEN_PROGRAM))]);
+        assert_eq!(execution_recipient(&token, wallet).unwrap(), wallet);
+        // Program-owned accounts and off-curve addresses are not wallets.
+        let program = recipient_client(vec![(wallet, account(LOADER))]);
+        assert!(execution_recipient(&program, wallet).is_err());
+        assert!(execution_recipient(&recipient_client(vec![]), derived).is_err());
+    }
+    #[test]
+    fn saved_requests_keep_their_signed_recipient_after_accounts_change() {
+        let policy =
+            Policy::generate("solana:testnet", "Spend up to 5 test tokens per day").unwrap();
+        let identity_for = |recipient| {
+            ExecutionRequestIdentity::new(
+                &policy,
+                "saved-recipient-001",
+                "1",
+                recipient,
+                "transfer",
+                "",
+                &json!({}),
+            )
+        };
+        let wallet = Key::parse(WALLET).unwrap();
+        let derived = associated_token_address(Key([4; 32]), wallet, false).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "allowit-saved-recipient-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let journal = FileJournal::new(&directory);
+        let save = |recipient| {
+            let mut saved = record();
+            saved.id = "saved-recipient-001".into();
+            saved.extra.insert(
+                "executionRequestDigest".into(),
+                json!(identity_for(recipient).unwrap().digest().unwrap()),
+            );
+            journal
+                .locked(|| journal.write("request-saved-recipient-001", &saved))
+                .unwrap();
+        };
+        let resolve = |accounts| {
+            execution_identity(&recipient_client(accounts), &journal, wallet, identity_for)
+                .unwrap()
+                .recipient
+        };
+        // A new request resolves the recipient from the chain.
+        assert_eq!(resolve(vec![]), derived);
+        assert_eq!(resolve(vec![(wallet, account(TOKEN_PROGRAM))]), wallet);
+        // A token-account request keeps its recipient after that account closes.
+        save(wallet);
+        assert_eq!(resolve(vec![]), wallet);
+        // A wallet request keeps its derived token account.
+        save(derived);
+        assert_eq!(resolve(vec![(wallet, account(TOKEN_PROGRAM))]), derived);
+        // A different saved request falls back to chain resolution and later
+        // fails the journal's request ID conflict check.
+        save(Key([8; 32]));
+        assert_eq!(resolve(vec![]), derived);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
     fn check_authorization_response(case: &str) {
         let owner = seeded(1, "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");
         let executor = seeded(2, "9hSR6S7WPtxmTojgo6GG3k4yDPecgJY292j7xrsUGWBu");
@@ -538,39 +765,71 @@ mod tests {
             balance: "5000000".into(),
         };
         let context = json!({"invoice":"fixed-1"});
-        let identity = ExecutionRequestIdentity::new(
-            &policy,
-            "server-authorize-001",
-            "1.0",
-            owner.public_key(),
-            "fetch fixed fixture",
-            "fixture merchant",
-            &context,
-        )
-        .unwrap();
+        let wallet_mode = matches!(
+            case,
+            "wallet" | "any-wallet" | "wallet-identity" | "any-wallet-other-mint"
+        );
+        let requested = if wallet_mode {
+            Key::parse(WALLET).unwrap()
+        } else {
+            owner.public_key()
+        };
+        // The engine binds the wallet's associated token account in wallet modes.
+        let server_recipient = if wallet_mode {
+            associated_token_address(Key([4; 32]), requested, false).unwrap()
+        } else {
+            requested
+        };
+        let client_recipient = if wallet_mode {
+            let accounts = if case == "wallet-identity" {
+                vec![(requested, account(TOKEN_PROGRAM))]
+            } else {
+                vec![]
+            };
+            execution_recipient(&recipient_client(accounts), requested).unwrap()
+        } else {
+            requested
+        };
+        let identity_for = |recipient| {
+            ExecutionRequestIdentity::new(
+                &policy,
+                "server-authorize-001",
+                "1.0",
+                recipient,
+                "fetch fixed fixture",
+                "fixture merchant",
+                &context,
+            )
+            .unwrap()
+        };
+        let server_identity = identity_for(server_recipient);
+        let identity = identity_for(client_recipient);
+        if case == "wallet-identity" {
+            assert_eq!(identity.recipient, requested);
+        }
         let request = ApprovalRequest {
             version: 1,
-            operation_id: identity.operation_id.clone(),
-            input_digest: identity.digest().unwrap(),
+            operation_id: server_identity.operation_id.clone(),
+            input_digest: server_identity.digest().unwrap(),
             vault_policy_id: policy.id.clone(),
             execution_policy_id: "fixture-execution-policy".into(),
             execution_policy_digest: policy.execution_policy_digest.clone(),
             execution_requirements_digest: policy.execution_requirements_digest.clone(),
             execution_policy_revision: 2,
-            recipient: identity.recipient,
-            amount_units: units(&identity.amount).unwrap(),
-            action: identity.action.clone(),
-            merchant: identity.merchant.clone(),
-            context_hash: identity.context_hash.clone(),
+            recipient: server_identity.recipient,
+            amount_units: units(&server_identity.amount).unwrap(),
+            action: server_identity.action.clone(),
+            merchant: server_identity.merchant.clone(),
+            context_hash: server_identity.context_hash.clone(),
             decision_code: "PASS".into(),
             evidence_digest: digest(b"[]"),
         };
         let approval = ApprovalCommitment::new(
             &policy,
             &state,
-            &identity.operation_id,
-            identity.recipient,
-            &identity.amount,
+            &server_identity.operation_id,
+            server_identity.recipient,
+            &server_identity.amount,
             200,
             &request.digest().unwrap(),
             None,
@@ -618,8 +877,24 @@ mod tests {
                 "decisionCode": "PASS",
                 "simulation": {"contextSlot":99,"unitsConsumed":10000,"transactionBytes":partial.len()},
             },
+            "executionBinding": {
+                "policyId": "fixture-execution-policy",
+                "revision": 2,
+                "sourceHash": "fixture-source-hash",
+                "owner": owner.public_key(),
+                "network": &policy.network,
+            },
         });
-        if case != "live" {
+        if matches!(
+            case,
+            "any-wallet" | "any-wallet-other-mint" | "unknown-recipient-mode"
+        ) {
+            response["executionBinding"]["recipientMode"] = json!("any-wallet");
+            response["executionBinding"]["recipientMint"] = json!(Key([4; 32]));
+        }
+        let expect_live = matches!(case, "live" | "wallet" | "any-wallet");
+        let expect_expired = case == "expired";
+        if !expect_live {
             response["operation"]["blockhashExpired"] = json!(true);
             response["operation"]["retryPreparationAllowed"] = json!(true);
         }
@@ -641,6 +916,25 @@ mod tests {
             }
             "changed-digest" => response["request"]["inputDigest"] = json!(digest(b"changed")),
             "changed-binding" => response["binding"]["executor"] = json!(owner.public_key()),
+            "missing-execution-binding" => {
+                response.as_object_mut().unwrap().remove("executionBinding");
+            }
+            "unknown-execution-binding-field" => {
+                response["executionBinding"]["recipientBinding"] = json!({})
+            }
+            "changed-execution-policy" => {
+                response["executionBinding"]["policyId"] = json!("other-execution-policy")
+            }
+            "changed-execution-revision" => response["executionBinding"]["revision"] = json!(3),
+            "foreign-execution-owner" => {
+                response["executionBinding"]["owner"] = json!(executor.public_key())
+            }
+            "unknown-recipient-mode" => {
+                response["executionBinding"]["recipientMode"] = json!("token-account")
+            }
+            "any-wallet-other-mint" => {
+                response["executionBinding"]["recipientMint"] = json!(Key([5; 32]))
+            }
             _ => (),
         }
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -676,6 +970,8 @@ mod tests {
             assert_eq!(body["merchant"], "fixture merchant");
             assert_eq!(body["context"]["invoice"], "fixed-1");
             assert_eq!(body["options"]["amount"], "1");
+            // The engine checks the recipient as the caller gave it.
+            assert_eq!(body["options"]["recipient"], json!(requested));
             let response = response.to_string();
             write!(
                 stream,
@@ -692,14 +988,14 @@ mod tests {
             policy.id,
         )
         .unwrap();
-        let result = reporter.authorize(&identity, &context);
-        if case == "live" {
+        let result = reporter.authorize(&identity, requested, &context);
+        if expect_live {
             let authorized = result.unwrap();
             assert_eq!(authorized.message, transaction.message);
             assert_eq!(authorized.partial_transaction, partial);
         } else {
             let error = result.err().unwrap();
-            if case == "expired" {
+            if expect_expired {
                 assert_eq!(error.code, 3);
                 assert!(error.message.contains("server-authorize-001"));
                 assert!(error.message.contains("no executor proof was signed"));

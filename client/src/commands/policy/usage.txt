@@ -36,7 +36,9 @@ Commands:
   allowit policy fund AMOUNT              fund the policy; prints the
                                           transaction's explorer link
   allowit policy execute RECIPIENT AMOUNT pay AMOUNT to RECIPIENT, a Solana
-                                          token account, under the policy
+                                          wallet or token account, under the
+                                          policy; a wallet receives in its
+                                          associated token account
   allowit policy status                   show the deployed policy's state
   allowit policy revoke                   revoke the deployed policy
   allowit policy withdraw AMOUNT          withdraw unspent funds

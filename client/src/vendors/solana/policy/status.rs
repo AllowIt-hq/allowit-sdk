@@ -2,7 +2,7 @@
 //! Reads the chain; needs no signer.
 //!
 //! ```text
-//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute TOKEN_ACCOUNT 0.25   # exit 5
+//! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute RECIPIENT 0.25   # exit 5
 //! allowit policy status --json
 //! ```
 use super::*;
