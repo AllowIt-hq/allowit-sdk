@@ -30,7 +30,9 @@ jobs:
           cp -R core "$isolated/"
           cp Cargo.lock "$isolated/core/"
           printf '\n[workspace]\n' >> "$isolated/core/Cargo.toml"
-          cargo metadata --offline --manifest-path "$isolated/core/Cargo.toml" --format-version 1 > /dev/null
+          # The Wasm build fetched only the wasm32 dependencies, so filter the
+          # offline resolve to that target. The pruned lock is the same.
+          cargo metadata --offline --filter-platform wasm32-unknown-unknown --manifest-path "$isolated/core/Cargo.toml" --format-version 1 > /dev/null
           python3 - "$isolated/core/Cargo.lock" Cargo.lock <<'PY'
           import sys, tomllib
           def packages(path):
