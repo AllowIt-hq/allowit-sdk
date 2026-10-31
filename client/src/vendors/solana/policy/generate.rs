@@ -1,9 +1,11 @@
 //! `allowit policy generate PROMPT`: compiles and saves a new local policy.
-//! Local only; never signs. Prints the generated Rust source.
+//! Local only; never signs. Prints the generated Rust source. The prompt must
+//! read "Spend up to N tokens per day" or "Spend up to N test tokens per day",
+//! optionally followed by " with PaySH discovery"; other rules exit 20.
 //!
 //! ```text
-//! allowit policy generate "Allow up to 2 USDC per action and 10 USDC a day"
-//! allowit policy deploy 10
+//! allowit policy generate "Spend up to 5 test tokens per day"
+//! ALLOWIT_OWNER=OWNER_PUBKEY ALLOWIT_REQUEST_ID=deploy-0001 allowit policy deploy 10
 //! ```
 use super::*;
 

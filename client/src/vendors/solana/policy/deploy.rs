@@ -3,7 +3,7 @@
 //! exits 10 until the owner signs.
 //!
 //! ```text
-//! allowit policy generate "Pay approved merchants up to 5 USDC a day"
+//! allowit policy generate "Spend up to 5 test tokens per day"
 //! ALLOWIT_OWNER=OWNER_PUBKEY ALLOWIT_REQUEST_ID=deploy-0001 allowit policy deploy 10
 //! # executor device, fresh directory (import refuses an existing policy)
 //! ALLOWIT_POLICY_DIR=.allowit-executor allowit policy import executor.json
