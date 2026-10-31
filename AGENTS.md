@@ -13,15 +13,19 @@ pushing. Preserve existing reviews and deployment restrictions.
 
 All packages share one Cargo workspace, one `Cargo.lock` and one version
 (`[workspace.package]`). Packages in this repository depend on each other by
-path. Select them with `-p allowit-sdk`, `-p allowit-sdk-engine`,
-`-p allowit-cli` or `-p allowit-policy-template`. Test `allowit-sdk` in its own
-cargo invocation: a workspace build unifies the CLI's serde_json features into
-core.
+path and are never pinned. Select them with `-p allowit-sdk`,
+`-p allowit-sdk-engine`, `-p allowit-cli`, `-p allowit-policy-template` or a
+rail host crate under `rails/` (the `rails` job in `.github/workflows/fast.yml`
+lists them). Test `allowit-sdk` in its own cargo invocation: a workspace build
+unifies the CLI's serde_json features into core.
 
-Rail crates are git dependencies with a full `rev` in the root
+Pins point one way. The rail repositories depend on this SDK; this SDK does
+not depend on Solana or Tempo. The only cross-repository git dependency is
+`allowit-stellar-wallet`, pinned by full `rev` in the root
 `[workspace.dependencies]`. `[workspace.metadata.allowit.track]` says which
-revision each rail repository must be pinned to. Run `scripts/build.sh` before
-pushing: it fails on a stale pin and builds the workspace and the Wasm module.
+revision it must be pinned to. Run `scripts/build.sh` before pushing: it fails
+on a stale pin and builds the workspace and the Wasm module.
 `scripts/build.sh --update` rewrites stale pins and `Cargo.lock`. The root
-`[patch]` builds the rail crates against `core/`, because they depend on
-`allowit-sdk` themselves.
+`[patch]` builds `allowit-stellar-wallet` against `core/`, because it depends
+on `allowit-sdk` itself. Remove the patch and the pin when that crate moves into
+`rails/` after `stellar-core` merges.

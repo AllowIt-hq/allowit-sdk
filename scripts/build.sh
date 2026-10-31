@@ -29,13 +29,24 @@ esac
 workspaces=$(git ls-files -- '*Cargo.toml' | while read -r m; do
   if grep -q '^\[workspace\]' "$m"; then echo "$m"; fi
 done)
-meta=$(for m in $workspaces; do
-  cargo metadata --no-deps --format-version 1 --manifest-path "$m"
-done | jq -s '{packages: (map(.packages) | add), track: (map(.metadata.allowit.track // {}) | add)}')
+all=""
+for m in $workspaces; do
+  one=$(cargo metadata --no-deps --format-version 1 --manifest-path "$m") \
+    || { echo "$m: cargo metadata failed" >&2; exit 1; }
+  all="$all$one"$'\n'
+done
+meta=$(jq -s '{packages: (map(.packages) | add),
+               tracks: map(.metadata.allowit.track // {} | to_entries[])}' <<<"$all")
 
 if [ "$(jq '[.packages[].version] | unique | length' <<<"$meta")" != 1 ]; then
   echo "packages must share one version:" >&2
   jq -r '.packages[] | "  \(.name) \(.version)"' <<<"$meta" >&2
+  exit 1
+fi
+conflicts=$(jq -r '.tracks | group_by(.key)[] | select(map(.value) | unique | length > 1)
+                   | .[0].key' <<<"$meta")
+if [ -n "$conflicts" ]; then
+  echo "workspaces track these repositories differently: $conflicts" >&2
   exit 1
 fi
 
@@ -45,12 +56,18 @@ pins=$(jq -r '
    | [(.source | ltrimstr("git+") | sub("[?#].*"; "")),
       ([.source | capture("[?&]rev=(?<r>[^&#]+)").r] | first // "-"),
       .name] | @tsv] | unique[]' <<<"$meta")
+urls=$(cut -f1 <<<"$pins" | sed '/^$/d' | sort -u)
+clashes=$(for url in $urls; do basename "$url" .git; done | sort | uniq -d)
+if [ -n "$clashes" ]; then
+  echo "different git URLs share a repository name: $clashes" >&2
+  exit 1
+fi
 
 failed=0
 stale=""
-for url in $(cut -f1 <<<"$pins" | sort -u); do
+for url in $urls; do
   repo=$(basename "$url" .git)
-  spec=$(jq -c --arg r "$repo" '.track[$r] // empty' <<<"$meta")
+  spec=$(jq -c --arg r "$repo" 'first(.tracks[] | select(.key == $r) | .value) // empty' <<<"$meta")
   case "$spec" in
     '"head"') ref=HEAD ;;
     '{"branch":'*) ref=refs/heads/$(jq -r .branch <<<"$spec") ;;

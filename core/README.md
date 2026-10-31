@@ -1,6 +1,6 @@
 # Allowit SDK core
 
-The `allowit-sdk` package (library `allowit_sdk`) defines the Allowit policy language. It compiles restricted Rust policy source to validated IR and evaluates that IR. The compiler and the evaluator do no I/O. Three feature-gated modules do: `lsp::run_stdio` (`compiler`) serves the language server on stdin and stdout, `client` (`client`) reads environment variables and local files, and `transport` (`transport`) makes blocking HTTP requests. The `engine/` and `cli/` crates in this workspace and the rail repositories depend on it.
+The `allowit-sdk` package (library `allowit_sdk`) defines the Allowit policy language. It compiles restricted Rust policy source to validated IR and evaluates that IR. The compiler and the evaluator do no I/O. Three feature-gated modules do: `lsp::run_stdio` (`compiler`) serves the language server on stdin and stdout, `client` (`client`) reads environment variables and local files, and `transport` (`transport`) makes blocking HTTP requests. The `engine/`, `cli/` and `rails/` crates in this workspace and the rail repositories depend on it.
 
 ## Modules
 

@@ -1,30 +1,45 @@
 [workspace]
 resolver = "3"
-members = ["core", "engine", "cli", "cli/templates/policy"]
+members = [
+    "core",
+    "engine",
+    "cli",
+    "cli/templates/policy",
+    "rails/solana/delegated-x402",
+    "rails/solana/native",
+    "rails/solana/paysh-catalog",
+    "rails/solana/paysh-cooperating",
+    "rails/solana/paysh-stock",
+    "rails/solana/provider-google-air-quality",
+    "rails/solana/provider-open-meteo",
+    "rails/solana/service-rpc",
+    "rails/solana/service-upstreams",
+    "rails/solana/solana-vendor",
+    "rails/tempo",
+    "rails/tempo/services",
+]
 
 # Every package in this repository builds at this version.
 [workspace.package]
 version = "0.3.0"
 
-# The revision each rail repository must be pinned to. scripts/build.sh checks
-# every git dependency below against this table and fails on a stale pin.
+# The revision each git repository must be pinned to. scripts/build.sh checks
+# every git dependency against this table and fails on a stale pin.
 [workspace.metadata.allowit.track]
-allowit-contracts-solana = "head"
-allowit-contracts-tempo = "head"
 # allowit-stellar-wallet exists only on stellar-core until that branch merges.
 allowit-contracts-stellar = { branch = "stellar-core" }
 
-# Rail crates, pinned by full commit.
 [workspace.dependencies]
-allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
-allowit-solana-vendor = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
-allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
-allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
-allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
-allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
-allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
-allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "811fd423c34d0c9cd8ce4f4d7f4ab9c196f5acc7" }
-allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "811fd423c34d0c9cd8ce4f4d7f4ab9c196f5acc7" }
+allowit-sdk = { path = "core", default-features = false }
+allowit-native = { path = "rails/solana/native" }
+allowit-solana-vendor = { path = "rails/solana/solana-vendor" }
+allowit-solana-service-upstreams = { path = "rails/solana/service-upstreams" }
+allowit-solana-service-rpc = { path = "rails/solana/service-rpc" }
+allowit-solana-delegated-x402 = { path = "rails/solana/delegated-x402" }
+allowit-vendor-paysh-stock = { path = "rails/solana/paysh-stock" }
+allowit-solana-paysh-cooperating = { path = "rails/solana/paysh-cooperating" }
+allowit-tempo = { path = "rails/tempo" }
+allowit-tempo-services = { path = "rails/tempo/services" }
 allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "2415bff42c972281fd4648bdbdc44dcf3cfccf82" }
 
 [profile.release]
@@ -34,7 +49,9 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-# The rail crates depend on allowit-sdk from GitHub. This patch builds them
-# against core/ instead, so the workspace links one allowit-sdk at one version.
+# allowit-stellar-wallet on stellar-core depends on an older allowit-sdk from
+# GitHub, and the CLI passes allowit-sdk types to it. This patch builds it
+# against core/ so the workspace links one allowit-sdk. Remove it when
+# allowit-stellar-wallet moves into rails/ after stellar-core merges.
 [patch."https://github.com/allowit-hq/allowit-sdk.git"]
 allowit-sdk = { path = "core" }

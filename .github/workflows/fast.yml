@@ -46,6 +46,29 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: scripts/build.sh
+  rails:
+    name: Rail host crates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RAILS: >-
+        -p allowit-native -p allowit-solana-vendor
+        -p allowit-solana-service-upstreams -p allowit-solana-service-rpc
+        -p allowit-vendor-google-air-quality -p allowit-vendor-open-meteo
+        -p allowit-vendor-paysh-catalog -p allowit-solana-delegated-x402
+        -p allowit-vendor-paysh-stock -p allowit-solana-paysh-cooperating
+        -p allowit-tempo -p allowit-tempo-services
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked $RAILS
+      - run: cargo test --locked -p allowit-native --features serde_json/preserve_order
+      - run: cargo test --locked -p allowit-tempo --features client
+      - run: cargo clippy --locked $RAILS --all-targets -- -D warnings
+      - run: cargo clippy --locked -p allowit-tempo --features client --all-targets -- -D warnings
   scalar-policy:
     name: Scalar policy (${{ matrix.selector }})
     runs-on: ubuntu-24.04

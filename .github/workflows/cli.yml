@@ -5,6 +5,7 @@ on:
       - "core/**"
       - "engine/**"
       - "cli/**"
+      - "rails/**"
       - "docs/examples/**"
       - "Cargo.toml"
       - "Cargo.lock"
