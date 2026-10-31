@@ -3,6 +3,8 @@
 //!
 //! ```text
 //! allowit policy deploy 10            # owner signs and exports executor.json
+//! # executor device, fresh directory (import refuses an existing policy)
+//! export ALLOWIT_POLICY_DIR=.allowit-executor
 //! allowit policy import executor.json
 //! allowit policy status
 //! ```

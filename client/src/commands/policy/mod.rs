@@ -8,15 +8,20 @@
 //! approves an installed policy; `tempo:*` supports only `import` and `execute`.
 //!
 //! ```text
+//! # Owner device
 //! export ALLOWIT_POLICY_DIR=.allowit ALLOWIT_NETWORK=solana:testnet
 //! allowit policy generate "Pay up to 5 USDC a day to approved merchants"
 //! ALLOWIT_OWNER=OWNER_PUBKEY ALLOWIT_REQUEST_ID=deploy-0001 \
-//!   allowit policy deploy 10            # owner signs in the browser
+//!   allowit policy deploy 10      # owner signs in the browser, exports executor.json
+//! # Executor device: import into a fresh directory; import refuses a
+//! # directory that already holds a policy
+//! export ALLOWIT_POLICY_DIR=.allowit-executor ALLOWIT_NETWORK=solana:testnet
 //! allowit policy import executor.json
 //! ALLOWIT_REQUEST_ID=pay-0001 allowit policy execute TOKEN_ACCOUNT 0.25
 //! allowit policy status --json
-//! allowit policy tune-action 2         # per-action limit, owner key
-//! allowit policy revoke --json         # stop the policy, owner key
+//! # Owner device again (ALLOWIT_POLICY_DIR=.allowit, ALLOWIT_OWNER_KEYPAIR)
+//! allowit policy tune-action 2    # change the per-action limit
+//! allowit policy revoke --json    # revoke the deployed policy
 //! ```
 use crate::{
     error::{Error, Result, quoted},
