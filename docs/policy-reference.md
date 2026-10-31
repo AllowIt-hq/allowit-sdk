@@ -45,7 +45,7 @@ async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult {
 
 ### Named state on Stellar
 
-A functional Stellar policy receives the request, the owner's `Grant` and the current `State` separately, and returns the exact spent map to persist. `grant_get` and `state_get` read a typed `u64`, Boolean or string with a source default. `state_set`, `state_remove` and `with_spent` return changed copies, and only the final returned map persists. A denial or failed native effect rolls the operation back. The [client README](../client/README.md) shows a complete example.
+A functional Stellar policy receives the request, the owner's `Grant` and the current `State` separately, and returns the exact spent map to persist. `grant_get` and `state_get` read a typed `u64`, Boolean or string with a source default. `state_set`, `state_remove` and `with_spent` return changed copies, and only the final returned map persists. A denial or failed native effect rolls the operation back. The [CLI README](../cli/README.md) shows a complete example.
 
 ## Stellar engine selection
 

@@ -40,7 +40,7 @@ pub async fn evaluate(ctx: &Context) -> PolicyResult {
 }
 ```
 
-That is [`examples/research.rs`](examples/research.rs), and it compiles as written. The SDK turns it into a validated intermediate representation (IR) with content hashes, a human-readable workflow, and a list of what the policy needs at runtime. Hosts evaluate the IR; they never execute arbitrary code.
+That is [`docs/examples/research.rs`](docs/examples/research.rs), and it compiles as written. The SDK turns it into a validated intermediate representation (IR) with content hashes, a human-readable workflow, and a list of what the policy needs at runtime. Hosts evaluate the IR; they never execute arbitrary code.
 
 ### Features
 
@@ -62,10 +62,10 @@ git clone https://github.com/allowit-hq/allowit-sdk.git
 cd allowit-sdk
 
 # Compile a policy and inspect its IR, hashes and workflow
-cargo run --locked -- compile examples/research.rs
+cargo run --locked --bin allowit -- compile docs/examples/research.rs
 
 # Evaluate it against a request, as the hosted oracle would
-cargo run --locked -- evaluate examples/research.rs examples/context.json oracle
+cargo run --locked --bin allowit -- evaluate docs/examples/research.rs docs/examples/context.json oracle
 ```
 
 The second command prints a decision (abridged below; the full output also carries the evidence key, source span and hashes). For this example it is `SEMANTIC_EVIDENCE_REQUIRED`: the policy asks a preference question, and nobody has assessed it yet. That is the SDK doing its job. A host obtains an assessment bound to this request, re-evaluates, and only then can the request pass.
@@ -88,10 +88,10 @@ The second command prints a decision (abridged below; the full output also carri
 More to try:
 
 ```sh
-cargo run --locked -- workflow examples/approval.rs                                   # owner-facing step list
-cargo run --locked -- evaluate examples/approval.rs examples/context.json contract    # same policy, contract profile
-cargo run --locked -- evaluate examples/green-investments.rs examples/green-context.json oracle
-cargo run --locked -- registry                                                        # every supported function, with help text
+cargo run --locked --bin allowit -- workflow docs/examples/approval.rs                                        # owner-facing step list
+cargo run --locked --bin allowit -- evaluate docs/examples/approval.rs docs/examples/context.json contract     # same policy, contract profile
+cargo run --locked --bin allowit -- evaluate docs/examples/green-investments.rs docs/examples/green-context.json oracle
+cargo run --locked --bin allowit -- registry                                                                  # every supported function, with help text
 ```
 
 ## Write a policy
@@ -100,8 +100,8 @@ cargo run --locked -- registry                                                  
 
 A policy has one entrypoint and reads everything through `ctx`. Two forms are accepted:
 
-- `pub async fn evaluate(ctx: &Context) -> PolicyResult` with `use allowit::prelude::*;`, as in the [examples](examples/).
-- `async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult` with `use allowit::v1::prelude::*;`, a `PolicyParams` struct and a private `new()` constructor, as in the [policy template](templates/policy/). Constructor values are immutable configuration; changing them means a new approved artifact.
+- `pub async fn evaluate(ctx: &Context) -> PolicyResult` with `use allowit::prelude::*;`, as in the [examples](docs/examples/).
+- `async fn _execute(ctx: &Context, params: &PolicyParams) -> PolicyResult` with `use allowit::v1::prelude::*;`, a `PolicyParams` struct and a private `new()` constructor, as in the [policy template](cli/templates/policy/). Constructor values are immutable configuration; changing them means a new approved artifact.
 
 Guards are sequential. Each `?` stops evaluation with a reason the owner can read.
 
@@ -126,20 +126,20 @@ Some rules are not arithmetic. `check_preference` asks one question in plain lan
 
 ### Runtime context
 
-Evaluation takes a JSON request such as [`examples/context.json`](examples/context.json): amount and allocation in base units, action, merchant, recipient, token, network, the current time, the owner's original intent, and a `runtime_context` object the policy can read with `context_u64`. The [agent skill](skills/allowit/SKILL.md) walks through assembling one.
+Evaluation takes a JSON request such as [`docs/examples/context.json`](docs/examples/context.json): amount and allocation in base units, action, merchant, recipient, token, network, the current time, the owner's original intent, and a `runtime_context` object the policy can read with `context_u64`. The [agent skill](cli/skills/allowit/SKILL.md) walks through assembling one.
 
 ### A template to start from
 
 ```sh
-cargo test --locked --manifest-path templates/policy/Cargo.toml
-cargo run --locked -- compile templates/policy/src/policy.rs
+cargo test --locked -p allowit-policy-template
+cargo run --locked --bin allowit -- compile cli/templates/policy/src/policy.rs
 ```
 
-[`templates/policy`](templates/policy/) is an ordinary Cargo crate whose `src/policy.rs` you replace with your own source. It type-checks with `rustc` and compiles through the real policy compiler, so your editor and the SDK agree.
+[`cli/templates/policy`](cli/templates/policy/) is an ordinary Cargo crate whose `src/policy.rs` you replace with your own source. It type-checks with `rustc` and compiles through the real policy compiler, so your editor and the SDK agree.
 
 ## The `allowit` CLI
 
-This repository's binary is the developer tool for policy source. (The agent-facing `allowit` command that sends requests to a running Allowit service lives in [allowit-cli](https://github.com/allowit-hq/allowit-cli); use `cargo run --locked --` here to keep the two apart.)
+The `allowit` binary in [`cli/`](cli/) has two command families. The agent-facing commands (`show`, `eval`, `exec`, `status`, `policy`, `wallet` and the backend groups such as `call` and `curl`) send requests to a running Allowit service; [the CLI README](cli/README.md) describes them. The policy compiler commands below run the SDK locally and send nothing:
 
 ```
 allowit compile|check|workflow POLICY.rs
@@ -150,7 +150,7 @@ allowit json [REQUEST.json|-]
 allowit lsp
 ```
 
-Pass `-` to read a policy or a JSON request from stdin. The JSON commands print pretty output and exit non-zero when `ok` is false.
+Pass `-` to read a policy or a JSON request from stdin. The JSON commands print pretty output and exit 1 when `ok` is false.
 
 | Command | What you get |
 | --- | --- |
@@ -163,7 +163,7 @@ Pass `-` to read a policy or a JSON request from stdin. The JSON commands print 
 
 ## Embed it
 
-The crate is the wire protocol. Native callers use `allowit_sdk::process_value` or `process_json` with the same request objects the CLI builds:
+The core crate ([`core/`](core/), package `allowit-sdk`) is the wire protocol. Native callers use `allowit_sdk::process_value` or `process_json` with the same request objects the CLI builds:
 
 ```json
 {"operation":"compile","source":"use allowit::prelude::*; pub async fn evaluate(ctx: &Context) -> PolicyResult { Ok(()) }"}
@@ -173,16 +173,21 @@ Cargo features select how much of the SDK you take along:
 
 | Feature | Purpose |
 | --- | --- |
-| `std`, `compiler`, `oracle-ledger` | The defaults: full compiler, CLI and purchase-tier ledger support |
+| `std`, `compiler`, `oracle-ledger` | The defaults: full compiler, language server and purchase-tier ledger support |
 | `typed-workflow` | Typed workflow records for hosts and services (pulled in by `compiler`) |
 | `compact-contract-validation` | Error codes instead of diagnostics for `no_std` contracts |
+| `client`, `service`, `transport` | Client primitives, rail-agnostic service contracts and bounded service transports |
+| `contract`, `contract-stellar` | The chain contract artifact and execution state that the rail contracts share |
 | *(none)* | The bare `no_std + alloc` interpreter that the contract adapters use |
+
+[The core README](core/README.md) lists every module and feature.
 
 For WebAssembly hosts:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo rustc --locked --release --lib --target wasm32-unknown-unknown --crate-type cdylib
+cargo rustc --locked -p allowit-sdk --release --lib --target wasm32-unknown-unknown --crate-type cdylib
+node core/tests/test-wasm.mjs
 ```
 
 The module at `target/wasm32-unknown-unknown/release/allowit_sdk.wasm` exports `alloc(len)`, `process(ptr, len)` and `dealloc(ptr, len)`; `process` takes UTF-8 JSON and packs the output pointer and length into one `u64`. Hosts set memory and time limits and discard an instance after any trap.
@@ -190,7 +195,7 @@ The module at `target/wasm32-unknown-unknown/release/allowit_sdk.wasm` exports `
 To type-check policy source in an ordinary Rust project, depend on the facade:
 
 ```toml
-allowit = { package = "allowit-sdk", path = "../allowit-sdk" }
+allowit = { package = "allowit-sdk", path = "../allowit-sdk/core" }
 ```
 
 The facade is for your editor. Compilation and evaluation still go through the SDK.
@@ -199,29 +204,28 @@ The facade is for your editor. Compilation and evaluation still go through the S
 
 | Path | Crate or package | What it is |
 | --- | --- | --- |
-| [`src/`](src/) | `allowit-sdk` | Compiler, interpreter, registry, workflow projection, protocol, CLI, LSP |
-| [`examples/`](examples/) | | Three policies and two request contexts used throughout this README |
-| [`templates/policy/`](templates/policy/) | `allowit-policy-template` | A Cargo crate to write and type-check your own policy in |
-| [`client/`](client/) | `allowit-client` | The client facade that [allowit-cli](https://github.com/allowit-hq/allowit-cli) is built on: agent keys, wallet setup, owner approvals, request signing |
-| [`client-core/`](client-core/) | `allowit-client-core` | Shared configuration, errors, journals and private storage for clients |
-| [`services/`](services/) | `allowit-services` | Typed facade over service vendors and rail protocols |
-| [`contracts/`](contracts/) | `allowit-contract-core`, `allowit-solana` | On-chain adapters that evaluate compiled IR and move tokens in the same transaction |
-| [`stellar-rust/`](stellar-rust/) | `allowit-stellar-wallet` | Stellar wallet preparation, dual-party authorization and settlement |
-| [`native-rust/`](native-rust/) | `allowit-native` | Native Solana policy lifecycle in Rust |
-| [`native/`](native/) | `@allowit/native` | The same lifecycle for Node 22+, with the owner browser handoff |
-| [`tempo-rust/`](tempo-rust/) | `allowit-tempo` | Compatibility re-export of the Tempo vendor crate |
-| [`docs/`](docs/) | | Policy language reference, execution requirements, native vault and Tempo vault notes |
-| [`skills/allowit/`](skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
+| [`core/`](core/) | `allowit-sdk` | Compiler, interpreter, registry, workflow projection, protocol, LSP, and the client, service, transport and contract modules |
+| [`engine/`](engine/) | `allowit-sdk-engine` | Backend requests, wallets, network routing and the service facade, with no terminal I/O |
+| [`cli/`](cli/) | `allowit-cli` | The `allowit` binary: commands, vendor command code and packaging |
+| [`cli/templates/policy/`](cli/templates/policy/) | `allowit-policy-template` | A Cargo crate to write and type-check your own policy in |
+| [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
+| [`docs/`](docs/) | | Policy language reference and execution requirements |
+| [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README |
 | [`verification/`](verification/) | | Lean specifications, obligations and expected outcomes |
-| [`scripts/`](scripts/) | | WebAssembly smoke test and license packaging |
+
+All crates share one Cargo workspace and one `Cargo.lock`. Rail code lives in the rail repositories, which this workspace pins by commit:
+
+- [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana): the Solana native SDK (`allowit-native`, and `@allowit/native` for Node), the mandate program and the Solana service and PaySH crates.
+- [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar): the Stellar rail core (`allowit-stellar-wallet`) in `stellar/core`.
+- [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo): the Tempo vendor crate (`allowit-tempo`) and Tempo services.
 
 ## How this fits the Allowit system
 
 Allowit is a small constellation of repositories, and this one sits in the middle.
 
 - **This SDK** defines the policy language and decides requests. Everything else trusts its hashes and its IR.
-- [**allowit-cli**](https://github.com/allowit-hq/allowit-cli) is the command an agent actually runs: `show`, `eval`, `exec` and `status` against a running Allowit service, built on this repository's `client/` facade.
-- [**allowit-contracts-solana**](https://github.com/allowit-hq/allowit-contracts-solana), [**allowit-contracts-stellar**](https://github.com/allowit-hq/allowit-contracts-stellar) and [**allowit-contracts-tempo**](https://github.com/allowit-hq/allowit-contracts-tempo) hold the on-chain custody that enforces an approved policy on each rail. `contracts/`, `stellar-rust/` and `tempo-rust/` here are the adapters that speak to them.
+- **The `allowit` CLI** in [`cli/`](cli/) is the command an agent actually runs: `show`, `eval`, `exec` and `status` against a running Allowit service, built on [`engine/`](engine/).
+- [**allowit-contracts-solana**](https://github.com/allowit-hq/allowit-contracts-solana), [**allowit-contracts-stellar**](https://github.com/allowit-hq/allowit-contracts-stellar) and [**allowit-contracts-tempo**](https://github.com/allowit-hq/allowit-contracts-tempo) hold the on-chain custody that enforces an approved policy on each rail, together with the rail crates that the engine and the CLI use to speak to it.
 - The hosted Allowit service and app, introduced at [allowit.xyz](https://allowit.xyz), own HTTP transport, owner input and the durable record of each request. Restricted Rust stays the source of truth for what an agent may do.
 
 A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can read the exact source that a wallet enforces, and a contract can verify that it is running the policy the owner approved.
@@ -230,13 +234,17 @@ A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can
 
 ```sh
 cargo fmt --all --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
-cargo check --locked --no-default-features --lib     # the no_std core still builds
+cargo test --locked -p allowit-sdk
+cargo test --locked -p allowit-sdk-engine -p allowit-cli -p allowit-policy-template
+cargo clippy --locked -p allowit-sdk --all-targets -- -D warnings
+cargo clippy --locked -p allowit-sdk-engine -p allowit-cli --all-targets -- -D warnings
+cargo check --locked -p allowit-sdk --no-default-features --lib     # the no_std core still builds
 ```
 
-CI pins Rust 1.98.0 and also exercises the individual feature flags, the WebAssembly build (`node scripts/test-wasm.mjs`), and each sub-crate under its own manifest. The workflows in [`.github/workflows/`](.github/workflows/) are the authoritative list; [`AGENTS.md`](AGENTS.md) explains how to pick the right ones for a change.
+Test core in its own cargo invocation. A whole-workspace build unifies the CLI's serde_json `arbitrary_precision` and `preserve_order` features into core, so it does not test core as the rail crates and WebAssembly hosts build it.
+
+CI pins Rust 1.98.0 and also exercises the individual feature flags and the WebAssembly build (`node core/tests/test-wasm.mjs`). The workflows in [`.github/workflows/`](.github/workflows/) are the authoritative list; [`AGENTS.md`](AGENTS.md) explains how to pick the right ones for a change.
 
 ## License
 
-Allowit-authored code is released under the [MIT License](LICENSE). Dependencies keep their own terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [`licenses/`](licenses/) directory, and ship both with any redistributed binary.
+Allowit-authored code is released under the [MIT License](LICENSE). Dependencies keep their own terms. Release builds generate the third-party notices with [cargo-about](https://github.com/EmbarkStudios/cargo-about).

@@ -1,16 +1,10 @@
 /target/
-/native-rust/target/
-/tempo-rust/target/
-/crates/paysh-interface/target/
 *.log
 .DS_Store
-
-/dist-native/
 
 # Task evidence belongs to the main project wiki.
 /artifacts/
 /evidence/
 
-/templates/policy/target/
 __pycache__/
 *.py[cod]

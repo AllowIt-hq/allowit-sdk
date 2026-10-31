@@ -7,9 +7,9 @@ Writing a policy should feel like writing Rust, because it is Rust. This templat
 ## Try it
 
 ```sh
-cargo test --locked --manifest-path templates/policy/Cargo.toml
-cargo run --locked -- compile templates/policy/src/policy.rs
-cargo run --locked -- evaluate templates/policy/src/policy.rs examples/context.json contract
+cargo test --locked -p allowit-policy-template
+cargo run --locked --bin allowit -- compile cli/templates/policy/src/policy.rs
+cargo run --locked --bin allowit -- evaluate cli/templates/policy/src/policy.rs docs/examples/context.json contract
 ```
 
 The shipped `src/policy.rs` is the smallest valid policy. It builds, and it denies every request:

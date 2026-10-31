@@ -1,19 +1,32 @@
-# Allowit client SDK
+# Allowit CLI
 
-*The Rust facade behind the `allowit` command: local agent keys, wallet setup, owner approvals and signed requests.*
+*The `allowit` command: local agent keys, wallet setup, owner approvals, signed requests and the policy compiler tools.*
 
-This crate (`allowit-client`) is what [allowit-cli](https://github.com/allowit-hq/allowit-cli) is built on. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Rail adapters live in their vendor repositories and depend on the shared core packages: [`allowit-client-core`](../client-core/) provides errors, configuration and private storage, and the compiler and evaluator remain [`allowit-sdk`](../) at the repository root.
+This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Backend requests, wallets and the service facade come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
+
+```sh
+cargo run --locked --bin allowit -- help
+cargo build --locked --release --bin allowit
+```
+
+Release builds use the workspace release profile (`lto`, `opt-level = "s"`, `panic = "abort"`, `strip`).
 
 `--network` accepts x402 CAIP-2 identifiers. Explicit networks must match the selected wallet and policy deployment.
 Solana addresses alone do not distinguish its clusters. EVM addresses alone do not identify a chain.
 
 Source layout:
 
-- `src/commands/<command>/` holds one top-level CLI command. Each subcommand has its own file.
+- `src/main.rs` is the binary. `src/lib.rs` runs a command with process-local environment and standard streams.
+- `src/commands/<command>/` holds one top-level CLI command. Each subcommand has its own file. The
+  policy compiler commands (`compile`, `check`, `workflow`, `evaluate`, `stellar-native`, `registry`,
+  `json`, `lsp`) share `src/commands/compiler.rs` and run the SDK locally.
 - `src/vendors/<name>/` holds each vendor connection: `paysh`, `solana`, `stellar` and `tempo`.
   Command code reaches a rail only through these modules.
-- `src/gateway/` holds the Allowit backend client and the input, operation and help helpers that the
-  backend commands share. `src/action/` holds the pipeline that `show`, `eval`, `exec` and `status` share.
+- `src/gateway/` holds the input, operation and help helpers that the backend commands share. The
+  backend transport is the engine gateway. `src/action/` holds the pipeline that `show`, `eval`, `exec`
+  and `status` share.
+- [`templates/policy/`](templates/policy/) is the copy-paste policy crate, and
+  [`skills/allowit/`](skills/allowit/SKILL.md) is the agent skill.
 
 Global flags can come before the command name, for example `allowit --json show POLICY` or
 `allowit --json policy status`.
@@ -89,7 +102,7 @@ and replacement permission. A signed uncertain transaction is never replaced thr
 
 ## Owner operations
 
-`allowit_client::admin::Admin<V>` delegates each operation to its bound vendor:
+`allowit_cli::admin::Admin<V>` delegates each operation to its bound vendor:
 `deploy_policy(deployment_version, artifact)`, `set_pause(paused, deployment_version)` and
 `recover_funds(token)`. The shared SDK defines separate capability traits without fallback implementations.
 Vendor packages own native arguments, trusted state reads, authorization and transaction preparation.
