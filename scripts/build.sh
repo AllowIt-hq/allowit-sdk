@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Check cross-repository pins, then build the workspace.
+# Check cross-repository pins, then build.
 #
 #   scripts/build.sh            fail on a stale pin, then build
 #   scripts/build.sh --check    only check the pins
 #   scripts/build.sh --update   rewrite stale pins and Cargo.lock, then build
 #
-# [workspace.metadata.allowit.track] in the root Cargo.toml says which
-# revision each git repository must be pinned to. Keys are repository names:
+# [workspace.metadata.allowit.track] says which revision each git repository
+# must be pinned to. Keys are repository names:
 #
 #   repo = "head"                  the tip of the remote default branch
 #   repo = { branch = "name" }     the tip of that branch
 #   repo = { version = "1.2.3" }   the commit of tag v1.2.3
 #
 # Every git dependency needs an entry and a full `rev` in Cargo.toml.
-# Packages inside this repository use path dependencies and are not pinned.
+# Packages inside this repository use path dependencies, share one version
+# and are not pinned.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -25,15 +26,20 @@ case "${1-}" in
   *) echo "usage: scripts/build.sh [--check | --update]" >&2; exit 2 ;;
 esac
 
-meta=$(cargo metadata --no-deps --format-version 1)
+workspaces=$(git ls-files -- '*Cargo.toml' | while read -r m; do
+  if grep -q '^\[workspace\]' "$m"; then echo "$m"; fi
+done)
+meta=$(for m in $workspaces; do
+  cargo metadata --no-deps --format-version 1 --manifest-path "$m"
+done | jq -s '{packages: (map(.packages) | add), track: (map(.metadata.allowit.track // {}) | add)}')
 
 if [ "$(jq '[.packages[].version] | unique | length' <<<"$meta")" != 1 ]; then
-  echo "workspace packages must share one version:" >&2
+  echo "packages must share one version:" >&2
   jq -r '.packages[] | "  \(.name) \(.version)"' <<<"$meta" >&2
   exit 1
 fi
 
-# url, rev and package name of every git dependency in the workspace.
+# url, rev and package name of every git dependency.
 pins=$(jq -r '
   [.packages[].dependencies[] | select((.source // "") | startswith("git+"))
    | [(.source | ltrimstr("git+") | sub("[?#].*"; "")),
@@ -44,7 +50,7 @@ failed=0
 stale=""
 for url in $(cut -f1 <<<"$pins" | sort -u); do
   repo=$(basename "$url" .git)
-  spec=$(jq -c --arg r "$repo" '.metadata.allowit.track[$r] // empty' <<<"$meta")
+  spec=$(jq -c --arg r "$repo" '.track[$r] // empty' <<<"$meta")
   case "$spec" in
     '"head"') ref=HEAD ;;
     '{"branch":'*) ref=refs/heads/$(jq -r .branch <<<"$spec") ;;
@@ -77,7 +83,7 @@ if [ -n "$stale" ]; then
       sed -i.orig "s/${pair%%:*}/${pair##*:}/g" "$manifest" && rm "$manifest.orig"
     done
   done
-  cargo update --workspace
+  for m in $workspaces; do cargo update --workspace --manifest-path "$m"; done
 fi
 [ "$mode" = check ] && exit 0
 
