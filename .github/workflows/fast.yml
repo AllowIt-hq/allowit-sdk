@@ -22,6 +22,19 @@ jobs:
       - run: cargo fmt --all --check
       - run: "cargo test --locked -p allowit-sdk --features client --lib -- client::"
       - run: cargo clippy --locked -p allowit-sdk --features client --all-targets -- -D warnings
+  core-service:
+    name: Service and transport boundaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: "cargo test --locked -p allowit-sdk --features service,transport --lib -- service::"
+      - run: cargo test --locked -p allowit-sdk --features service,transport --test transport_rpc
+      - run: cargo clippy --locked -p allowit-sdk --features service,transport --all-targets -- -D warnings
   verifier-flows:
     name: Verifier (${{ matrix.flow }})
     runs-on: ubuntu-24.04

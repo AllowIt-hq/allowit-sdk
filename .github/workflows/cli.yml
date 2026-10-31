@@ -27,5 +27,6 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo test --locked -p allowit-sdk-engine -p allowit-cli
       - run: cargo clippy --locked -p allowit-sdk-engine -p allowit-cli --all-targets -- -D warnings
+      - run: cargo test --locked -p allowit-sdk-engine --features services
       - run: cargo clippy --locked -p allowit-sdk-engine --features services --all-targets -- -D warnings
       - run: cargo build --locked --bin allowit
