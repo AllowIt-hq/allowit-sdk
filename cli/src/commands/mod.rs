@@ -7,8 +7,10 @@
 //! `workflow`, `evaluate`, `stellar-native`, `registry`, `json`, `lsp`) are
 //! matched here. Backend command groups (`call`, `curl`, `wget`,
 //! `fetch`, `http`, `claude`, `codex`, `mcp`, `whoami`, `setup`, `skills`) go
-//! through [`gateway::args`] and call `/api/gateway/*` routes. `--network CAIP2`
-//! is extracted first and may appear anywhere before `--`.
+//! through [`gateway::args`] and call `/api/gateway/*` routes. For every
+//! command except the compiler commands, `--network CAIP2` is extracted first
+//! and may appear anywhere before `--`. The compiler commands skip network
+//! selection and print the SDK output without redaction or display escaping.
 //!
 //! ```text
 //! allowit help
@@ -48,6 +50,26 @@ use crate::{
     error::{self, Error, Result},
     gateway::{self, help::command_help},
 };
+
+/// The policy compiler commands. They run the SDK locally, select no
+/// network and read no environment.
+const COMPILER: &[&str] = &[
+    "compile",
+    "check",
+    "workflow",
+    "evaluate",
+    "stellar-native",
+    "registry",
+    "json",
+    "lsp",
+];
+
+/// True when the command (after any leading global flags) is a policy
+/// compiler command.
+pub(crate) fn is_compiler(args: &[String]) -> bool {
+    args.first()
+        .is_some_and(|name| COMPILER.contains(&name.as_str()))
+}
 
 pub(crate) fn dispatch(args: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
     if args.is_empty() {

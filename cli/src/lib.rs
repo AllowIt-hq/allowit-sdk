@@ -23,6 +23,7 @@ pub use vendors::solana::handoff;
 pub use vendors::stellar::{approval as stellar_approval, owner as stellar_owner};
 /// Runs the command with process-local environment and standard streams.
 pub fn run(args: Vec<String>) -> i32 {
+    let args = gateway::args::local_command_first(&args);
     let mut stdout = String::new();
     let mut stderr = String::new();
     let result = execute(&args, &mut stdout, &mut stderr);
@@ -33,6 +34,14 @@ pub fn run(args: Vec<String>) -> i32 {
             e.code
         }
     };
+    if commands::is_compiler(&args) {
+        // The policy compiler commands read no environment or credentials.
+        // They print the SDK output unchanged, as the former standalone
+        // compiler binary did.
+        let _ = std::io::stdout().write_all(stdout.as_bytes());
+        let _ = std::io::stderr().write_all(stderr.as_bytes());
+        return code;
+    }
     let stdout = safe_json_output(stdout);
     let _ = std::io::stdout().write_all(redact(stdout).as_bytes());
     let _ = std::io::stderr().write_all(redact(stderr).as_bytes());
@@ -76,6 +85,11 @@ pub(crate) fn flush_stderr(stderr: &mut String) {
 fn execute(args: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
     // Network inference reads the command name, so order it first.
     let args = gateway::args::local_command_first(args);
+    // The policy compiler commands are local. They take no network and do
+    // not read the wallet environment that network selection reads.
+    if commands::is_compiler(&args) {
+        return commands::dispatch(&args, stdout, stderr);
+    }
     let (args, network) = routing::extract(&args)?;
     routing::with_network(network, || commands::dispatch(&args, stdout, stderr))
 }
