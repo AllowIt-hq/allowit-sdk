@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod output;
 pub mod request;
 pub mod routing;
+#[cfg(feature = "services")]
 pub mod services;
 pub mod skill;
 pub mod typed_request;

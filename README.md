@@ -150,7 +150,7 @@ allowit json [REQUEST.json|-]
 allowit lsp
 ```
 
-Pass `-` to read a policy or a JSON request from stdin. The JSON commands print pretty output and exit 1 when `ok` is false.
+Pass `-` to read a policy or a JSON request from stdin. The JSON commands print pretty output and exit 1 when `ok` is false. These commands read no environment variables and select no network.
 
 | Command | What you get |
 | --- | --- |

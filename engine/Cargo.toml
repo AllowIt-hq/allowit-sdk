@@ -7,16 +7,30 @@ license = "MIT"
 publish = false
 description = "Allowit backend requests and service composition, with no terminal I/O"
 
+[features]
+# The typed service facade (`services`). It links the rail service crates;
+# the allowit binary does not enable it.
+services = [
+    "allowit-sdk/service",
+    "allowit-sdk/transport",
+    "dep:allowit-solana-service-upstreams",
+    "dep:allowit-solana-service-rpc",
+    "dep:allowit-solana-delegated-x402",
+    "dep:allowit-vendor-paysh-stock",
+    "dep:allowit-solana-paysh-cooperating",
+    "dep:allowit-tempo-services",
+]
+
 [dependencies]
-allowit-sdk = { path = "../core", default-features = false, features = ["std", "typed-workflow", "client", "service", "transport"] }
+allowit-sdk = { path = "../core", default-features = false, features = ["std", "typed-workflow", "client"] }
 allowit-stellar-wallet.workspace = true
 allowit-tempo = { workspace = true, features = ["client"] }
-allowit-solana-service-upstreams.workspace = true
-allowit-solana-service-rpc.workspace = true
-allowit-solana-delegated-x402.workspace = true
-allowit-vendor-paysh-stock.workspace = true
-allowit-solana-paysh-cooperating.workspace = true
-allowit-tempo-services.workspace = true
+allowit-solana-service-upstreams = { workspace = true, optional = true }
+allowit-solana-service-rpc = { workspace = true, optional = true }
+allowit-solana-delegated-x402 = { workspace = true, optional = true }
+allowit-vendor-paysh-stock = { workspace = true, optional = true }
+allowit-solana-paysh-cooperating = { workspace = true, optional = true }
+allowit-tempo-services = { workspace = true, optional = true }
 getrandom = "0.3"
 ed25519-dalek = "2"
 base64 = "0.22.1"

@@ -17,14 +17,14 @@
 | `wallet` | Local agent wallets for Solana, Stellar and Tempo |
 | `routing` | Network identifiers and the network selected for one command |
 | `gateway` | The `/api/gateway/*` transport and its shared flag types |
-| `services` | The typed service facade |
+| `services` | The typed service facade (feature `services`) |
 | `error` | The shared error type, re-exported from `allowit_sdk::client::error` |
 
 ## Services facade
 
-`allowit_sdk_engine::services` is the module a server reaches for when a policy decision has to become a real call: a PaySH purchase, an x402 payment, a Tempo transaction. It gives those calls one import path and one set of types. The service contracts and transports are in `allowit_sdk::service` and `allowit_sdk::transport`. The concrete protocols live in the rail repositories, and this module re-exports them.
+`allowit_sdk_engine::services` needs the `services` feature. It is the module a server reaches for when a policy decision has to become a real call: a PaySH purchase, an x402 payment, a Tempo transaction. It gives those calls one import path and one set of types. The service contracts and transports are in `allowit_sdk::service` and `allowit_sdk::transport`. The concrete protocols live in the rail repositories, and this module re-exports them.
 
-It stays small. It does not start a CLI process and it does not call the Allowit backend. The caller supplies deployment configuration and the bound operation data. The server keeps policy admission, spending limits, signer selection, journals and recovery decisions to itself.
+It stays small. It does not start a CLI process and it does not call the Allowit backend. The `allowit` binary does not enable the feature, so the rail service crates are not linked into it. The caller supplies deployment configuration and the bound operation data. The server keeps policy admission, spending limits, signer selection, journals and recovery decisions to itself.
 
 | Export | Purpose |
 | --- | --- |
@@ -42,4 +42,5 @@ Run these commands from the repository root:
 ```sh
 cargo test --locked -p allowit-sdk-engine
 cargo clippy --locked -p allowit-sdk-engine --all-targets -- -D warnings
+cargo clippy --locked -p allowit-sdk-engine --features services --all-targets -- -D warnings
 ```

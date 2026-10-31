@@ -2,7 +2,7 @@
 
 *The `allowit` command: local agent keys, wallet setup, owner approvals, signed requests and the policy compiler tools.*
 
-This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Backend requests, wallets and the service facade come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
+This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Backend requests and wallets come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
 
 ```sh
 cargo run --locked --bin allowit -- help
@@ -19,7 +19,8 @@ Source layout:
 - `src/main.rs` is the binary. `src/lib.rs` runs a command with process-local environment and standard streams.
 - `src/commands/<command>/` holds one top-level CLI command. Each subcommand has its own file. The
   policy compiler commands (`compile`, `check`, `workflow`, `evaluate`, `stellar-native`, `registry`,
-  `json`, `lsp`) share `src/commands/compiler.rs` and run the SDK locally.
+  `json`, `lsp`) share `src/commands/compiler.rs` and run the SDK locally. They skip network
+  selection, read no environment and print the SDK output without redaction or display escaping.
 - `src/vendors/<name>/` holds each vendor connection: `paysh`, `solana`, `stellar` and `tempo`.
   Command code reaches a rail only through these modules.
 - `src/gateway/` holds the input, operation and help helpers that the backend commands share. The
