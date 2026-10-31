@@ -211,11 +211,11 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
 | [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README |
-| [`verification/`](verification/) | | Lean specifications, obligations and expected outcomes |
+| [`verification/`](verification/) | | Lean model of core feature selection and policy decisions |
 
 All crates share one Cargo workspace and one `Cargo.lock`. Rail code lives in the rail repositories, which this workspace pins by commit:
 
-- [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana): the Solana native SDK (`allowit-native`, and `@allowit/native` for Node), the mandate program and the Solana service and PaySH crates.
+- [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana): the Solana native SDK (`allowit-native`, and `@allowit/native` for Node), the mandate program, the Solana service and PaySH crates, and the Solana verification set.
 - [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar): the Stellar rail core (`allowit-stellar-wallet`) in `stellar/core`.
 - [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo): the Tempo vendor crate (`allowit-tempo`) and Tempo services.
 

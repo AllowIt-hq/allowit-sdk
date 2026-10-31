@@ -35,23 +35,17 @@ jobs:
       - run: "cargo test --locked -p allowit-sdk --features service,transport --lib -- service::"
       - run: cargo test --locked -p allowit-sdk --features service,transport --test transport_rpc
       - run: cargo clippy --locked -p allowit-sdk --features service,transport --all-targets -- -D warnings
-  verifier-flows:
-    name: Verifier (${{ matrix.flow }})
+  verifier:
+    name: Core Lean checker
     runs-on: ubuntu-24.04
     timeout-minutes: 1
-    strategy:
-      fail-fast: false
-      matrix:
-        flow: [transaction, frame, refusal, failure_boundary]
     steps:
       - uses: actions/checkout@v4
-      - name: Test verifier acceptance and rejection
-        env:
-          TEST_FLOW: ${{ matrix.flow }}
+      - name: Test checker acceptance and rejection
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m unittest discover -s verification/tests -p "test_${TEST_FLOW}.py" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          python3 -m unittest discover -s verification/tests 2>&1 | tee "$RUNNER_TEMP/tests.log"
           grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/tests.log"
   scalar-policy:
     name: Scalar policy (${{ matrix.selector }})

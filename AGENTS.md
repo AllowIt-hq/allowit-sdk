@@ -24,12 +24,8 @@ For changes under `verification/`, including documentation, run:
 python3 -m unittest discover -s verification/tests
 ```
 
-Before changing verification documents, check whether observations, locks or
-receipts bind their hashes, including references from other verification folders.
-Preserve hash-bound historical inputs. Do not change recorded hashes to make a
-document edit pass.
-
-The Solana native check (`check_native.py`, `native-correspondence.json`,
-`native-source-lock.json` and the Lean inputs it binds) also lives in
-allowit-contracts-solana. The copies here stay because the other verification
-folders bind them by hash.
+`verification/` holds only the core Lean model. The Solana verification set,
+including the obligation ledger and every hash-bound lock and receipt, lives in
+allowit-contracts-solana `verification/`. Its receipts bind a byte-identical
+copy of `lean/AllowIt.lean`. Keep the model here in step with that copy, and
+record any model change in allowit-contracts-solana with a new receipt there.
