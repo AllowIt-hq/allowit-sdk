@@ -209,7 +209,7 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`cli/`](cli/) | `allowit-cli` | The `allowit` binary: commands, vendor command code and packaging |
 | [`cli/templates/policy/`](cli/templates/policy/) | `allowit-policy-template` | A Cargo crate to write and type-check your own policy in |
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
-| [`rails/solana/`](rails/solana/) | `allowit-native`, `allowit-solana-vendor`, service and PaySH crates | Solana host crates: the native vault lifecycle, PaySH reconciliation, service providers, x402 packets and RPC request builders |
+| [`rails/solana/`](rails/solana/README.md) | `allowit-native`, `allowit-solana-vendor`, service and PaySH crates | Solana host crates: the native vault lifecycle, PaySH reconciliation, service providers, x402 packets and RPC request builders |
 | [`rails/tempo/`](rails/tempo/README.md) | `allowit-tempo`, `allowit-tempo-services` | Tempo plan verification, signing and paid delivery, and the server's Tempo RPC vocabulary |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
 | [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README |
