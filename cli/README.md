@@ -2,7 +2,7 @@
 
 *The `allowit` command: local agent keys, wallet setup, owner approvals, signed requests and the policy compiler tools.*
 
-This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Backend requests and wallets come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. Rail crates live in their rail repositories and depend on the same core.
+This crate (`allowit-cli`, library `allowit_cli`) builds the `allowit` binary. It orchestrates a request from the agent's side: it picks the rail, prepares and signs the operation with a key that never leaves the machine, validates receipts and recovers uncertain submissions. Backend requests and wallets come from [`allowit-sdk-engine`](../engine/), which has no terminal I/O. Errors, configuration and private storage are the `client` module of [`allowit-sdk`](../core/), which also holds the compiler and evaluator. The Solana and Tempo host crates are in [`rails/`](../rails/) and depend on the same core.
 
 ```sh
 cargo run --locked --bin allowit -- help

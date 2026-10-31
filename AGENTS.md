@@ -11,21 +11,21 @@ validation commands locally, including their feature flags and selectors. Includ
 workflow and test-input changes when selecting checks. Resolve failures before
 pushing. Preserve existing reviews and deployment restrictions.
 
-All crates share one Cargo workspace and one `Cargo.lock`. Select packages with
-`-p allowit-sdk`, `-p allowit-sdk-engine`, `-p allowit-cli` or
-`-p allowit-policy-template`. Test `allowit-sdk` in its own cargo invocation: a
-workspace build unifies the CLI's serde_json features into core. Rail crates
-are git dependencies pinned by exact commit in the root `[workspace.dependencies]`;
-the root `[patch]` maps their `allowit-sdk` dependency to `core/`.
+All packages share one Cargo workspace, one `Cargo.lock` and one version
+(`[workspace.package]`). Packages in this repository depend on each other by
+path and are never pinned. Select them with `-p allowit-sdk`,
+`-p allowit-sdk-engine`, `-p allowit-cli`, `-p allowit-policy-template` or a
+rail host crate under `rails/` (the `rails` job in `.github/workflows/fast.yml`
+lists them). Test `allowit-sdk` in its own cargo invocation: a workspace build
+unifies the CLI's serde_json features into core.
 
-For changes under `verification/`, including documentation, run:
-
-```sh
-python3 -m unittest discover -s verification/tests
-```
-
-`verification/` holds only the core Lean model. The Solana verification set,
-including the obligation ledger and every hash-bound lock and receipt, lives in
-allowit-contracts-solana `verification/`. Its receipts bind a byte-identical
-copy of `lean/AllowIt.lean`. Keep the model here in step with that copy, and
-record any model change in allowit-contracts-solana with a new receipt there.
+Pins point one way. The rail repositories depend on this SDK; this SDK does
+not depend on Solana or Tempo. The only cross-repository git dependency is
+`allowit-stellar-wallet`, pinned by full `rev` in the root
+`[workspace.dependencies]`. `[workspace.metadata.allowit.track]` says which
+revision it must be pinned to. Run `scripts/build.sh` before pushing: it fails
+on a stale pin and builds the workspace and the Wasm module.
+`scripts/build.sh --update` rewrites stale pins and `Cargo.lock`. The root
+`[patch]` builds `allowit-stellar-wallet` against `core/`, because it depends
+on `allowit-sdk` itself. Remove the patch and the pin when that crate moves into
+`rails/` after `stellar-core` merges.

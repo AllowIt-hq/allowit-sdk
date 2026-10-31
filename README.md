@@ -209,15 +209,15 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`cli/`](cli/) | `allowit-cli` | The `allowit` binary: commands, vendor command code and packaging |
 | [`cli/templates/policy/`](cli/templates/policy/) | `allowit-policy-template` | A Cargo crate to write and type-check your own policy in |
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
+| [`rails/solana/`](rails/solana/README.md) | `allowit-native`, `allowit-solana-vendor`, service and PaySH crates | Solana host crates: the native vault lifecycle, PaySH reconciliation, service providers, x402 packets and RPC request builders |
+| [`rails/tempo/`](rails/tempo/README.md) | `allowit-tempo`, `allowit-tempo-services` | Tempo plan verification, signing and paid delivery, and the server's Tempo RPC vocabulary |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
 | [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README |
-| [`verification/`](verification/) | | Lean model of core feature selection and policy decisions |
+| [`scripts/build.sh`](scripts/build.sh) | | Checks the cross-repository pins, then builds the workspace and the Wasm module |
 
-All crates share one Cargo workspace and one `Cargo.lock`. Rail code lives in the rail repositories, which this workspace pins by commit:
+All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path. They build together in dependency order and are not pinned. The Solana and Tempo host crates live in [`rails/`](rails/). The rail repositories keep the on-chain programs and depend on this SDK; this SDK does not depend on them, so pins point one way.
 
-- [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana): the Solana native SDK (`allowit-native`, and `@allowit/native` for Node), the mandate program, the Solana service and PaySH crates, and the Solana verification set.
-- [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar): the Stellar rail core (`allowit-stellar-wallet`) in `stellar/core`.
-- [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo): the Tempo vendor crate (`allowit-tempo`) and Tempo services.
+The one cross-repository dependency is [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar), which supplies the Stellar rail core (`allowit-stellar-wallet`) from `stellar/core` while that work lives on the `stellar-core` branch. It is pinned by full commit in the root `Cargo.toml`, and `[workspace.metadata.allowit.track]` says that the pin must be the tip of `stellar-core`. Because that crate depends on `allowit-sdk` itself, a root `[patch]` builds it against `core/`.
 
 ## How this fits the Allowit system
 
@@ -225,7 +225,7 @@ Allowit is a small constellation of repositories, and this one sits in the middl
 
 - **This SDK** defines the policy language and decides requests. Everything else trusts its hashes and its IR.
 - **The `allowit` CLI** in [`cli/`](cli/) is the command an agent actually runs: `show`, `eval`, `exec` and `status` against a running Allowit service, built on [`engine/`](engine/).
-- [**allowit-contracts-solana**](https://github.com/allowit-hq/allowit-contracts-solana), [**allowit-contracts-stellar**](https://github.com/allowit-hq/allowit-contracts-stellar) and [**allowit-contracts-tempo**](https://github.com/allowit-hq/allowit-contracts-tempo) hold the on-chain custody that enforces an approved policy on each rail, together with the rail crates that the engine and the CLI use to speak to it.
+- [**allowit-contracts-solana**](https://github.com/allowit-hq/allowit-contracts-solana), [**allowit-contracts-stellar**](https://github.com/allowit-hq/allowit-contracts-stellar) and [**allowit-contracts-tempo**](https://github.com/allowit-hq/allowit-contracts-tempo) hold the on-chain custody that enforces an approved policy on each rail, and depend on this SDK's core. The host crates that the engine and the CLI use to speak to Solana and Tempo are in [`rails/`](rails/).
 - The hosted Allowit service and app, introduced at [allowit.xyz](https://allowit.xyz), own HTTP transport, owner input and the durable record of each request. Restricted Rust stays the source of truth for what an agent may do.
 
 A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can read the exact source that a wallet enforces, and a contract can verify that it is running the policy the owner approved.
@@ -233,11 +233,20 @@ A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can
 ## Development
 
 ```sh
+scripts/build.sh            # fail on a stale cross-repository pin, then build the workspace and the Wasm module
+scripts/build.sh --check    # only check the cross-repository pins
+scripts/build.sh --update   # move stale pins to their tracked commit, refresh Cargo.lock, then build
+```
+
+A tracking entry is `"head"` (the default branch tip), `{ branch = "name" }` or `{ version = "1.2.3" }` (the commit of tag `v1.2.3`). The build script needs `git`, `cargo` and `jq`.
+
+```sh
 cargo fmt --all --check
 cargo test --locked -p allowit-sdk
 cargo test --locked -p allowit-sdk-engine -p allowit-cli -p allowit-policy-template
 cargo clippy --locked -p allowit-sdk --all-targets -- -D warnings
 cargo clippy --locked -p allowit-sdk-engine -p allowit-cli --all-targets -- -D warnings
+cargo test --locked -p allowit-tempo --features client               # one rail crate; see .github/workflows/fast.yml for all
 cargo check --locked -p allowit-sdk --no-default-features --lib     # the no_std core still builds
 ```
 

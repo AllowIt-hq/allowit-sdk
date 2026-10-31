@@ -12,4 +12,4 @@ pub mod services;
 pub mod skill;
 pub mod typed_request;
 pub mod wallet;
-pub const VERSION: &str = "0.3.0-dev";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
