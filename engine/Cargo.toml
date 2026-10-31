@@ -1,0 +1,51 @@
+[package]
+name = "allowit-sdk-engine"
+version = "0.3.0-dev"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+description = "Allowit backend requests and service composition, with no terminal I/O"
+
+[features]
+# The typed service facade (`services`). It links the rail service crates;
+# the allowit binary does not enable it.
+services = [
+    "allowit-sdk/service",
+    "allowit-sdk/transport",
+    "dep:allowit-solana-service-upstreams",
+    "dep:allowit-solana-service-rpc",
+    "dep:allowit-solana-delegated-x402",
+    "dep:allowit-vendor-paysh-stock",
+    "dep:allowit-solana-paysh-cooperating",
+    "dep:allowit-tempo-services",
+]
+
+[dependencies]
+allowit-sdk = { path = "../core", default-features = false, features = ["std", "typed-workflow", "client"] }
+allowit-stellar-wallet.workspace = true
+allowit-tempo = { workspace = true, features = ["client"] }
+allowit-solana-service-upstreams = { workspace = true, optional = true }
+allowit-solana-service-rpc = { workspace = true, optional = true }
+allowit-solana-delegated-x402 = { workspace = true, optional = true }
+allowit-vendor-paysh-stock = { workspace = true, optional = true }
+allowit-solana-paysh-cooperating = { workspace = true, optional = true }
+allowit-tempo-services = { workspace = true, optional = true }
+getrandom = "0.3"
+ed25519-dalek = "2"
+base64 = "0.22.1"
+bs58 = "0.5.1"
+data-encoding = "2.9.0"
+libc = "0.2.190"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+regex = "1.11.1"
+reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "native-tls-vendored"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.143", features = ["raw_value", "arbitrary_precision"] }
+sha2 = "0.10.9"
+url = "2.5.7"
+zeroize = "1.8.2"
+
+[dev-dependencies]
+allowit-native.workspace = true

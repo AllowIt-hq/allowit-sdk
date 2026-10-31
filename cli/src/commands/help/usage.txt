@@ -1,0 +1,75 @@
+allowit sends actions through an Allowit policy and runs the
+owner's policy lifecycle.
+
+Configuration (environment only):
+  ALLOWIT_URL      service origin, e.g. https://allowit.example
+  ALLOWIT_TOKEN    the policy's harness token (owner.policy.secret)
+  ALLOWIT_CA_FILE  optional extra PEM root certificates
+
+Commands:
+  allowit show   POLICY [--json] [--source]
+  allowit eval   POLICY [request flags]     check permission; spends nothing
+  allowit exec   POLICY [request flags]     submit the request
+  allowit status POLICY REQUEST_ID [--wait 60s] [--json]
+  allowit policy generate|deploy|fund|execute|status|revoke|withdraw|tune ...
+                 owner lifecycle through the Allowit SDK CLI; no token
+                 needed (see allowit policy help)
+  allowit version
+
+Policy compiler (local; sends nothing):
+  allowit compile|check|workflow POLICY.rs
+  allowit evaluate POLICY.rs CONTEXT.json [oracle|contract]
+  allowit stellar-native POLICY.rs
+  allowit registry
+  allowit json [REQUEST.json|-]
+  allowit lsp
+  Use - to read source or a JSON request from stdin.
+
+Request flags:
+  --action NAME        required: the action the policy evaluates, e.g. transfer
+  --rail solana|stellar --op transferSOL|transferXLM|transferUSDC --addr ADDRESS
+                       --rail and --op are always given together
+  --amount DECIMAL     USDC amount; with --rail and --op, the asset quantity
+  --merchant NAME      optional merchant
+  --context JSON       runtime context object: literal, @file or - for stdin
+  --memo TEXT          mock plan memo (Local dev)
+  --data TEXT          mock plan data bytes, literal or @file (Local dev)
+  --before JSON        contract calls before the transfer (Local dev)
+  --after JSON         contract calls after the transfer (Local dev)
+  --request-id ID      explicit request ID (default: derived from the request)
+  --budget DECIMAL     assert the computed USDC budget charge
+  --wait DURATION      how long to wait for a pending evaluation (default 60s)
+  --json               machine-readable output
+
+Exit codes: 0 passed/recorded/settled, 2 usage, 3 config, auth or unsupported
+policy description, 4 rejected,
+5 uncertain result (retry only as printed, with the same --request-id; also a
+--request-id already used with other details, or a request status cannot find),
+6 replayed (a derived request ID matched an identical earlier request: nothing
+new was submitted), 10 owner signature (or passed but not yet complete),
+11 awaiting owner input, 12 pending, 20 denied.
+
+Request IDs: give each intended operation its own --request-id and separate IDs
+for eval and exec; rerun with the same ID only to retry the same request. After
+exit 5 never retry with a new ID: rerun with the printed --request-id, or check
+it with allowit status, which accepts the server requestId or your --request-id.
+
+Local agent wallets:
+  allowit wallet generate --network CAIP2 --output PRIVATE_FILE
+  allowit wallet show --network CAIP2 PRIVATE_FILE
+  allowit wallet configure --network stellar:testnet --owner G_ADDRESS --agent G_ADDRESS --engine G_ADDRESS --request-id ID
+  allowit wallet approve --network stellar:testnet --policy-file PUBLIC_POLICY_JSON --owner G_ADDRESS --request-id ID
+  Generation writes a new local 0600 signer file. Output contains public metadata only.
+  setup registers public {network,address,publicKey,keyType} metadata with the server.
+  Stellar configure prints an owner signing link for a fresh funded native account.
+  Stellar approve prints a source approval link for an existing owner-configured policy.
+
+Rail selection:
+  --network CAIP2    optional explicit x402 network identifier; must match the wallet/deployment
+  allowit tempo help    Tempo execution and paid-call commands
+  allowit paysh help    retained Solana PaySH operations
+  allowit policy help   includes import, close and tune-action
+
+Policy deployment opens an owner browser signing handoff. Set ALLOWIT_OWNER and
+ALLOWIT_REQUEST_ID. The CLI never loads an owner key for deployment. A pending
+browser signing intent exits 10 and does not establish chain finality.

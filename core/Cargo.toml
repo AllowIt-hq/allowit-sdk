@@ -1,0 +1,153 @@
+[package]
+name = "allowit-sdk"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Allowit restricted Rust policy compiler, evaluator and language server"
+autoexamples = false
+
+[lib]
+name = "allowit_sdk"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "allowit-contract-artifact"
+path = "src/bin/contract_artifact.rs"
+required-features = ["compiler", "contract"]
+
+[[test]]
+name = "adversarial"
+required-features = ["compiler"]
+
+[[test]]
+name = "certificate_policy"
+required-features = ["compiler"]
+
+[[test]]
+name = "core"
+required-features = ["compiler"]
+
+[[test]]
+name = "daily_cap"
+required-features = ["compiler"]
+
+[[test]]
+name = "decision_trace"
+required-features = ["compiler"]
+
+[[test]]
+name = "evm_recipient"
+required-features = ["compiler"]
+
+[[test]]
+name = "execution_requirements"
+required-features = ["compiler"]
+
+[[test]]
+name = "lsp"
+required-features = ["compiler"]
+
+[[test]]
+name = "namespaces"
+required-features = ["compiler"]
+
+[[test]]
+name = "parameter_edits"
+required-features = ["compiler"]
+
+[[test]]
+name = "preference"
+required-features = ["compiler"]
+
+[[test]]
+name = "primitive_params"
+required-features = ["compiler"]
+
+[[test]]
+name = "stellar_codegen"
+required-features = ["compiler"]
+
+[[test]]
+name = "private_execute"
+required-features = ["compiler"]
+
+[[test]]
+name = "service_operations"
+required-features = ["compiler"]
+
+[[test]]
+name = "readability"
+required-features = ["compiler"]
+
+[[test]]
+name = "semantic"
+required-features = ["compiler"]
+
+[[test]]
+name = "typed_workflow"
+required-features = ["compiler"]
+
+[[test]]
+name = "workflow_trace"
+required-features = ["compiler"]
+
+[[test]]
+name = "facade"
+required-features = ["std"]
+
+[[test]]
+name = "typed_facade"
+required-features = ["std", "typed-workflow"]
+
+[[test]]
+name = "transport_rpc"
+required-features = ["transport"]
+
+[[test]]
+name = "contract_binary"
+required-features = ["compiler", "contract"]
+
+[[test]]
+name = "contract_conformance"
+required-features = ["compiler", "contract"]
+
+[features]
+default = ["std", "compiler", "oracle-ledger"]
+oracle-ledger = []
+# Compact validation diagnostics for no_std contracts that expose only error codes.
+compact-contract-validation = []
+std = ["serde/std", "serde_json/std", "sha2/std"]
+compiler = ["std", "typed-workflow", "dep:syn", "dep:proc-macro2"]
+typed-workflow = ["dep:unicode-normalization", "dep:unicode-ident", "dep:unicode-script"]
+# Client validation, configuration, journal, output and local store primitives.
+client = ["std", "dep:libc", "dep:url"]
+# Rail-agnostic service operation contracts.
+service = ["std"]
+# Blocking HTTP and JSON-RPC transport for service adapters.
+transport = ["service", "dep:reqwest"]
+# Chain contract artifact, mandate and execution state shared by the rail contracts.
+contract = ["dep:borsh"]
+# Soroban disallows all Wasm floating-point instructions.
+integer-json = ["contract", "serde_json/arbitrary_precision"]
+contract-stellar = ["integer-json", "compact-contract-validation"]
+
+[dependencies]
+unicode-normalization = { version = "0.1.25", default-features = false, optional = true }
+unicode-ident = { version = "1.0.26", default-features = false, optional = true }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.150", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10.9", default-features = false }
+syn = { version = "2.0.117", optional = true, features = ["full", "extra-traits", "parsing", "visit"] }
+proc-macro2 = { version = "1.0.106", optional = true, features = ["span-locations"] }
+unicode-script = { version = "0.5.8", default-features = false, optional = true }
+libc = { version = "0.2.190", optional = true }
+url = { version = "2.5.7", optional = true }
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+borsh = { version = "=1.6.0", default-features = false, features = ["derive"], optional = true }
+
+[target.'cfg(target_os = "solana")'.dependencies]
+solana-sha256-hasher = { version = "=2.3.0", default-features = false }
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("solana"))']

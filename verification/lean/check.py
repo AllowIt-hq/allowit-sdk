@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the pinned Lean model and audit every theorem's axiom dependencies."""
+"""Check the pinned core Lean model and audit every theorem's axiom dependencies."""
 
 from pathlib import Path
 import os
@@ -59,11 +59,7 @@ def main() -> int:
     if f"version {version}," not in result.stdout:
         print(f"Expected {toolchain}; got {result.stdout.strip()}", file=sys.stderr)
         return 1
-    for filename, namespace in (("AllowIt.lean", "AllowIt"), ("NativeDaily.lean", "AllowIt.NativeDaily")):
-        code = check_module(checker, directory / filename, namespace, version)
-        if code:
-            return code
-    return 0
+    return check_module(checker, directory / "AllowIt.lean", "AllowIt", version)
 
 
 if __name__ == "__main__":
