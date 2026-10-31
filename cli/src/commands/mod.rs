@@ -1,5 +1,6 @@
 //! Top-level command dispatch. Each command has its own folder; each
-//! subcommand has its own file. Vendor connections live under `vendors/`.
+//! subcommand has its own file. `compiler/` holds the helpers that the policy
+//! compiler commands share. Vendor connections live under `vendors/`.
 //!
 //! Two command families share one binary. Local and policy commands (`show`,
 //! `eval`, `exec`, `status`, `policy`, `wallet`, `tempo`, `paysh`, `help`,
@@ -11,6 +12,7 @@
 //! command except the compiler commands, `--network CAIP2` is extracted first
 //! and may appear anywhere before `--`. The compiler commands skip network
 //! selection and print the SDK output without redaction or display escaping.
+//! They refuse global flags before the command name with a usage error.
 //!
 //! ```text
 //! allowit help

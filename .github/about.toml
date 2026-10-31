@@ -1,4 +1,5 @@
-# cargo-about configuration for the notices shipped with allowit_sdk.wasm.
+# cargo-about configuration for the notices that the release workflow ships
+# with allowit_sdk.wasm.
 accepted = ["MIT", "Apache-2.0", "Unicode-3.0", "Unlicense", "Zlib"]
 targets = ["wasm32-unknown-unknown"]
 ignore-build-dependencies = true

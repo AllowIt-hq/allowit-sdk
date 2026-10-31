@@ -19,8 +19,9 @@ Source layout:
 - `src/main.rs` is the binary. `src/lib.rs` runs a command with process-local environment and standard streams.
 - `src/commands/<command>/` holds one top-level CLI command. Each subcommand has its own file. The
   policy compiler commands (`compile`, `check`, `workflow`, `evaluate`, `stellar-native`, `registry`,
-  `json`, `lsp`) share `src/commands/compiler.rs` and run the SDK locally. They skip network
-  selection, read no environment and print the SDK output without redaction or display escaping.
+  `json`, `lsp`) share the helpers in `src/commands/compiler/` and run the SDK locally. They skip
+  network selection, read no environment and print the SDK output without redaction or display
+  escaping. A global flag before one of these command names is a usage error (exit 2).
 - `src/vendors/<name>/` holds each vendor connection: `paysh`, `solana`, `stellar` and `tempo`.
   Command code reaches a rail only through these modules.
 - `src/gateway/` holds the input, operation and help helpers that the backend commands share. The

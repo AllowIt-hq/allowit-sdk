@@ -1,6 +1,7 @@
 //! Shared helpers for the policy compiler commands (`compile`, `check`,
 //! `workflow`, `evaluate`, `stellar-native`, `registry`, `json`, `lsp`). These
-//! commands run the SDK locally and send nothing.
+//! commands run the SDK locally and send nothing. This folder holds no
+//! command of its own.
 use crate::error::{Error, Result};
 use serde_json::Value;
 use std::io::Read;

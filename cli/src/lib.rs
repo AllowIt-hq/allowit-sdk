@@ -16,17 +16,20 @@ pub mod routing;
 mod test_http;
 mod typed_run;
 mod vendors;
-use crate::{config::env_value, error::Result};
+use crate::{
+    config::env_value,
+    error::{Error, Result},
+};
 use serde_json::Value;
 use std::io::Write;
 pub use vendors::solana::handoff;
 pub use vendors::stellar::{approval as stellar_approval, owner as stellar_owner};
 /// Runs the command with process-local environment and standard streams.
 pub fn run(args: Vec<String>) -> i32 {
-    let args = gateway::args::local_command_first(&args);
     let mut stdout = String::new();
     let mut stderr = String::new();
     let result = execute(&args, &mut stdout, &mut stderr);
+    let args = gateway::args::local_command_first(&args);
     let code = match result {
         Ok(c) => c,
         Err(e) => {
@@ -82,12 +85,20 @@ fn redact(s: String) -> String {
 pub(crate) fn flush_stderr(stderr: &mut String) {
     let _ = std::io::stderr().write_all(redact(std::mem::take(stderr)).as_bytes());
 }
-fn execute(args: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
+fn execute(original: &[String], stdout: &mut String, stderr: &mut String) -> Result<i32> {
     // Network inference reads the command name, so order it first.
-    let args = gateway::args::local_command_first(args);
+    let args = gateway::args::local_command_first(original);
     // The policy compiler commands are local. They take no network and do
     // not read the wallet environment that network selection reads.
     if commands::is_compiler(&args) {
+        // Their arguments are positional, so a moved global flag would be
+        // read as a file path. Refuse global flags before the command name.
+        if gateway::args::command_index(original) != Some(0) {
+            return Err(Error::usage(format!(
+                "{} takes no global flags; put the command name first",
+                args[0]
+            )));
+        }
         return commands::dispatch(&args, stdout, stderr);
     }
     let (args, network) = routing::extract(&args)?;

@@ -54,15 +54,3 @@ jobs:
           cargo clippy --locked -p allowit-sdk --all-targets --features contract-stellar -- -D warnings
       - run: cargo rustc --locked -p allowit-sdk --release --lib --target wasm32-unknown-unknown --crate-type cdylib
       - run: node core/tests/test-wasm.mjs
-      - run: cargo install --locked cargo-about --version 0.9.2 --features cli
-      # Package the module with the project license and the dependency notices.
-      # cargo-about resolves features across the workspace, so the notices can
-      # list more crates than the module links.
-      - run: |
-          mkdir -p target/sdk-distribution
-          cp target/wasm32-unknown-unknown/release/allowit_sdk.wasm LICENSE target/sdk-distribution/
-          cargo about generate --locked -m core/Cargo.toml -c .github/about.toml -o target/sdk-distribution/dependency-licenses.html .github/about.hbs
-      - uses: actions/upload-artifact@v4
-        with:
-          name: allowit-sdk-wasm
-          path: target/sdk-distribution/

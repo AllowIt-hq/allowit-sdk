@@ -66,3 +66,55 @@ fn compiler_commands_ignore_wallet_environment() {
     assert!(compiled.status.success());
     assert!(String::from_utf8(compiled.stdout).unwrap().contains("USDC"));
 }
+
+#[test]
+fn compiler_commands_refuse_leading_global_flags() {
+    let cases: &[(&[&str], &str)] = &[
+        (
+            &[
+                "--network",
+                "eip155:1",
+                "compile",
+                "../docs/examples/research.rs",
+            ],
+            "compile",
+        ),
+        (
+            &[
+                "--network=stellar:testnet",
+                "check",
+                "../docs/examples/research.rs",
+            ],
+            "check",
+        ),
+        (&["--json", "registry"], "registry"),
+        (
+            &[
+                "--sandbox",
+                "--policy",
+                "p",
+                "evaluate",
+                "../docs/examples/research.rs",
+                "../docs/examples/context.json",
+            ],
+            "evaluate",
+        ),
+        (&["--json", "json", "-"], "json"),
+        (&["--json", "lsp"], "lsp"),
+    ];
+    for (args, command) in cases {
+        let output = allowit(args, &[]);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!("allowit: {command} takes no global flags; put the command name first\n"),
+            "{args:?}"
+        );
+    }
+    // Flags after the command name stay positional, as in the former
+    // standalone compiler binary.
+    let output = allowit(&["compile", "--json"], &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+}

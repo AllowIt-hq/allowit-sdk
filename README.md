@@ -247,4 +247,4 @@ CI pins Rust 1.98.0 and also exercises the individual feature flags and the WebA
 
 ## License
 
-Allowit-authored code is released under the [MIT License](LICENSE). Dependencies keep their own terms. The `allowit-sdk-wasm` CI artifact ships `LICENSE` and `dependency-licenses.html` beside the module. [cargo-about](https://github.com/EmbarkStudios/cargo-about) generates the notices from [`.github/about.toml`](.github/about.toml).
+Allowit-authored code is released under the [MIT License](LICENSE). Dependencies keep their own terms. The [release workflow](.github/workflows/release.yml) builds the `allowit-sdk-wasm` artifact, which ships `LICENSE` and `dependency-licenses.html` beside the module. At release time, [cargo-about](https://github.com/EmbarkStudios/cargo-about) generates the notices from [`.github/about.toml`](.github/about.toml) for the crates that the module links.

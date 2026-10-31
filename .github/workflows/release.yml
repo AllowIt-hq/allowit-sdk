@@ -1,0 +1,48 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wasm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo rustc --locked -p allowit-sdk --release --lib --target wasm32-unknown-unknown --crate-type cdylib
+      - run: node core/tests/test-wasm.mjs
+      - run: cargo install --locked cargo-about --version 0.9.2 --features cli
+      # The notices cover the crates that the module links: core alone, with
+      # its default features, for wasm32-unknown-unknown. A scan inside the
+      # workspace unifies the engine and CLI features into core and lists
+      # crates that the module does not link, so scan an isolated copy of core
+      # that keeps the root lock versions.
+      - name: Generate the dependency notices
+        run: |
+          isolated="$RUNNER_TEMP/allowit-sdk-core"
+          mkdir -p "$isolated"
+          cp -R core "$isolated/"
+          cp Cargo.lock "$isolated/core/"
+          printf '\n[workspace]\n' >> "$isolated/core/Cargo.toml"
+          cargo metadata --offline --manifest-path "$isolated/core/Cargo.toml" --format-version 1 > /dev/null
+          python3 - "$isolated/core/Cargo.lock" Cargo.lock <<'PY'
+          import sys, tomllib
+          def packages(path):
+              with open(path, "rb") as f:
+                  return {(p["name"], p["version"]) for p in tomllib.load(f)["package"]}
+          extra = packages(sys.argv[1]) - packages(sys.argv[2])
+          sys.exit(f"the isolated core lock adds {sorted(extra)}" if extra else 0)
+          PY
+          mkdir -p target/sdk-distribution
+          cargo about generate --locked -m "$isolated/core/Cargo.toml" -c .github/about.toml -o target/sdk-distribution/dependency-licenses.html .github/about.hbs
+          cp target/wasm32-unknown-unknown/release/allowit_sdk.wasm LICENSE target/sdk-distribution/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: allowit-sdk-wasm
+          path: target/sdk-distribution/
