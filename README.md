@@ -211,13 +211,13 @@ The facade is for your editor. Compilation and evaluation still go through the S
 | [`cli/skills/allowit/`](cli/skills/allowit/SKILL.md) | | Instructions for an AI agent that compiles and evaluates policies |
 | [`docs/`](docs/) | | Policy language reference and execution requirements |
 | [`docs/examples/`](docs/examples/) | | Three policies and two request contexts used throughout this README |
-| [`verification/`](verification/) | | Lean model of core feature selection and policy decisions |
+| [`scripts/build.sh`](scripts/build.sh) | | Checks the rail pins, then builds the workspace and the Wasm module |
 
-All crates share one Cargo workspace and one `Cargo.lock`. Rail code lives in the rail repositories, which this workspace pins by commit:
+All packages share one Cargo workspace, one `Cargo.lock` and one version, and depend on each other by path. Rail code lives in the rail repositories. Each rail crate is pinned by full commit in the root `Cargo.toml`, and `[workspace.metadata.allowit.track]` says which commit that must be:
 
-- [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana): the Solana native SDK (`allowit-native`, and `@allowit/native` for Node), the mandate program, the Solana service and PaySH crates, and the Solana verification set.
-- [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar): the Stellar rail core (`allowit-stellar-wallet`) in `stellar/core`.
-- [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo): the Tempo vendor crate (`allowit-tempo`) and Tempo services.
+- [allowit-contracts-solana](https://github.com/allowit-hq/allowit-contracts-solana): the Solana native SDK (`allowit-native`, and `@allowit/native` for Node), the mandate program, and the Solana service and PaySH crates. Tracks the default branch head.
+- [allowit-contracts-stellar](https://github.com/allowit-hq/allowit-contracts-stellar): the Stellar rail core (`allowit-stellar-wallet`) in `stellar/core`. Tracks the `stellar-core` branch.
+- [allowit-contracts-tempo](https://github.com/allowit-hq/allowit-contracts-tempo): the Tempo vendor crate (`allowit-tempo`) and Tempo services. Tracks the default branch head.
 
 ## How this fits the Allowit system
 
@@ -231,6 +231,14 @@ Allowit is a small constellation of repositories, and this one sits in the middl
 A compiled artifact is bound by its `source_hash` and `ir_hash`, so an owner can read the exact source that a wallet enforces, and a contract can verify that it is running the policy the owner approved.
 
 ## Development
+
+```sh
+scripts/build.sh            # fail on a stale rail pin, then build the workspace and the Wasm module
+scripts/build.sh --check    # only check the rail pins
+scripts/build.sh --update   # move stale rail pins to their tracked commit, refresh Cargo.lock, then build
+```
+
+A tracking entry is `"head"` (the default branch tip), `{ branch = "name" }` or `{ version = "1.2.3" }` (the commit of tag `v1.2.3`). The build script needs `git`, `cargo` and `jq`.
 
 ```sh
 cargo fmt --all --check

@@ -2,18 +2,30 @@
 resolver = "3"
 members = ["core", "engine", "cli", "cli/templates/policy"]
 
-# Rail crates. Each git dependency pins an exact commit of its rail repository.
+# Every package in this repository builds at this version.
+[workspace.package]
+version = "0.3.0"
+
+# The revision each rail repository must be pinned to. scripts/build.sh checks
+# every git dependency below against this table and fails on a stale pin.
+[workspace.metadata.allowit.track]
+allowit-contracts-solana = "head"
+allowit-contracts-tempo = "head"
+# allowit-stellar-wallet exists only on stellar-core until that branch merges.
+allowit-contracts-stellar = { branch = "stellar-core" }
+
+# Rail crates, pinned by full commit.
 [workspace.dependencies]
-allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-vendor = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "3046aaa9143752c1dbf89c739ae7b21f68a3ed84" }
-allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "b1fc8b99fa5ace5a6c1c9d316760f5ec251ee29f" }
-allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "b1fc8b99fa5ace5a6c1c9d316760f5ec251ee29f" }
-allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "3c44a9db63eba0a9017f7a6c3f05e3c7ca483b2f" }
+allowit-native = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
+allowit-solana-vendor = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
+allowit-solana-service-upstreams = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
+allowit-solana-service-rpc = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
+allowit-solana-delegated-x402 = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
+allowit-vendor-paysh-stock = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
+allowit-solana-paysh-cooperating = { git = "https://github.com/allowit-hq/allowit-contracts-solana.git", rev = "7c47ff42a440fe7820b7e76eb3a17d96ec319edc" }
+allowit-tempo = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "811fd423c34d0c9cd8ce4f4d7f4ab9c196f5acc7" }
+allowit-tempo-services = { git = "https://github.com/allowit-hq/allowit-contracts-tempo.git", rev = "811fd423c34d0c9cd8ce4f4d7f4ab9c196f5acc7" }
+allowit-stellar-wallet = { git = "https://github.com/allowit-hq/allowit-contracts-stellar.git", rev = "2415bff42c972281fd4648bdbdc44dcf3cfccf82" }
 
 [profile.release]
 lto = true
@@ -22,7 +34,7 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-# Rail crates pin allowit-sdk by git revision. This patch resolves those pins
-# to the workspace core, so one allowit-sdk crate serves the whole graph.
+# The rail crates depend on allowit-sdk from GitHub. This patch builds them
+# against core/ instead, so the workspace links one allowit-sdk at one version.
 [patch."https://github.com/allowit-hq/allowit-sdk.git"]
 allowit-sdk = { path = "core" }

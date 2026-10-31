@@ -52,5 +52,5 @@ jobs:
           cargo check --locked -p allowit-sdk --no-default-features --features contract --lib
           cargo clippy --locked -p allowit-sdk --all-targets --features client,service,transport,contract -- -D warnings
           cargo clippy --locked -p allowit-sdk --all-targets --features contract-stellar -- -D warnings
-      - run: cargo rustc --locked -p allowit-sdk --release --lib --target wasm32-unknown-unknown --crate-type cdylib
+      - run: scripts/build.sh
       - run: node core/tests/test-wasm.mjs

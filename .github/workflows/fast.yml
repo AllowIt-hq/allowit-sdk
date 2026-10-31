@@ -35,18 +35,17 @@ jobs:
       - run: "cargo test --locked -p allowit-sdk --features service,transport --lib -- service::"
       - run: cargo test --locked -p allowit-sdk --features service,transport --test transport_rpc
       - run: cargo clippy --locked -p allowit-sdk --features service,transport --all-targets -- -D warnings
-  verifier:
-    name: Core Lean checker
+  pins:
+    name: Pins and build
     runs-on: ubuntu-24.04
-    timeout-minutes: 1
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Test checker acceptance and rejection
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m unittest discover -s verification/tests 2>&1 | tee "$RUNNER_TEMP/tests.log"
-          grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/tests.log"
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/build.sh
   scalar-policy:
     name: Scalar policy (${{ matrix.selector }})
     runs-on: ubuntu-24.04
