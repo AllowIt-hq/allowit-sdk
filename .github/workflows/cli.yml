@@ -5,6 +5,7 @@ on:
       - "core/**"
       - "engine/**"
       - "cli/**"
+      - "docs/examples/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/cli.yml"
