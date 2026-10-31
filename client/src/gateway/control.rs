@@ -1,5 +1,6 @@
 //! Shared input, read and mutation helpers for account and service controls.
-//! Blockchain agent keys stay local.
+//! Blockchain agent keys stay local. Used by `whoami`, `setup` and `skills`:
+//! reads send `GET`, mutations send one `POST` under an operation ID.
 use super::{
     Gateway,
     args::{self, Invocation},

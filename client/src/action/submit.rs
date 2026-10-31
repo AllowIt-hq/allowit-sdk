@@ -1,4 +1,6 @@
-//! Submission shared by eval and exec.
+//! Submission shared by eval and exec. Derives or checks the request ID, prints
+//! recovery instructions before the POST, posts once to `judge` (eval) or
+//! `transactions` (exec), then polls status within `--wait`.
 use super::{Begin, begin, poll, read_skill, unknown};
 use crate::{
     client::Client,

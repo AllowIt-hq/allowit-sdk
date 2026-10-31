@@ -1,5 +1,18 @@
 //! Top-level command dispatch. Each command has its own folder; each
 //! subcommand has its own file. Vendor connections live under `vendors/`.
+//!
+//! Two command families share one binary. Local and policy commands (`show`,
+//! `eval`, `exec`, `status`, `policy`, `wallet`, `tempo`, `paysh`, `help`,
+//! `version`) are matched here. Backend command groups (`call`, `curl`, `wget`,
+//! `fetch`, `http`, `claude`, `codex`, `mcp`, `whoami`, `setup`, `skills`) go
+//! through [`gateway::args`] and call `/api/gateway/*` routes. `--network CAIP2`
+//! is extracted first and may appear anywhere before `--`.
+//!
+//! ```text
+//! allowit help
+//! allowit --json show POLICY        # global flags may precede the command
+//! allowit skills list --sandbox
+//! ```
 mod call;
 mod claude;
 mod codex;

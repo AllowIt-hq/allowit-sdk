@@ -1,4 +1,11 @@
-//! `allowit skills show SERVICE`: shows one service and its endpoints.
+//! `allowit skills show SERVICE`: shows one service and its endpoints through
+//! `GET /api/gateway/services?query=SERVICE`.
+//!
+//! ```text
+//! allowit skills search weather
+//! allowit skills show SERVICE_ID --json
+//! allowit call SERVICE_ID --input '{"city":"Paris"}'
+//! ```
 use super::ROUTE;
 use crate::{
     error::Result,

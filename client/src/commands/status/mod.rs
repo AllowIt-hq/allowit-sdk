@@ -1,4 +1,16 @@
-//! `allowit status POLICY REQUEST_ID`: reads one request without creating another.
+//! `allowit status POLICY REQUEST_ID [--wait 60s] [--json]`: reads one request
+//! without creating another. Posts to `/api/harness/OWNER/POLICY/status` by
+//! server `requestId`, then by the client `--request-id`. `--wait` polls a
+//! pending request (default 0s, at most 10m). Tempo and installed Stellar
+//! wallets read their own journals and endpoints.
+//!
+//! ```text
+//! allowit exec POLICY --action transfer --rail solana --op transferUSDC \
+//!   --addr SOLANA_ADDRESS --amount 1 --request-id exec-0003
+//! # exit 12 (pending) or 5 (uncertain)
+//! allowit status POLICY exec-0003 --wait 60s
+//! allowit status POLICY SERVER_REQUEST_ID --json
+//! ```
 use crate::{
     action::{self, Begin, check_status, poll},
     args,

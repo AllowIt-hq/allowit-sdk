@@ -1,4 +1,13 @@
 //! `allowit skills [list|search|show] [QUERY]`: reads the backend service catalog.
+//! Every action reads `GET /api/gateway/services`; `QUERY` is sent as `query`.
+//! `ls` and `endpoints` alias `list` and `show`.
+//!
+//! ```text
+//! allowit skills list --sandbox
+//! allowit skills search weather
+//! allowit skills show SERVICE_ID
+//! allowit call SERVICE_ID --input '{"city":"Paris"}' --sandbox
+//! ```
 mod list;
 mod search;
 mod show;

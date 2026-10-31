@@ -1,4 +1,12 @@
-//! `allowit wallet show --network CAIP2 PRIVATE_FILE`: prints public wallet metadata.
+//! `allowit wallet show --network CAIP2 PRIVATE_FILE`: prints the public
+//! metadata of an existing signer file. Local only; prints no private material.
+//! The output is the input that `allowit setup` accepts.
+//!
+//! ```text
+//! allowit wallet generate --network stellar:testnet --output agent.key
+//! allowit wallet show --network stellar:testnet agent.key > agent.json
+//! allowit setup --input-file agent.json
+//! ```
 use crate::{
     error::{Error, Result},
     routing,

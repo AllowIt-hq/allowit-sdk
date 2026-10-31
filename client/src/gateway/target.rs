@@ -1,4 +1,5 @@
-//! Call targets shared by the call command and the MCP call tool.
+//! Call targets shared by the call command and the MCP call tool. A target is a
+//! catalog service ID or an HTTP(S) URL, with optional JSON input.
 use super::{
     args::{Invocation, body_file, public_url},
     http::{Header, HttpRequest},

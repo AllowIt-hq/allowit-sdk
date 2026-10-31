@@ -1,4 +1,9 @@
-//! `allowit skills [list]`: lists catalog services.
+//! `allowit skills [list]`: lists catalog services from `GET /api/gateway/services`.
+//!
+//! ```text
+//! allowit skills
+//! allowit skills list --json
+//! ```
 use super::ROUTE;
 use crate::{
     error::Result,

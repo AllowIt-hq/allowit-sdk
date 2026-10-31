@@ -1,4 +1,6 @@
 //! Public continuation for an existing owner-configured Native Stellar policy.
+//! Backs `allowit wallet approve` and `allowit policy deploy --network
+//! stellar:testnet`: prints a source approval link and moves no funds.
 use crate::{
     error::{Error, Result},
     routing,

@@ -1,4 +1,16 @@
 //! `allowit call SERVICE_OR_URL [--input JSON]`: one backend-paid service call.
+//! The target is a catalog service ID or an HTTP(S) URL. Posts to
+//! `/api/gateway/quote`, checks the quote, then posts to `/api/gateway/call`.
+//! Uses `ALLOWIT_ACCOUNT_TOKEN`, or `ALLOWIT_TOKEN` with `--policy version@addr`.
+//! `--max-payment` caps the debit; `--request-id` sets the operation ID.
+//!
+//! ```text
+//! export ALLOWIT_URL=https://allowit.example ALLOWIT_ACCOUNT_TOKEN=TOKEN
+//! allowit skills search weather
+//! allowit call SERVICE_ID --input '{"city":"Paris"}' --max-payment 0.05 \
+//!   --request-id weather-0001 --json
+//! allowit call status weather-0001
+//! ```
 mod status;
 
 use crate::{

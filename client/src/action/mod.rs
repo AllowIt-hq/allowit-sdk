@@ -1,4 +1,7 @@
 //! Shared pipeline for the show, eval, exec and status policy commands.
+//! [`begin`] parses request flags and routes Tempo, installed Stellar wallets
+//! and typed `--request-file` runs to their own flows; other requests continue
+//! against the harness API (`/api/harness/OWNER/POLICY/*`).
 mod poll;
 mod submit;
 

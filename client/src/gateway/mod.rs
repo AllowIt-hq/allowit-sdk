@@ -1,4 +1,8 @@
 //! Backend-owned service access. This client never constructs vendor payment proofs.
+//! [`Gateway`] sends one request to an `/api/gateway/*` route under
+//! `ALLOWIT_URL`, with `ALLOWIT_ACCOUNT_TOKEN`, or `ALLOWIT_TOKEN` when
+//! `--policy` is given. Used by `call`, `curl`, `http`, `mcp`, `whoami`,
+//! `setup` and `skills`.
 pub(crate) mod args;
 pub(crate) mod control;
 pub(crate) mod help;

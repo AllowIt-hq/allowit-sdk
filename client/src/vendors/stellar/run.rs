@@ -1,4 +1,6 @@
 //! Existing exec/status transport for an explicitly installed Stellar wallet profile.
+//! Reads `ALLOWIT_STELLAR_BUNDLE`, signs with `ALLOWIT_STELLAR_SIGNER`, posts the
+//! bundle's `/api/native/execute` endpoints and journals in `.allowit/stellar-journal`.
 use crate::{
     args::Args,
     config::{env_value, parse_origin},

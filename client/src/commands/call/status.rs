@@ -1,4 +1,13 @@
-//! `allowit call status OPERATION_ID`: reads an operation without creating another purchase.
+//! `allowit call status OPERATION_ID`: reads an operation without creating
+//! another purchase. Posts to `/api/gateway/operations/status` and checks that
+//! the reply names the same operation. Use it after an uncertain `call`, `curl`
+//! or `http`; pass the same `--policy` and `--sandbox` as the original call.
+//!
+//! ```text
+//! allowit call SERVICE_ID --input '{"q":"news"}' --request-id news-0001
+//! # exit 5 (uncertain) or 12 (pending)
+//! allowit call status news-0001 --json
+//! ```
 use crate::{
     error::{Error, Result},
     gateway::{

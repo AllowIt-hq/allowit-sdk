@@ -1,5 +1,7 @@
 //! Local policy configuration and presentation. Chain and journal semantics belong
 //! to the pinned SDK library; this module never launches another command process.
+//! Reads `ALLOWIT_POLICY_DIR`, `ALLOWIT_NETWORK`, `ALLOWIT_RPC_URL` and the key
+//! and deployment settings in `commands/policy/usage.txt`.
 mod deploy;
 mod generate;
 mod import;

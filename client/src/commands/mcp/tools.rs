@@ -1,4 +1,14 @@
-//! MCP methods and the Allowit tools they expose.
+//! MCP methods and the Allowit tools they expose: `initialize`, `ping`,
+//! `tools/list` and `tools/call`. `allowit_call` requires an `operationId` and
+//! runs the same quote-then-call purchase as `allowit call`. Each message is
+//! one line on stdin; it is wrapped here for reading.
+//!
+//! ```text
+//! {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"allowit_call",
+//!   "arguments":{"target":"SERVICE_ID","input":{"q":"news"},"operationId":"news-0001"}}}
+//! {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"allowit_status",
+//!   "arguments":{"operationId":"news-0001"}}}
+//! ```
 use crate::{
     error::{Error, Result},
     gateway::{

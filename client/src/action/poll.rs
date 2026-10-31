@@ -1,4 +1,5 @@
-//! Status checks and bounded polling of pending policy requests.
+//! Status checks and bounded polling of pending policy requests through
+//! `POST /api/harness/OWNER/POLICY/status`. Polling never resubmits a request.
 use crate::{
     client::Client,
     error::{Error, Result},
