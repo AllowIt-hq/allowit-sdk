@@ -11,7 +11,7 @@ mod status;
 use crate::{
     config::env_value,
     error::{Error, Result},
-    vendors::solana::audit::{AuditConfig, AuditedRpc, Reporter, execution_recipient},
+    vendors::solana::audit::{AuditConfig, AuditedRpc, Reporter, execution_identity},
 };
 use allowit_native::{
     client::{Config, Deployment, NativeClient},

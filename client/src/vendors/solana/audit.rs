@@ -120,6 +120,40 @@ pub(crate) fn execution_recipient(client: &NativeClient, requested: Key) -> Resu
     }
     client.recipient_token_account(requested, true)
 }
+/// Return the request identity for a payment to `requested`.
+///
+/// A saved request keeps the recipient it was signed with, so an identical
+/// retry recovers it even after the recipient accounts change or close. A new
+/// request binds the account from [`execution_recipient`].
+pub(crate) fn execution_identity(
+    client: &NativeClient,
+    journal: &FileJournal,
+    requested: Key,
+    identity_for: impl Fn(Key) -> Result<ExecutionRequestIdentity>,
+) -> Result<ExecutionRequestIdentity> {
+    let as_given = identity_for(requested)?;
+    let saved = journal.read::<Record>(&format!("request-{}", as_given.operation_id))?;
+    if let Some(saved) = saved.as_ref().filter(|record| record.method == "execute") {
+        let saved_digest = saved
+            .extra
+            .get("executionRequestDigest")
+            .and_then(Value::as_str);
+        let mut candidates = vec![as_given];
+        if let Some(derived) = client
+            .config
+            .mint
+            .and_then(|mint| associated_token_address(mint, requested, false).ok())
+        {
+            candidates.push(identity_for(derived)?);
+        }
+        for candidate in candidates {
+            if saved_digest == Some(candidate.digest()?.as_str()) {
+                return Ok(candidate);
+            }
+        }
+    }
+    identity_for(execution_recipient(client, requested)?)
+}
 fn unavailable() -> allowit_native::error::Error {
     allowit_native::error::Error::uncertain(
         "Native audit acknowledgment unavailable; retain the original journal and request ID",
@@ -429,8 +463,13 @@ mod tests {
         }
     }
     fn check_report_before_broadcast(status: u16, mut operation: Value, expect_send: bool) {
+        // Parallel tests can read the same clock value, and a shared journal
+        // directory makes one of them fail on the other's journal lock.
+        static RUN: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "allowit-audit-{}",
+            "allowit-audit-{}-{}-{}",
+            std::process::id(),
+            RUN.fetch_add(1, Ordering::SeqCst),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -620,6 +659,63 @@ mod tests {
         let program = recipient_client(vec![(wallet, account(LOADER))]);
         assert!(execution_recipient(&program, wallet).is_err());
         assert!(execution_recipient(&recipient_client(vec![]), derived).is_err());
+    }
+    #[test]
+    fn saved_requests_keep_their_signed_recipient_after_accounts_change() {
+        let policy =
+            Policy::generate("solana:testnet", "Spend up to 5 test tokens per day").unwrap();
+        let identity_for = |recipient| {
+            ExecutionRequestIdentity::new(
+                &policy,
+                "saved-recipient-001",
+                "1",
+                recipient,
+                "transfer",
+                "",
+                &json!({}),
+            )
+        };
+        let wallet = Key::parse(WALLET).unwrap();
+        let derived = associated_token_address(Key([4; 32]), wallet, false).unwrap();
+        let directory = std::env::temp_dir().join(format!(
+            "allowit-saved-recipient-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let journal = FileJournal::new(&directory);
+        let save = |recipient| {
+            let mut saved = record();
+            saved.id = "saved-recipient-001".into();
+            saved.extra.insert(
+                "executionRequestDigest".into(),
+                json!(identity_for(recipient).unwrap().digest().unwrap()),
+            );
+            journal
+                .locked(|| journal.write("request-saved-recipient-001", &saved))
+                .unwrap();
+        };
+        let resolve = |accounts| {
+            execution_identity(&recipient_client(accounts), &journal, wallet, identity_for)
+                .unwrap()
+                .recipient
+        };
+        // A new request resolves the recipient from the chain.
+        assert_eq!(resolve(vec![]), derived);
+        assert_eq!(resolve(vec![(wallet, account(TOKEN_PROGRAM))]), wallet);
+        // A token-account request keeps its recipient after that account closes.
+        save(wallet);
+        assert_eq!(resolve(vec![]), wallet);
+        // A wallet request keeps its derived token account.
+        save(derived);
+        assert_eq!(resolve(vec![(wallet, account(TOKEN_PROGRAM))]), derived);
+        // A different saved request falls back to chain resolution and later
+        // fails the journal's request ID conflict check.
+        save(Key([8; 32]));
+        assert_eq!(resolve(vec![]), derived);
+        std::fs::remove_dir_all(directory).unwrap();
     }
     fn check_authorization_response(case: &str) {
         let owner = seeded(1, "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");

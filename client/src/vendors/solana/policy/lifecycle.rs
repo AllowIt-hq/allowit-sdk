@@ -73,18 +73,24 @@ pub(super) fn run(
         })?;
         // Wallet recipients pay their associated token account, as the engine binds it.
         let requested_recipient = native(Key::parse(&pos[0]))?;
-        let recipient = native(execution_recipient(client, requested_recipient))?;
         let action = configured("ALLOWIT_EXECUTION_ACTION", "transfer");
         let merchant = env_value("ALLOWIT_EXECUTION_MERCHANT");
         let context = execution_context()?;
-        let identity = native(ExecutionRequestIdentity::new(
-            policy,
-            &request_id,
-            &pos[1],
-            recipient,
-            &action,
-            &merchant,
-            &context,
+        let identity = native(execution_identity(
+            client,
+            journal,
+            requested_recipient,
+            |recipient| {
+                ExecutionRequestIdentity::new(
+                    policy,
+                    &request_id,
+                    &pos[1],
+                    recipient,
+                    &action,
+                    &merchant,
+                    &context,
+                )
+            },
         ))?;
         let executor = load_signer("ALLOWIT_EXECUTOR_KEYPAIR")?;
         native(lifecycle.submit_authorized(
