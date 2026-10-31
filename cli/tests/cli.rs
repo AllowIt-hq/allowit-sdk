@@ -9,8 +9,8 @@ fn standalone_cli_and_lsp_transport_run_without_ui() {
     let output = Command::new(env!("CARGO_BIN_EXE_allowit"))
         .args([
             "evaluate",
-            "examples/research.rs",
-            "examples/context.json",
+            "../docs/examples/research.rs",
+            "../docs/examples/context.json",
             "oracle",
         ])
         .output()
@@ -24,7 +24,7 @@ fn standalone_cli_and_lsp_transport_run_without_ui() {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
-    let source = include_str!("../examples/research.rs");
+    let source = include_str!("../../docs/examples/research.rs");
     let messages = [
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
         json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///policy.rs","text":source}}}),
